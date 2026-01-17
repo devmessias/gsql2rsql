@@ -11,14 +11,19 @@ from gsql2rsql.common.exceptions import (
 )
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import (
+    Entity,
+    NodeEntity,
     QueryExpression,
     QueryExpressionAggregationFunction,
     QueryExpressionBinary,
     QueryExpressionCaseExpression,
+    QueryExpressionExists,
     QueryExpressionFunction,
     QueryExpressionList,
     QueryExpressionProperty,
     QueryExpressionValue,
+    RelationshipDirection,
+    RelationshipEntity,
 )
 from gsql2rsql.parser.operators import (
     AggregationFunction,
@@ -38,6 +43,7 @@ from gsql2rsql.planner.operators import (
     SetOperationType,
     SetOperator,
 )
+from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, ValueField
 from gsql2rsql.renderer.schema_provider import (
     ISQLDBSchemaProvider,
@@ -980,6 +986,8 @@ class SQLRenderer:
             return self._render_list(expr, context_op)
         elif isinstance(expr, QueryExpressionCaseExpression):
             return self._render_case(expr, context_op)
+        elif isinstance(expr, QueryExpressionExists):
+            return self._render_exists(expr, context_op)
         else:
             return str(expr)
 
@@ -1117,6 +1125,169 @@ class SQLRenderer:
 
         parts.append("END")
         return " ".join(parts)
+
+    def _render_exists(
+        self, expr: QueryExpressionExists, context_op: LogicalOperator
+    ) -> str:
+        """Render an EXISTS subquery expression.
+
+        Generates a correlated subquery for EXISTS patterns:
+        EXISTS { (p)-[:ACTED_IN]->(:Movie) }
+        becomes:
+        EXISTS (
+          SELECT 1
+          FROM graph.ActedIn r
+          JOIN graph.Movie m ON r.target_id = m.id
+          WHERE r.source_id = outer_query.p_id
+        )
+        """
+        prefix = "NOT " if expr.is_negated else ""
+
+        # If it's a full subquery EXISTS, we would need to render the full query
+        # For now, focus on pattern-based EXISTS
+        if expr.subquery:
+            # Full subquery EXISTS - not yet fully implemented
+            return f"{prefix}EXISTS (SELECT 1)"
+
+        if not expr.pattern_entities:
+            return f"{prefix}EXISTS (SELECT 1)"
+
+        # Parse the pattern entities to extract:
+        # - source node (correlated to outer query)
+        # - relationship
+        # - target node
+        source_node: NodeEntity | None = None
+        relationship: RelationshipEntity | None = None
+        target_node: NodeEntity | None = None
+
+        for entity in expr.pattern_entities:
+            if isinstance(entity, NodeEntity):
+                if source_node is None:
+                    source_node = entity
+                else:
+                    target_node = entity
+            elif isinstance(entity, RelationshipEntity):
+                relationship = entity
+
+        if not relationship or not source_node:
+            # Can't render without relationship and source
+            return f"{prefix}EXISTS (SELECT 1)"
+
+        # Get relationship table info
+        rel_name = relationship.entity_name
+        source_entity_name = source_node.entity_name or ""
+        target_entity_name = target_node.entity_name if target_node else ""
+
+        # Try to find the edge schema
+        edge_schema: EdgeSchema | None = None
+        rel_table_desc: SQLTableDescriptor | None = None
+
+        # If we have both source and target entity names, use the direct lookup
+        if source_entity_name and target_entity_name:
+            # Compute edge_id for lookup
+            if relationship.direction == RelationshipDirection.BACKWARD:
+                edge_id = EdgeSchema.get_edge_id(
+                    rel_name, target_entity_name, source_entity_name
+                )
+            else:
+                edge_id = EdgeSchema.get_edge_id(
+                    rel_name, source_entity_name, target_entity_name
+                )
+            rel_table_desc = self._graph_def.get_sql_table_descriptors(edge_id)
+            if relationship.direction == RelationshipDirection.BACKWARD:
+                edge_schema = self._graph_def.get_edge_definition(
+                    rel_name, target_entity_name, source_entity_name
+                )
+            else:
+                edge_schema = self._graph_def.get_edge_definition(
+                    rel_name, source_entity_name, target_entity_name
+                )
+        else:
+            # Source entity unknown - use fallback lookup by verb
+            # This handles EXISTS patterns where source is a variable reference
+            result = self._graph_def.find_edge_by_verb(rel_name, target_entity_name)
+            if result:
+                edge_schema, rel_table_desc = result
+                # Update source_entity_name from schema for later use
+                source_entity_name = edge_schema.source_node_id
+
+        if not rel_table_desc:
+            return f"{prefix}EXISTS (SELECT 1 /* unknown relationship: {rel_name} */)"
+
+        rel_table = rel_table_desc.full_table_name
+        source_id_col = "source_id"
+        target_id_col = "target_id"
+        if edge_schema:
+            if edge_schema.source_id_property:
+                source_id_col = edge_schema.source_id_property.property_name
+            if edge_schema.sink_id_property:
+                target_id_col = edge_schema.sink_id_property.property_name
+
+        # Build subquery parts
+        lines = []
+        lines.append("SELECT 1")
+        lines.append(f"FROM {rel_table} _exists_rel")
+
+        # If target node exists and has a type, join to target table
+        if target_node and target_node.entity_name:
+            target_table_desc = self._graph_def.get_sql_table_descriptors(
+                target_node.entity_name
+            )
+            if target_table_desc:
+                target_table = target_table_desc.full_table_name
+                # Get target node's ID column
+                target_node_schema = self._graph_def.get_node_definition(
+                    target_node.entity_name
+                )
+                target_node_id_col = "id"
+                if target_node_schema and target_node_schema.node_id_property:
+                    target_node_id_col = target_node_schema.node_id_property.property_name
+
+                # Join direction depends on relationship direction
+                if relationship.direction == RelationshipDirection.BACKWARD:
+                    lines.append(
+                        f"JOIN {target_table} _exists_target "
+                        f"ON _exists_rel.{source_id_col} = _exists_target.{target_node_id_col}"
+                    )
+                else:
+                    lines.append(
+                        f"JOIN {target_table} _exists_target "
+                        f"ON _exists_rel.{target_id_col} = _exists_target.{target_node_id_col}"
+                    )
+
+        # Correlate with outer query using source node's ID
+        # The source node's ID field should be in the outer context
+        source_alias = source_node.alias or "_src"
+        # Get the source node's ID column from schema
+        source_node_schema = self._graph_def.get_node_definition(
+            source_node.entity_name
+        ) if source_node.entity_name else None
+        source_node_id_col = "id"
+        if source_node_schema and source_node_schema.node_id_property:
+            source_node_id_col = source_node_schema.node_id_property.property_name
+
+        outer_field = f"__{source_alias}_{source_node_id_col}"
+
+        # WHERE clause: correlate with outer query
+        if relationship.direction == RelationshipDirection.BACKWARD:
+            correlation = f"_exists_rel.{target_id_col} = {outer_field}"
+        else:
+            correlation = f"_exists_rel.{source_id_col} = {outer_field}"
+
+        where_parts = [correlation]
+
+        # Add any additional WHERE from the EXISTS pattern
+        if expr.where_expression:
+            # Render the where expression in context of the exists subquery
+            # This is tricky - we need to map variables properly
+            # For now, just render it directly
+            where_rendered = self._render_expression(expr.where_expression, context_op)
+            where_parts.append(where_rendered)
+
+        lines.append("WHERE " + " AND ".join(where_parts))
+
+        subquery = " ".join(lines)
+        return f"{prefix}EXISTS ({subquery})"
 
     def _has_aggregation(self, expr: QueryExpression) -> bool:
         """Check if an expression contains an aggregation function."""

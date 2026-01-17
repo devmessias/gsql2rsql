@@ -356,6 +356,18 @@ class JoinOperator(BinaryLogicalOperator):
     join_type: JoinType = JoinType.INNER
     join_pairs: list[JoinKeyPair] = field(default_factory=list)
 
+    def propagate_data_types_for_in_schema(self) -> None:
+        """Propagate data types from upstream operators to input schema."""
+        if self.in_operator_left and self.in_operator_right:
+            self.input_schema = Schema.merge(
+                self.in_operator_left.output_schema,
+                self.in_operator_right.output_schema,
+            )
+
+    def propagate_data_types_for_out_schema(self) -> None:
+        """Propagate data types from input schema to output schema."""
+        self.output_schema = Schema(self.input_schema.fields)
+
     @property
     def depth(self) -> int:
         left_depth = self.in_operator_left.depth if self.in_operator_left else 0

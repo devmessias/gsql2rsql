@@ -18,6 +18,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionAggregationFunction,
     QueryExpressionBinary,
     QueryExpressionCaseExpression,
+    QueryExpressionExists,
     QueryExpressionFunction,
     QueryExpressionList,
     QueryExpressionProperty,
@@ -763,7 +764,24 @@ class CypherVisitor:
     # =========================================================================
 
     def visit_oC_Atom(self, ctx: Any) -> QueryExpression:
-        """Visit an atom context."""
+        """Visit an atom context.
+
+        Grammar:
+        oC_Atom
+            :  oC_Literal
+            | oC_Parameter
+            | oC_CaseExpression
+            | ( COUNT SP? '(' SP? '*' SP? ')' )
+            | oC_ListComprehension
+            | oC_PatternComprehension
+            | oC_Quantifier
+            | oC_PatternPredicate
+            | oC_ParenthesizedExpression
+            | oC_FunctionInvocation
+            | oC_ExistentialSubquery
+            | oC_Variable
+            ;
+        """
         if ctx.oC_Literal():
             return self.visit(ctx.oC_Literal())
         if ctx.oC_Variable():
@@ -776,7 +794,10 @@ class CypherVisitor:
             return self.visit(ctx.oC_CaseExpression())
         if ctx.oC_ListComprehension():
             return self.visit(ctx.oC_ListComprehension())
-        if ctx.oC_COUNT():
+        if ctx.oC_ExistentialSubquery():
+            return self.visit(ctx.oC_ExistentialSubquery())
+        # Check for COUNT(*) - it's a token, not a rule
+        if hasattr(ctx, "COUNT") and ctx.COUNT():
             return QueryExpressionAggregationFunction(
                 aggregation_function=try_parse_aggregation_function("count")
                 or AggregationFunction.COUNT,
@@ -877,31 +898,99 @@ class CypherVisitor:
         return self.visit(ctx.oC_Expression())
 
     def visit_oC_CaseExpression(self, ctx: Any) -> QueryExpressionCaseExpression:
-        """Visit a CASE expression context."""
+        """Visit a CASE expression context.
+
+        Grammar:
+        oC_CaseExpression:
+            ( CASE ( oC_CaseAlternative )+ )                    # Simple CASE
+            | ( CASE oC_Expression ( oC_CaseAlternative )+ )    # Searched CASE
+            ( ELSE oC_Expression )? END
+
+        oC_CaseAlternative: WHEN oC_Expression THEN oC_Expression
+        """
         test_expr = None
         alternatives: list[tuple[QueryExpression, QueryExpression]] = []
         else_expr = None
 
-        # Get test expression if present
+        # Get all expressions - first one might be test expression
         exprs = ctx.oC_Expression() or []
 
-        # Process WHEN/THEN pairs
-        for i in range(0, len(exprs) - 1, 2):
-            when_expr = self.visit(exprs[i])
-            then_expr = self.visit(exprs[i + 1])
-            if isinstance(when_expr, QueryExpression) and isinstance(then_expr, QueryExpression):
-                alternatives.append((when_expr, then_expr))
+        # Get all CASE alternatives (WHEN/THEN pairs)
+        case_alternatives = ctx.oC_CaseAlternative() or []
 
-        # Get ELSE expression if present
-        if len(exprs) % 2 == 1:
-            else_expr = self.visit(exprs[-1])
-            if not isinstance(else_expr, QueryExpression):
-                else_expr = None
+        # If we have expressions AND case alternatives, first expression is test
+        # Otherwise it's a simple CASE (no test expression)
+        if exprs and case_alternatives:
+            # Check if first expression is test expression or ELSE
+            # ELSE expression comes after all alternatives, so if we have
+            # more alternatives than expressions, first expr is test
+            if len(exprs) == 1:
+                # Only one expression - could be ELSE
+                else_expr = self.visit(exprs[0])
+            elif len(exprs) == 2:
+                # Two expressions - first is test, second is ELSE
+                test_expr = self.visit(exprs[0])
+                else_expr = self.visit(exprs[1])
+            else:
+                # Multiple - first is test, last is ELSE
+                test_expr = self.visit(exprs[0])
+                else_expr = self.visit(exprs[-1])
+        elif exprs and not case_alternatives:
+            # No alternatives - this shouldn't happen in valid CASE
+            pass
+
+        # Process WHEN/THEN pairs from oC_CaseAlternative
+        for alt in case_alternatives:
+            alt_exprs = alt.oC_Expression() or []
+            if len(alt_exprs) >= 2:
+                when_expr = self.visit(alt_exprs[0])
+                then_expr = self.visit(alt_exprs[1])
+                if isinstance(when_expr, QueryExpression) and isinstance(
+                    then_expr, QueryExpression
+                ):
+                    alternatives.append((when_expr, then_expr))
 
         return QueryExpressionCaseExpression(
             test_expression=test_expr,
             alternatives=alternatives,
             else_expression=else_expr,
+        )
+
+    def visit_oC_ExistentialSubquery(self, ctx: Any) -> QueryExpressionExists:
+        """Visit an existential subquery context.
+
+        Grammar:
+        oC_ExistentialSubquery
+            :  EXISTS SP? '{' SP? ( oC_RegularQuery | ( oC_Pattern ( SP? oC_Where )? ) ) SP? '}' ;
+
+        This represents EXISTS { pattern } or EXISTS { MATCH ... RETURN ... } constructs.
+        """
+        pattern_entities: list[Entity] = []
+        where_expression: QueryExpression | None = None
+        subquery: QueryNode | None = None
+
+        # Check for full subquery (oC_RegularQuery)
+        if ctx.oC_RegularQuery():
+            subquery = self.visit(ctx.oC_RegularQuery())
+        # Check for pattern-based EXISTS
+        elif ctx.oC_Pattern():
+            pattern_entities = self.visit(ctx.oC_Pattern())
+            if isinstance(pattern_entities, Entity):
+                pattern_entities = [pattern_entities]
+            elif not isinstance(pattern_entities, list):
+                pattern_entities = []
+
+            # Check for optional WHERE clause
+            if ctx.oC_Where():
+                where_result = self.visit(ctx.oC_Where())
+                if isinstance(where_result, QueryExpression):
+                    where_expression = where_result
+
+        return QueryExpressionExists(
+            pattern_entities=pattern_entities,
+            where_expression=where_expression,
+            is_negated=False,  # NOT is handled in expression visitor
+            subquery=subquery,
         )
 
     # =========================================================================

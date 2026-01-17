@@ -290,6 +290,44 @@ class QueryExpressionWithAlias(QueryExpression):
         return f"{self.inner_expression} AS {self.alias}"
 
 
+@dataclass
+class QueryExpressionExists(QueryExpression):
+    """An EXISTS subquery expression.
+
+    Represents EXISTS { pattern } or EXISTS { MATCH pattern WHERE cond RETURN ... }
+    Used for semi-join semantics in WHERE clauses.
+    """
+
+    # Pattern entities forming the EXISTS pattern (for pattern-based EXISTS)
+    pattern_entities: list["Entity"] = field(default_factory=list)
+    # Optional WHERE clause within the EXISTS
+    where_expression: QueryExpression | None = None
+    # Whether this is NOT EXISTS
+    is_negated: bool = False
+    # For full subquery EXISTS (EXISTS { MATCH ... RETURN ... })
+    subquery: "QueryNode | None" = None
+
+    @property
+    def children(self) -> list[TreeNode]:
+        result: list[TreeNode] = list(self.pattern_entities)
+        if self.where_expression:
+            result.append(self.where_expression)
+        if self.subquery:
+            result.append(self.subquery)
+        return result
+
+    def evaluate_type(self) -> type[Any] | None:
+        return bool
+
+    def __str__(self) -> str:
+        neg = "NOT " if self.is_negated else ""
+        if self.subquery:
+            return f"{neg}EXISTS {{ {self.subquery} }}"
+        pattern = ", ".join(str(e) for e in self.pattern_entities)
+        where_part = f" WHERE {self.where_expression}" if self.where_expression else ""
+        return f"{neg}EXISTS {{ {pattern}{where_part} }}"
+
+
 # ==============================================================================
 # Query Structure Nodes
 # ==============================================================================

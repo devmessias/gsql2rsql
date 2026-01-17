@@ -116,6 +116,23 @@ class ISQLDBSchemaProvider(IGraphSchemaProvider, ABC):
         """
         ...
 
+    def find_edge_by_verb(
+        self, verb: str, target_node_name: str | None = None
+    ) -> tuple[EdgeSchema, SQLTableDescriptor] | None:
+        """
+        Find an edge schema by verb (relationship name), optionally filtered by target node.
+
+        This is useful when the source node type is unknown (e.g., in EXISTS patterns).
+
+        Args:
+            verb: The relationship type/verb (e.g., "ACTED_IN")
+            target_node_name: Optional target node type to filter by
+
+        Returns:
+            Tuple of (EdgeSchema, SQLTableDescriptor) if found, None otherwise.
+        """
+        return None  # Default implementation - subclasses can override
+
 
 class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
     """A simple in-memory SQL schema provider."""
@@ -157,6 +174,21 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
     def get_sql_table_descriptors(self, entity_name: str) -> SQLTableDescriptor | None:
         """Get the SQL table descriptor for an entity."""
         return self._table_descriptors.get(entity_name)
+
+    def find_edge_by_verb(
+        self, verb: str, target_node_name: str | None = None
+    ) -> tuple[EdgeSchema, SQLTableDescriptor] | None:
+        """Find an edge schema by verb, optionally filtered by target node."""
+        for edge_id, edge_schema in self._edges.items():
+            if edge_schema.name == verb:
+                # Check target node if specified
+                if target_node_name and edge_schema.sink_node_id != target_node_name:
+                    continue
+                # Found matching edge
+                table_desc = self._table_descriptors.get(edge_id)
+                if table_desc:
+                    return (edge_schema, table_desc)
+        return None
 
     def add_table(self, descriptor: SQLTableDescriptor) -> None:
         """
