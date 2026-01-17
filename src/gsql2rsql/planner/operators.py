@@ -7,16 +7,16 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Iterator
 
-from opencypher_transpiler.common.exceptions import TranspilerInternalErrorException
-from opencypher_transpiler.common.schema import IGraphSchemaProvider
-from opencypher_transpiler.common.utils import change_indentation, fnv_hash
-from opencypher_transpiler.parser.ast import (
+from gsql2rsql.common.exceptions import TranspilerInternalErrorException
+from gsql2rsql.common.schema import IGraphSchemaProvider
+from gsql2rsql.common.utils import change_indentation, fnv_hash
+from gsql2rsql.parser.ast import (
     Entity,
     NodeEntity,
     QueryExpression,
     RelationshipEntity,
 )
-from opencypher_transpiler.planner.schema import (
+from gsql2rsql.planner.schema import (
     EntityField,
     EntityType,
     Field,
@@ -192,7 +192,7 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
         if isinstance(self.entity, NodeEntity):
             node_def = graph_definition.get_node_definition(self.entity.entity_name)
             if not node_def:
-                from opencypher_transpiler.common.exceptions import (
+                from gsql2rsql.common.exceptions import (
                     TranspilerBindingException,
                 )
                 raise TranspilerBindingException(
@@ -221,7 +221,7 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
             rel_entity = self.entity
             edge_def = None
 
-            from opencypher_transpiler.parser.ast import RelationshipDirection
+            from gsql2rsql.parser.ast import RelationshipDirection
 
             if rel_entity.direction == RelationshipDirection.FORWARD:
                 edge_def = graph_definition.get_edge_definition(
@@ -250,7 +250,7 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
                     )
 
             if not edge_def:
-                from opencypher_transpiler.common.exceptions import (
+                from gsql2rsql.common.exceptions import (
                     TranspilerBindingException,
                 )
                 raise TranspilerBindingException(
@@ -434,3 +434,43 @@ class SetOperator(BinaryLogicalOperator):
     def __str__(self) -> str:
         base = super().__str__()
         return f"{base}\n  SetOp: {self.set_operation.name}"
+
+
+class RecursiveTraversalOperator(LogicalOperator):
+    """Operator for recursive traversal (BFS/DFS with variable-length paths)."""
+
+    def __init__(
+        self,
+        edge_types: list[str],
+        source_node_type: str,
+        target_node_type: str,
+        min_hops: int,
+        max_hops: int | None = None,
+        source_id_column: str = "id",
+        target_id_column: str = "id",
+        start_node_filter: QueryExpression | None = None,
+        cte_name: str = "",
+        source_alias: str = "",
+        target_alias: str = "",
+    ) -> None:
+        super().__init__()
+        self.edge_types = edge_types
+        self.source_node_type = source_node_type
+        self.target_node_type = target_node_type
+        self.min_hops = min_hops
+        self.max_hops = max_hops
+        self.source_id_column = source_id_column
+        self.target_id_column = target_id_column
+        self.start_node_filter = start_node_filter
+        self.cte_name = cte_name
+        self.source_alias = source_alias
+        self.target_alias = target_alias
+
+    @property
+    def depth(self) -> int:
+        return (self.in_operator.depth if self.in_operator else 0) + 1
+
+    def __str__(self) -> str:
+        edge_str = "|".join(self.edge_types)
+        hops_str = f"*{self.min_hops}..{self.max_hops}" if self.max_hops else f"*{self.min_hops}.."
+        return f"RecursiveTraversal({edge_str}{hops_str})"

@@ -1,7 +1,7 @@
 """openCypher parser using ANTLR4."""
 
-from opencypher_transpiler.common.logging import ILoggable
-from opencypher_transpiler.parser.ast import QueryNode, SingleQueryNode
+from gsql2rsql.common.logging import ILoggable
+from gsql2rsql.parser.ast import QueryNode, SingleQueryNode
 
 
 class OpenCypherParser:
@@ -35,13 +35,13 @@ class OpenCypherParser:
         """
         # Import here to avoid circular imports and allow for lazy loading
         # of ANTLR generated code
-        from opencypher_transpiler.parser.visitor import CypherVisitor
+        from gsql2rsql.parser.visitor import CypherVisitor
 
         try:
             from antlr4 import CommonTokenStream, InputStream
 
-            from opencypher_transpiler.parser.grammar.CypherLexer import CypherLexer
-            from opencypher_transpiler.parser.grammar.CypherParser import CypherParser
+            from gsql2rsql.parser.grammar.CypherLexer import CypherLexer
+            from gsql2rsql.parser.grammar.CypherParser import CypherParser
         except ImportError as e:
             raise ImportError(
                 "ANTLR4 runtime or generated parser not found. "

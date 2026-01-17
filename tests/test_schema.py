@@ -2,7 +2,7 @@
 
 import pytest
 
-from opencypher_transpiler.common.schema import (
+from gsql2rsql.common.schema import (
     EdgeSchema,
     EntityProperty,
     NodeSchema,

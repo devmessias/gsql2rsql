@@ -2,7 +2,7 @@
 
 import pytest
 
-from opencypher_transpiler.planner.operators import (
+from gsql2rsql.planner.operators import (
     DataSourceOperator,
     JoinOperator,
     JoinType,
@@ -11,7 +11,7 @@ from opencypher_transpiler.planner.operators import (
     SetOperator,
     SetOperationType,
 )
-from opencypher_transpiler.planner.schema import (
+from gsql2rsql.planner.schema import (
     EntityField,
     Schema,
     ValueField,

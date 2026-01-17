@@ -1,0 +1,35 @@
+{
+  "nodes": [
+    {
+      "name": "Person",
+      "tableName": "graph.Person",
+      "idProperty": {"name": "id", "type": "int"},
+      "properties": [
+        {"name": "name", "type": "string"},
+        {"name": "age", "type": "int"}
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "name": "KNOWS",
+      "sourceNode": "Person",
+      "sinkNode": "Person",
+      "tableName": "graph.edges",
+      "filter": "edge_type = 'KNOWS'",
+      "sourceIdProperty": {"name": "source_id", "type": "int"},
+      "sinkIdProperty": {"name": "target_id", "type": "int"},
+      "properties": []
+    },
+    {
+      "name": "FOLLOWS",
+      "sourceNode": "Person",
+      "sinkNode": "Person",
+      "tableName": "graph.edges",
+      "filter": "edge_type = 'FOLLOWS'",
+      "sourceIdProperty": {"name": "source_id", "type": "int"},
+      "sinkIdProperty": {"name": "target_id", "type": "int"},
+      "properties": []
+    }
+  ]
+}

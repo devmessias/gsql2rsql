@@ -2,7 +2,7 @@
 
 import pytest
 
-from opencypher_transpiler.parser.ast import (
+from gsql2rsql.parser.ast import (
     NodeEntity,
     QueryExpressionProperty,
     QueryExpressionValue,

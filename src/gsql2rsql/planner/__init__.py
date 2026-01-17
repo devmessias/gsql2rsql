@@ -1,7 +1,7 @@
 """Logical planner module."""
 
-from opencypher_transpiler.planner.logical_plan import LogicalPlan
-from opencypher_transpiler.planner.operators import (
+from gsql2rsql.planner.logical_plan import LogicalPlan
+from gsql2rsql.planner.operators import (
     DataSourceOperator,
     JoinOperator,
     LogicalOperator,
@@ -10,7 +10,7 @@ from opencypher_transpiler.planner.operators import (
     SetOperator,
     StartLogicalOperator,
 )
-from opencypher_transpiler.planner.schema import EntityField, Field, Schema, ValueField
+from gsql2rsql.planner.schema import EntityField, Field, Schema, ValueField
 
 __all__ = [
     "LogicalPlan",

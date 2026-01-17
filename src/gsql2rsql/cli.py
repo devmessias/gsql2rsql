@@ -9,11 +9,11 @@ from typing import TextIO
 
 import click
 
-from opencypher_transpiler import __version__
+from gsql2rsql import __version__
 
 
 @click.group()
-@click.version_option(version=__version__, prog_name="opencypher-transpiler")
+@click.version_option(version=__version__, prog_name="gsql2rsql")
 def main() -> None:
     """openCypher Transpiler - Convert openCypher queries to SQL."""
     pass
@@ -50,7 +50,7 @@ def transpile(
     schema_file: Path,
     pretty: bool,
 ) -> None:
-    """Transpile an openCypher query to T-SQL."""
+    """Transpile an openCypher query to Databricks SQL."""
     # Read the query
     if input_file:
         query = input_file.read_text(encoding="utf-8")
@@ -74,7 +74,7 @@ def transpile(
 
     # Transpile
     try:
-        from opencypher_transpiler import LogicalPlan, OpenCypherParser, SQLRenderer
+        from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -123,7 +123,7 @@ def parse(
 
     # Parse
     try:
-        from opencypher_transpiler import OpenCypherParser
+        from gsql2rsql import OpenCypherParser
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -153,7 +153,7 @@ def init_schema(output_file: Path | None) -> None:
         "nodes": [
             {
                 "name": "Person",
-                "tableName": "dbo.Person",
+                "tableName": "catalog.schema.Person",
                 "idProperty": {"name": "id", "type": "int"},
                 "properties": [
                     {"name": "name", "type": "string"},
@@ -162,7 +162,7 @@ def init_schema(output_file: Path | None) -> None:
             },
             {
                 "name": "Movie",
-                "tableName": "dbo.Movie",
+                "tableName": "catalog.schema.Movie",
                 "idProperty": {"name": "id", "type": "int"},
                 "properties": [
                     {"name": "title", "type": "string"},
@@ -175,7 +175,7 @@ def init_schema(output_file: Path | None) -> None:
                 "name": "ACTED_IN",
                 "sourceNode": "Person",
                 "sinkNode": "Movie",
-                "tableName": "dbo.ActedIn",
+                "tableName": "catalog.schema.ActedIn",
                 "sourceIdProperty": {"name": "person_id", "type": "int"},
                 "sinkIdProperty": {"name": "movie_id", "type": "int"},
                 "properties": [
@@ -196,8 +196,8 @@ def init_schema(output_file: Path | None) -> None:
 
 def _load_schema(schema_data: dict) -> "ISQLDBSchemaProvider":
     """Load a graph schema from JSON data."""
-    from opencypher_transpiler.common.schema import EntityProperty, NodeSchema, EdgeSchema
-    from opencypher_transpiler.renderer.schema_provider import (
+    from gsql2rsql.common.schema import EntityProperty, NodeSchema, EdgeSchema
+    from gsql2rsql.renderer.schema_provider import (
         SimpleSQLSchemaProvider,
         SQLTableDescriptor,
     )
@@ -274,7 +274,11 @@ def _load_schema(schema_data: dict) -> "ISQLDBSchemaProvider":
         )
 
         table_name = edge_data.get("tableName", edge_data["name"])
-        table_desc = SQLTableDescriptor(table_or_view_name=table_name)
+        table_filter = edge_data.get("filter")  # Optional WHERE clause filter
+        table_desc = SQLTableDescriptor(
+            table_or_view_name=table_name,
+            filter=table_filter,
+        )
 
         provider.add_edge(edge_schema, table_desc)
 

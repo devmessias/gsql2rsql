@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Iterator
 
-from opencypher_transpiler.common.utils import change_indentation
-from opencypher_transpiler.parser.operators import (
+from gsql2rsql.common.utils import change_indentation
+from gsql2rsql.parser.operators import (
     AggregationFunction,
     BinaryOperator,
     BinaryOperatorInfo,
@@ -154,7 +154,7 @@ class QueryExpressionBinary(QueryExpression):
     def evaluate_type(self) -> type[Any] | None:
         if not self.operator:
             return None
-        from opencypher_transpiler.parser.operators import BinaryOperatorType
+        from gsql2rsql.parser.operators import BinaryOperatorType
 
         if self.operator.operator_type == BinaryOperatorType.LOGICAL:
             return bool
@@ -379,6 +379,14 @@ class RelationshipEntity(Entity):
     direction: RelationshipDirection = RelationshipDirection.BOTH
     left_entity_name: str = ""
     right_entity_name: str = ""
+    # Variable-length path support
+    min_hops: int | None = None  # None means fixed (not variable length)
+    max_hops: int | None = None  # None means unlimited
+
+    @property
+    def is_variable_length(self) -> bool:
+        """Check if this is a variable-length relationship pattern."""
+        return self.min_hops is not None or self.max_hops is not None
 
     def __str__(self) -> str:
         dir_char = {
@@ -386,7 +394,17 @@ class RelationshipEntity(Entity):
             RelationshipDirection.BACKWARD: "<-",
             RelationshipDirection.BOTH: "-",
         }[self.direction]
-        return f"[{self.alias}:{self.entity_name}]{dir_char}"
+        hops = ""
+        if self.is_variable_length:
+            if self.min_hops is not None and self.max_hops is not None:
+                hops = f"*{self.min_hops}..{self.max_hops}"
+            elif self.min_hops is not None:
+                hops = f"*{self.min_hops}.."
+            elif self.max_hops is not None:
+                hops = f"*..{self.max_hops}"
+            else:
+                hops = "*"
+        return f"[{self.alias}:{self.entity_name}{hops}]{dir_char}"
 
 
 # ==============================================================================

@@ -1,6 +1,6 @@
 """Common utilities and interfaces for the openCypher transpiler."""
 
-from opencypher_transpiler.common.exceptions import (
+from gsql2rsql.common.exceptions import (
     TranspilerBindingException,
     TranspilerException,
     TranspilerInternalErrorException,

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from opencypher_transpiler.common.exceptions import TranspilerSyntaxErrorException
-from opencypher_transpiler.common.logging import ILoggable
-from opencypher_transpiler.parser.ast import (
+from gsql2rsql.common.exceptions import TranspilerSyntaxErrorException
+from gsql2rsql.common.logging import ILoggable
+from gsql2rsql.parser.ast import (
     Entity,
     InfixOperator,
     InfixQueryNode,
@@ -30,7 +30,7 @@ from opencypher_transpiler.parser.ast import (
     SortItem,
     SortOrder,
 )
-from opencypher_transpiler.parser.operators import (
+from gsql2rsql.parser.operators import (
     Function,
     try_get_function,
     try_get_operator,
@@ -304,6 +304,8 @@ class CypherVisitor:
 
         alias = ""
         entity_name = ""
+        min_hops = None
+        max_hops = None
 
         if detail_ctx:
             if detail_ctx.oC_Variable():
@@ -312,10 +314,32 @@ class CypherVisitor:
                 types_text = detail_ctx.oC_RelationshipTypes().getText()
                 entity_name = types_text.lstrip(":")
 
+            # Extract variable-length path information (e.g., *1..5)
+            if detail_ctx.oC_RangeLiteral():
+                range_ctx = detail_ctx.oC_RangeLiteral()
+                # Parse the range literal - format: *[min][..[max]]
+                integers = range_ctx.oC_IntegerLiteral()
+                if integers:
+                    if len(integers) >= 1:
+                        min_hops = int(integers[0].getText())
+                    if len(integers) >= 2:
+                        max_hops = int(integers[1].getText())
+                    elif ".." in range_ctx.getText():
+                        # *1.. means min_hops only, unlimited max
+                        pass
+                    else:
+                        # *3 means exactly 3 hops (min=max=3)
+                        max_hops = min_hops
+                else:
+                    # Just * means any number of hops (default 1..unlimited)
+                    min_hops = 1
+
         return RelationshipEntity(
             alias=alias,
             entity_name=entity_name,
             direction=direction,
+            min_hops=min_hops,
+            max_hops=max_hops,
         )
 
     # =========================================================================

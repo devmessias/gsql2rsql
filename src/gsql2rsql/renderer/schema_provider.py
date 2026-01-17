@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from opencypher_transpiler.common.schema import (
+from gsql2rsql.common.schema import (
     EdgeSchema,
     EntityProperty,
     IGraphSchemaProvider,
@@ -36,16 +36,18 @@ class SQLTableDescriptor:
     node_id_columns: list[str] = field(default_factory=list)
     entity_id: str | None = None
     table_name: str | None = field(default=None, repr=False)
+    filter: str | None = None
 
     def __post_init__(self) -> None:
         """Parse table_name if provided and table_or_view_name is not set."""
         if self.table_name and not self.table_or_view_name:
             if "." in self.table_name:
-                parts = self.table_name.split(".", 1)
+                parts = self.table_name.rsplit(".", 1)
                 # Use object.__setattr__ since dataclass may be frozen
                 object.__setattr__(self, "schema_name", parts[0])
                 object.__setattr__(self, "table_or_view_name", parts[1])
             else:
+                object.__setattr__(self, "schema_name", "")
                 object.__setattr__(self, "table_or_view_name", self.table_name)
 
     @classmethod
@@ -71,11 +73,11 @@ class SQLTableDescriptor:
             A new SQLTableDescriptor instance.
         """
         if "." in table_name:
-            parts = table_name.split(".", 1)
+            parts = table_name.rsplit(".", 1)
             schema_name = parts[0]
             table_or_view_name = parts[1]
         else:
-            schema_name = "dbo"
+            schema_name = ""
             table_or_view_name = table_name
 
         return cls(
@@ -90,8 +92,8 @@ class SQLTableDescriptor:
     def full_table_name(self) -> str:
         """Get the fully qualified table name."""
         if self.schema_name:
-            return f"[{self.schema_name}].[{self.table_or_view_name}]"
-        return f"[{self.table_or_view_name}]"
+            return f"`{self.schema_name}`.`{self.table_or_view_name}`"
+        return f"`{self.table_or_view_name}`"
 
 
 class ISQLDBSchemaProvider(IGraphSchemaProvider, ABC):

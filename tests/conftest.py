@@ -3,12 +3,12 @@
 from typing import Any
 import pytest
 
-from opencypher_transpiler.common.schema import (
+from gsql2rsql.common.schema import (
     EdgeSchema,
     NodeSchema,
     SimpleGraphSchemaProvider,
 )
-from opencypher_transpiler.renderer.schema_provider import (
+from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
     SQLTableDescriptor,
 )

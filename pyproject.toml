@@ -1,14 +1,14 @@
 [project]
-name = "opencypher-transpiler"
+name = "gsql2rsql"
 version = "0.1.0"
-description = "Transpile openCypher queries to SQL (T-SQL) using a relational query pipeline"
+description = "Transpile Graph Query Language (openCypher) to Recursive SQL (Databricks)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 authors = [
     { name = "Microsoft Corporation" },
 ]
-keywords = ["opencypher", "cypher", "sql", "tsql", "transpiler", "graph", "query"]
+keywords = ["opencypher", "cypher", "sql", "databricks", "recursive", "graph", "query", "transpiler"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -34,14 +34,14 @@ dev = [
 ]
 
 [project.scripts]
-opencypher-transpiler = "opencypher_transpiler.cli:main"
+gsql2rsql = "gsql2rsql.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/opencypher_transpiler"]
+packages = ["src/gsql2rsql"]
 
 [tool.mypy]
 python_version = "3.12"

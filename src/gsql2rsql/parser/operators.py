@@ -103,6 +103,7 @@ class AggregationFunction(Enum):
     PERCENTILE_DISC = auto()
     STDEV = auto()
     STDEVP = auto()
+    COLLECT = auto()
 
 
 def try_parse_aggregation_function(function_name: str) -> AggregationFunction | None:
@@ -127,6 +128,7 @@ def try_parse_aggregation_function(function_name: str) -> AggregationFunction | 
         "percentiledisc": AggregationFunction.PERCENTILE_DISC,
         "stdev": AggregationFunction.STDEV,
         "stdevp": AggregationFunction.STDEVP,
+        "collect": AggregationFunction.COLLECT,
     }
     return mapping.get(function_name.lower())
 
