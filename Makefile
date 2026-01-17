@@ -38,6 +38,22 @@ test-verbose:  ## Run tests with verbose output
 	$(UV) run pytest tests/ -v --tb=long
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Testing & Validation
+# ─────────────────────────────────────────────────────────────────────────────
+
+test-equivalence:  ## Test SQL equivalence for generated queries
+	$(UV) run python scripts/test_equivalence.py
+
+generate-test-queries:  ## Generate comprehensive OpenCypher test queries
+	$(UV) run python scripts/generate_queries.py
+
+validate-sql-syntax:  ## Validate generated SQL syntax
+	$(UV) run python scripts/validate_sql.py
+
+benchmark-queries:  ## Benchmark query transpilation performance
+	$(UV) run python scripts/benchmark.py
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Code Quality
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -105,6 +121,46 @@ cli-bfs-from-root:  ## Run BFS from specific root node
 
 cli-bfs-multi-edge:  ## Run BFS with multiple edge types (single table with filter)
 	@echo "MATCH (p:Person)-[:KNOWS|FOLLOWS*1..3]->(f:Person) WHERE p.id = 1 RETURN DISTINCT f.id, f.name" | $(UV) run gsql2rsql transpile -s $(EXAMPLE_SCHEMA_SINGLE_TABLE)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-Query SQL Dump & Diff (for human validation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+dump-sql-01:  ## Dump SQL for test 01 (simple node lookup)
+	@$(UV) run python scripts/dump_query_sql.py 01 simple_node_lookup --diff
+
+dump-sql-02:  ## Dump SQL for test 02 (node with property filter)
+	@$(UV) run python scripts/dump_query_sql.py 02 node_with_property_filter --diff
+
+dump-sql-03:  ## Dump SQL for test 03 (property projection)
+	@$(UV) run python scripts/dump_query_sql.py 03 property_projection_aliases --diff
+
+dump-sql-06:  ## Dump SQL for test 06 (single-hop relationship)
+	@$(UV) run python scripts/dump_query_sql.py 06 single_hop_relationship --diff
+
+dump-sql:  ## Dump SQL for a specific test (usage: make dump-sql ID=01 NAME=simple_node_lookup)
+	@$(UV) run python scripts/dump_query_sql.py $(ID) $(NAME) --diff
+
+dump-sql-save:  ## Dump and save SQL to actual/ (usage: make dump-sql-save ID=01 NAME=simple_node_lookup)
+	@$(UV) run python scripts/dump_query_sql.py $(ID) $(NAME) --save --diff
+
+dump-sql-custom:  ## Dump SQL for custom Cypher (usage: make dump-sql-custom CYPHER="MATCH (n) RETURN n")
+	@$(UV) run python scripts/dump_query_sql.py 00 custom --cypher "$(CYPHER)"
+
+test-transpile:  ## Run transpiler tests only
+	$(UV) run pytest tests/transpile_tests/ -v
+
+test-transpile-golden:  ## Run only golden file tests
+	$(UV) run pytest tests/transpile_tests/ -v -k "golden"
+
+diff-all:  ## Show all diffs between actual and expected SQL
+	@for f in tests/output/diff/*.diff; do \
+		if [ -f "$$f" ]; then \
+			echo "=== $$f ==="; \
+			cat "$$f"; \
+			echo ""; \
+		fi; \
+	done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilities
