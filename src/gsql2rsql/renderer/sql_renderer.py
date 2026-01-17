@@ -12,6 +12,7 @@ from gsql2rsql.common.exceptions import (
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import (
     Entity,
+    ListPredicateType,
     NodeEntity,
     QueryExpression,
     QueryExpressionAggregationFunction,
@@ -20,7 +21,12 @@ from gsql2rsql.parser.ast import (
     QueryExpressionExists,
     QueryExpressionFunction,
     QueryExpressionList,
+    QueryExpressionListComprehension,
+    QueryExpressionListPredicate,
+    QueryExpressionMapLiteral,
+    QueryExpressionParameter,
     QueryExpressionProperty,
+    QueryExpressionReduce,
     QueryExpressionValue,
     RelationshipDirection,
     RelationshipEntity,
@@ -42,6 +48,7 @@ from gsql2rsql.planner.operators import (
     SelectionOperator,
     SetOperationType,
     SetOperator,
+    UnwindOperator,
 )
 from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, ValueField
@@ -565,6 +572,8 @@ class SQLRenderer:
             return self._render_set_operator(op, depth)
         elif isinstance(op, RecursiveTraversalOperator):
             return self._render_recursive_reference(op, depth)
+        elif isinstance(op, UnwindOperator):
+            return self._render_unwind(op, depth)
         else:
             raise TranspilerNotSupportedException(
                 f"Operator type {type(op).__name__}"
@@ -1020,6 +1029,49 @@ class SQLRenderer:
 
         return "\n".join(lines)
 
+    def _render_unwind(self, op: UnwindOperator, depth: int) -> str:
+        """Render an UNWIND operator using Databricks SQL TVF syntax.
+
+        UNWIND expression AS variable becomes:
+        SELECT _unwind_source.*, variable
+        FROM (inner) AS _unwind_source,
+        EXPLODE(expression) AS _exploded(variable)
+
+        For NULL/empty array preservation, use EXPLODE_OUTER instead.
+        The preserve_nulls flag on the operator controls this behavior.
+        """
+        lines: list[str] = []
+        indent = self._indent(depth)
+
+        if not op.in_operator:
+            return ""
+
+        var_name = op.variable_name
+
+        # Render the list expression
+        if op.list_expression:
+            list_sql = self._render_expression(op.list_expression, op)
+        else:
+            list_sql = "ARRAY()"
+
+        # Choose explode function based on NULL preservation needs
+        # Default to EXPLODE (drops rows with NULL/empty arrays)
+        # Use EXPLODE_OUTER if we need to preserve rows with NULL/empty arrays
+        explode_func = "EXPLODE_OUTER" if getattr(op, 'preserve_nulls', False) else "EXPLODE"
+
+        # Build the SELECT with all columns from source plus the unwound variable
+        lines.append(f"{indent}SELECT")
+        lines.append(f"{indent}   _unwind_source.*")
+        lines.append(f"{indent}  ,{var_name}")
+        lines.append(f"{indent}FROM (")
+        lines.append(self._render_operator(op.in_operator, depth + 1))
+        lines.append(f"{indent}) AS _unwind_source,")
+        lines.append(
+            f"{indent}{explode_func}({list_sql}) AS _exploded({var_name})"
+        )
+
+        return "\n".join(lines)
+
     def _render_projection(self, op: ProjectionOperator, depth: int) -> str:
         """Render a projection (SELECT) operator."""
         lines: list[str] = []
@@ -1055,6 +1107,11 @@ class SQLRenderer:
             if non_agg_exprs:
                 group_by = ", ".join(non_agg_exprs)
                 lines.append(f"{indent}GROUP BY {group_by}")
+
+        # HAVING clause (filter on aggregated columns)
+        if op.having_expression:
+            having_sql = self._render_expression(op.having_expression, op)
+            lines.append(f"{indent}HAVING {having_sql}")
 
         # Order by
         if op.order_by:
@@ -1106,6 +1163,8 @@ class SQLRenderer:
         """Render an expression to SQL."""
         if isinstance(expr, QueryExpressionValue):
             return self._render_value(expr)
+        elif isinstance(expr, QueryExpressionParameter):
+            return self._render_parameter(expr)
         elif isinstance(expr, QueryExpressionProperty):
             return self._render_property(expr, context_op)
         elif isinstance(expr, QueryExpressionBinary):
@@ -1120,6 +1179,14 @@ class SQLRenderer:
             return self._render_case(expr, context_op)
         elif isinstance(expr, QueryExpressionExists):
             return self._render_exists(expr, context_op)
+        elif isinstance(expr, QueryExpressionListPredicate):
+            return self._render_list_predicate(expr, context_op)
+        elif isinstance(expr, QueryExpressionListComprehension):
+            return self._render_list_comprehension(expr, context_op)
+        elif isinstance(expr, QueryExpressionReduce):
+            return self._render_reduce(expr, context_op)
+        elif isinstance(expr, QueryExpressionMapLiteral):
+            return self._render_map_literal(expr, context_op)
         else:
             return str(expr)
 
@@ -1133,6 +1200,13 @@ class SQLRenderer:
         if isinstance(expr.value, bool):
             return "TRUE" if expr.value else "FALSE"
         return str(expr.value)
+
+    def _render_parameter(self, expr: QueryExpressionParameter) -> str:
+        """Render a parameter expression (Databricks SQL syntax).
+
+        Uses :param_name syntax for named parameters in Databricks SQL.
+        """
+        return f":{expr.parameter_name}"
 
     def _render_property(
         self, expr: QueryExpressionProperty, context_op: LogicalOperator
@@ -1149,6 +1223,15 @@ class SQLRenderer:
         """Render a binary expression."""
         if not expr.operator or not expr.left_expression or not expr.right_expression:
             return "NULL"
+
+        # Special handling for IN with parameter: use ARRAY_CONTAINS
+        if (
+            expr.operator.name == BinaryOperator.IN
+            and isinstance(expr.right_expression, QueryExpressionParameter)
+        ):
+            left = self._render_expression(expr.left_expression, context_op)
+            right = self._render_expression(expr.right_expression, context_op)
+            return f"ARRAY_CONTAINS({right}, {left})"
 
         left = self._render_expression(expr.left_expression, context_op)
         right = self._render_expression(expr.right_expression, context_op)
@@ -1213,15 +1296,169 @@ class SQLRenderer:
             if params:
                 return f"COALESCE({', '.join(params)})"
             return "NULL"
+        elif func == Function.RANGE:
+            # Cypher: RANGE(start, end[, step]) -> Databricks: SEQUENCE(start, end[, step])
+            # Note: Cypher RANGE is inclusive, Databricks SEQUENCE is inclusive
+            if len(params) >= 2:
+                return f"SEQUENCE({', '.join(params)})"
+            return "ARRAY()"
+        elif func == Function.SIZE:
+            # SIZE works for both strings (LENGTH) and arrays (SIZE) in Databricks
+            return f"SIZE({params[0]})" if params else "0"
+        # Math functions - direct mapping to Databricks SQL
+        elif func == Function.ABS:
+            return f"ABS({params[0]})" if params else "NULL"
+        elif func == Function.CEIL:
+            return f"CEIL({params[0]})" if params else "NULL"
+        elif func == Function.FLOOR:
+            return f"FLOOR({params[0]})" if params else "NULL"
+        elif func == Function.ROUND:
+            if len(params) >= 2:
+                return f"ROUND({params[0]}, {params[1]})"
+            return f"ROUND({params[0]})" if params else "NULL"
+        elif func == Function.SQRT:
+            return f"SQRT({params[0]})" if params else "NULL"
+        elif func == Function.SIGN:
+            return f"SIGN({params[0]})" if params else "NULL"
+        elif func == Function.LOG:
+            # Cypher log() is natural log -> Databricks LN()
+            return f"LN({params[0]})" if params else "NULL"
+        elif func == Function.LOG10:
+            return f"LOG10({params[0]})" if params else "NULL"
+        elif func == Function.EXP:
+            return f"EXP({params[0]})" if params else "NULL"
+        elif func == Function.SIN:
+            return f"SIN({params[0]})" if params else "NULL"
+        elif func == Function.COS:
+            return f"COS({params[0]})" if params else "NULL"
+        elif func == Function.TAN:
+            return f"TAN({params[0]})" if params else "NULL"
+        elif func == Function.ASIN:
+            return f"ASIN({params[0]})" if params else "NULL"
+        elif func == Function.ACOS:
+            return f"ACOS({params[0]})" if params else "NULL"
+        elif func == Function.ATAN:
+            return f"ATAN({params[0]})" if params else "NULL"
+        elif func == Function.ATAN2:
+            if len(params) >= 2:
+                return f"ATAN2({params[0]}, {params[1]})"
+            return "NULL"
+        elif func == Function.DEGREES:
+            return f"DEGREES({params[0]})" if params else "NULL"
+        elif func == Function.RADIANS:
+            return f"RADIANS({params[0]})" if params else "NULL"
+        elif func == Function.RAND:
+            return "RAND()"
+        elif func == Function.PI:
+            return "PI()"
+        elif func == Function.E:
+            return "E()"
+        # Date/Time functions
+        elif func == Function.DATE:
+            # date() -> CURRENT_DATE()
+            # date({year: y, month: m, day: d}) -> MAKE_DATE(y, m, d)
+            if not params:
+                return "CURRENT_DATE()"
+            # If first param is a map literal, we need to handle it specially
+            first_param = expr.parameters[0] if expr.parameters else None
+            if isinstance(first_param, QueryExpressionMapLiteral):
+                return self._render_date_from_map(first_param, context_op)
+            # date(string) - parse a date string
+            return f"TO_DATE({params[0]})"
+        elif func == Function.DATETIME:
+            # datetime() -> CURRENT_TIMESTAMP()
+            # datetime({...}) -> construct from map
+            if not params:
+                return "CURRENT_TIMESTAMP()"
+            first_param = expr.parameters[0] if expr.parameters else None
+            if isinstance(first_param, QueryExpressionMapLiteral):
+                return self._render_datetime_from_map(first_param, context_op)
+            # datetime(string) - parse a timestamp string
+            return f"TO_TIMESTAMP({params[0]})"
+        elif func == Function.LOCALDATETIME:
+            # localdatetime() -> CURRENT_TIMESTAMP()
+            if not params:
+                return "CURRENT_TIMESTAMP()"
+            first_param = expr.parameters[0] if expr.parameters else None
+            if isinstance(first_param, QueryExpressionMapLiteral):
+                return self._render_datetime_from_map(first_param, context_op)
+            return f"TO_TIMESTAMP({params[0]})"
+        elif func == Function.TIME:
+            # time() -> DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')
+            if not params:
+                return "DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')"
+            first_param = expr.parameters[0] if expr.parameters else None
+            if isinstance(first_param, QueryExpressionMapLiteral):
+                return self._render_time_from_map(first_param, context_op)
+            return f"DATE_FORMAT(TO_TIMESTAMP({params[0]}), 'HH:mm:ss')"
+        elif func == Function.LOCALTIME:
+            # localtime() -> DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')
+            if not params:
+                return "DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')"
+            return f"DATE_FORMAT(TO_TIMESTAMP({params[0]}), 'HH:mm:ss')"
+        elif func == Function.DURATION:
+            # duration({days: d, hours: h, ...}) -> INTERVAL 'd' DAY + INTERVAL 'h' HOUR + ...
+            first_param = expr.parameters[0] if expr.parameters else None
+            if isinstance(first_param, QueryExpressionMapLiteral):
+                return self._render_duration_from_map(first_param, context_op)
+            return "INTERVAL '0' DAY"
+        elif func == Function.DURATION_BETWEEN:
+            # duration.between(d1, d2) -> DATEDIFF(d2, d1)
+            if len(params) >= 2:
+                return f"DATEDIFF({params[1]}, {params[0]})"
+            return "0"
+        # Date component extraction
+        elif func == Function.DATE_YEAR:
+            return f"YEAR({params[0]})" if params else "NULL"
+        elif func == Function.DATE_MONTH:
+            return f"MONTH({params[0]})" if params else "NULL"
+        elif func == Function.DATE_DAY:
+            return f"DAY({params[0]})" if params else "NULL"
+        elif func == Function.DATE_HOUR:
+            return f"HOUR({params[0]})" if params else "NULL"
+        elif func == Function.DATE_MINUTE:
+            return f"MINUTE({params[0]})" if params else "NULL"
+        elif func == Function.DATE_SECOND:
+            return f"SECOND({params[0]})" if params else "NULL"
+        elif func == Function.DATE_WEEK:
+            return f"WEEKOFYEAR({params[0]})" if params else "NULL"
+        elif func == Function.DATE_DAYOFWEEK:
+            return f"DAYOFWEEK({params[0]})" if params else "NULL"
+        elif func == Function.DATE_QUARTER:
+            return f"QUARTER({params[0]})" if params else "NULL"
+        elif func == Function.DATE_TRUNCATE:
+            # date.truncate('unit', d) -> DATE_TRUNC(unit, d)
+            if len(params) >= 2:
+                return f"DATE_TRUNC({params[0]}, {params[1]})"
+            return "NULL"
         else:
-            # Unknown function
+            # Unknown function - pass through with original name
             params_str = ", ".join(params)
             return f"{func.name}({params_str})"
 
     def _render_aggregation(
         self, expr: QueryExpressionAggregationFunction, context_op: LogicalOperator
     ) -> str:
-        """Render an aggregation function."""
+        """Render an aggregation function.
+
+        Supports ordered aggregation for COLLECT:
+        COLLECT(x ORDER BY y DESC) ->
+            TRANSFORM(
+                ARRAY_SORT(
+                    COLLECT_LIST(STRUCT(_sort_key, _value)),
+                    (a, b) -> CASE WHEN a._sort_key > b._sort_key THEN -1 ELSE 1 END
+                ),
+                s -> s._value
+            )
+        """
+        # Handle ordered COLLECT specially
+        if (
+            expr.order_by
+            and expr.aggregation_function == AggregationFunction.COLLECT
+            and expr.inner_expression
+        ):
+            return self._render_ordered_collect(expr, context_op)
+
         inner = (
             self._render_expression(expr.inner_expression, context_op)
             if expr.inner_expression
@@ -1234,12 +1471,236 @@ class SQLRenderer:
         pattern = AGGREGATION_PATTERNS.get(expr.aggregation_function, "{0}")
         return pattern.format(inner)
 
+    def _render_ordered_collect(
+        self, expr: QueryExpressionAggregationFunction, context_op: LogicalOperator
+    ) -> str:
+        """Render an ordered COLLECT using ARRAY_SORT.
+
+        COLLECT(x ORDER BY y DESC) becomes:
+        TRANSFORM(
+            ARRAY_SORT(
+                COLLECT_LIST(STRUCT(y AS _sort_key, x AS _value)),
+                (a, b) -> CASE WHEN a._sort_key > b._sort_key THEN -1 ELSE 1 END
+            ),
+            s -> s._value
+        )
+        """
+        if not expr.inner_expression:
+            return "COLLECT_LIST(NULL)"
+        value_sql = self._render_expression(expr.inner_expression, context_op)
+
+        # Build STRUCT with sort keys and value
+        struct_parts = []
+        sort_comparisons = []
+
+        for i, (sort_expr, is_desc) in enumerate(expr.order_by):
+            sort_key_sql = self._render_expression(sort_expr, context_op)
+            key_name = f"_sk{i}"
+            struct_parts.append(f"{sort_key_sql} AS {key_name}")
+
+            # Build comparison for this sort key
+            if is_desc:
+                # DESC: a > b -> -1 (a comes first)
+                sort_comparisons.append(
+                    f"CASE WHEN a.{key_name} > b.{key_name} THEN -1 "
+                    f"WHEN a.{key_name} < b.{key_name} THEN 1 ELSE 0 END"
+                )
+            else:
+                # ASC: a < b -> -1 (a comes first)
+                sort_comparisons.append(
+                    f"CASE WHEN a.{key_name} < b.{key_name} THEN -1 "
+                    f"WHEN a.{key_name} > b.{key_name} THEN 1 ELSE 0 END"
+                )
+
+        struct_parts.append(f"{value_sql} AS _value")
+        struct_sql = f"STRUCT({', '.join(struct_parts)})"
+
+        # Combine sort comparisons with COALESCE-like logic
+        # For multiple sort keys, check each in order
+        if len(sort_comparisons) == 1:
+            comparator = sort_comparisons[0]
+        else:
+            # Chain comparisons: if first is 0, use second, etc.
+            comparator = sort_comparisons[-1]
+            for comp in reversed(sort_comparisons[:-1]):
+                comparator = f"CASE WHEN ({comp}) = 0 THEN ({comparator}) ELSE ({comp}) END"
+
+        return (
+            f"TRANSFORM("
+            f"ARRAY_SORT("
+            f"COLLECT_LIST({struct_sql}), "
+            f"(a, b) -> {comparator}"
+            f"), "
+            f"s -> s._value"
+            f")"
+        )
+
     def _render_list(
         self, expr: QueryExpressionList, context_op: LogicalOperator
     ) -> str:
         """Render a list expression."""
         items = [self._render_expression(item, context_op) for item in expr.items]
         return f"({', '.join(items)})"
+
+    def _render_list_predicate(
+        self, expr: QueryExpressionListPredicate, context_op: LogicalOperator
+    ) -> str:
+        """Render a list predicate expression (ALL/ANY/NONE/SINGLE).
+
+        Databricks SQL translation (optimized for 17.x):
+
+        OPTIMIZATION 1: Simple equality checks use ARRAY_CONTAINS (O(1) with bloom filter)
+        - ANY(x IN list WHERE x = val) -> ARRAY_CONTAINS(list, val)
+        - NONE(x IN list WHERE x = val) -> NOT ARRAY_CONTAINS(list, val)
+
+        OPTIMIZATION 2: Use EXISTS/FORALL HOFs when available (Databricks 17.x)
+        - ANY(x IN list WHERE cond) -> EXISTS(list, x -> cond)
+        - ALL(x IN list WHERE cond) -> FORALL(list, x -> cond)
+
+        FALLBACK: Complex predicates use FILTER + SIZE
+        - ALL(x IN list WHERE cond) -> SIZE(FILTER(list, x -> NOT (cond))) = 0
+        - ANY(x IN list WHERE cond) -> SIZE(FILTER(list, x -> cond)) > 0
+        - NONE(x IN list WHERE cond) -> SIZE(FILTER(list, x -> cond)) = 0
+        - SINGLE(x IN list WHERE cond) -> SIZE(FILTER(list, x -> cond)) = 1
+        """
+        var_name = expr.variable_name
+        list_sql = self._render_expression(expr.list_expression, context_op)
+
+        # Check for simple equality optimization: ANY(x IN list WHERE x = value)
+        equality_value = self._extract_equality_value(
+            expr.filter_expression, var_name, context_op
+        )
+
+        if equality_value is not None:
+            # Use ARRAY_CONTAINS optimization (O(1) with bloom filter in Databricks)
+            if expr.predicate_type == ListPredicateType.ANY:
+                return f"ARRAY_CONTAINS({list_sql}, {equality_value})"
+            elif expr.predicate_type == ListPredicateType.NONE:
+                return f"NOT ARRAY_CONTAINS({list_sql}, {equality_value})"
+            # For ALL/SINGLE with equality, fall through to standard approach
+
+        # Build the lambda body for complex predicates
+        if expr.filter_expression:
+            filter_sql = self._render_list_predicate_filter(
+                expr.filter_expression, var_name, context_op
+            )
+        else:
+            filter_sql = "TRUE"
+
+        # Use EXISTS/FORALL HOFs for ANY/ALL (Databricks 17.x optimization)
+        if expr.predicate_type == ListPredicateType.ALL:
+            if expr.filter_expression:
+                # FORALL is cleaner but equivalent to SIZE(FILTER(NOT cond)) = 0
+                return f"FORALL({list_sql}, {var_name} -> {filter_sql})"
+            else:
+                # ALL(x IN list) without filter - check all not null
+                return f"FORALL({list_sql}, {var_name} -> {var_name} IS NOT NULL)"
+        elif expr.predicate_type == ListPredicateType.ANY:
+            # EXISTS is cleaner and may short-circuit
+            return f"EXISTS({list_sql}, {var_name} -> {filter_sql})"
+        elif expr.predicate_type == ListPredicateType.NONE:
+            # NONE = NOT EXISTS
+            return f"NOT EXISTS({list_sql}, {var_name} -> {filter_sql})"
+        elif expr.predicate_type == ListPredicateType.SINGLE:
+            # SINGLE: Exactly one element matches (no HOF equivalent)
+            return f"SIZE(FILTER({list_sql}, {var_name} -> {filter_sql})) = 1"
+        else:
+            return f"EXISTS({list_sql}, {var_name} -> {filter_sql})"
+
+    def _extract_equality_value(
+        self,
+        expr: QueryExpression | None,
+        var_name: str,
+        context_op: LogicalOperator,
+    ) -> str | None:
+        """Extract value from simple equality expression like 'x = value'.
+
+        Returns the rendered value SQL if expr is a simple equality where one side
+        is just the variable (var_name) and the other is a constant/expression.
+        Returns None if not a simple equality pattern.
+
+        This enables ARRAY_CONTAINS optimization which is O(1) with bloom filter.
+        """
+        if expr is None:
+            return None
+
+        if not isinstance(expr, QueryExpressionBinary):
+            return None
+
+        # Check if it's an equality operator
+        if expr.operator.name != BinaryOperator.EQ.name:
+            return None
+
+        left = expr.left_expression
+        right = expr.right_expression
+
+        # Check if left is just the variable and right is the value
+        if (
+            isinstance(left, QueryExpressionProperty)
+            and left.variable_name == var_name
+            and not left.property_name
+        ):
+            # Pattern: x = value
+            return self._render_expression(right, context_op)
+
+        # Check if right is just the variable and left is the value
+        if (
+            isinstance(right, QueryExpressionProperty)
+            and right.variable_name == var_name
+            and not right.property_name
+        ):
+            # Pattern: value = x
+            return self._render_expression(left, context_op)
+
+        return None
+
+    def _render_list_predicate_filter(
+        self, expr: QueryExpression, var_name: str, context_op: LogicalOperator
+    ) -> str:
+        """Render a filter expression for list predicate, handling variable references.
+
+        In list predicates like ALL(x IN list WHERE x > 0), references to 'x'
+        should be rendered as just 'x' (the lambda parameter), not as a
+        field lookup in the context operator's schema.
+        """
+        if isinstance(expr, QueryExpressionProperty):
+            # If it's just the variable (no property), return it as-is
+            if expr.variable_name == var_name and not expr.property_name:
+                return var_name
+            # If it has a property, it's accessing a field on the lambda variable
+            if expr.variable_name == var_name and expr.property_name:
+                return f"{var_name}.{expr.property_name}"
+            # Otherwise it's a reference to an outer variable
+            return self._render_property(expr, context_op)
+        elif isinstance(expr, QueryExpressionBinary):
+            left = self._render_list_predicate_filter(
+                expr.left_expression, var_name, context_op
+            )
+            right = self._render_list_predicate_filter(
+                expr.right_expression, var_name, context_op
+            )
+            from gsql2rsql.renderer.sql_renderer import OPERATOR_PATTERNS
+            pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
+            return pattern.format(left, right)
+        elif isinstance(expr, QueryExpressionFunction):
+            params = [
+                self._render_list_predicate_filter(p, var_name, context_op)
+                for p in expr.parameters
+            ]
+            # Re-use the existing function rendering logic
+            from gsql2rsql.parser.operators import Function
+            func = expr.function
+            if func == Function.NOT:
+                return f"NOT ({params[0]})" if params else "NOT (NULL)"
+            elif func == Function.IS_NULL:
+                return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
+            elif func == Function.IS_NOT_NULL:
+                return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
+            # Add other functions as needed
+            return self._render_function(expr, context_op)
+        else:
+            # For other expression types, use default rendering
+            return self._render_expression(expr, context_op)
 
     def _render_case(
         self, expr: QueryExpressionCaseExpression, context_op: LogicalOperator
@@ -1261,6 +1722,136 @@ class SQLRenderer:
 
         parts.append("END")
         return " ".join(parts)
+
+    def _render_list_comprehension(
+        self, expr: QueryExpressionListComprehension, context_op: LogicalOperator
+    ) -> str:
+        """Render a list comprehension expression.
+
+        Cypher: [x IN list WHERE predicate | expression]
+        Databricks SQL:
+        - FILTER(list, x -> predicate) for WHERE only
+        - TRANSFORM(list, x -> expression) for map only
+        - TRANSFORM(FILTER(list, x -> predicate), x -> expression) for both
+
+        Examples:
+        - [x IN arr WHERE x > 0] -> FILTER(arr, x -> x > 0)
+        - [x IN arr | x * 2] -> TRANSFORM(arr, x -> x * 2)
+        - [x IN arr WHERE x > 0 | x * 2] -> TRANSFORM(FILTER(arr, x -> x > 0), x -> x * 2)
+        """
+        var = expr.variable_name
+        list_sql = self._render_expression(expr.list_expression, context_op)
+
+        # Start with the list
+        result = list_sql
+
+        # Apply FILTER if there's a WHERE predicate
+        if expr.filter_expression:
+            filter_sql = self._render_list_predicate_filter(
+                expr.filter_expression, var, context_op
+            )
+            result = f"FILTER({result}, {var} -> {filter_sql})"
+
+        # Apply TRANSFORM if there's a map expression
+        if expr.map_expression:
+            map_sql = self._render_list_predicate_filter(
+                expr.map_expression, var, context_op
+            )
+            result = f"TRANSFORM({result}, {var} -> {map_sql})"
+
+        return result
+
+    def _render_reduce(
+        self, expr: QueryExpressionReduce, context_op: LogicalOperator
+    ) -> str:
+        """Render a REDUCE expression.
+
+        Cypher: REDUCE(acc = initial, x IN list | acc_expr)
+        Databricks SQL: AGGREGATE(list, initial, (acc, x) -> acc_expr)
+
+        Example:
+        - REDUCE(total = 0, x IN amounts | total + x)
+          -> AGGREGATE(amounts, 0, (total, x) -> total + x)
+        """
+        acc_name = expr.accumulator_name
+        var_name = expr.variable_name
+        list_sql = self._render_expression(expr.list_expression, context_op)
+        initial_sql = self._render_expression(expr.initial_value, context_op)
+
+        # Render the reducer expression, replacing accumulator and variable references
+        reducer_sql = self._render_reduce_expression(
+            expr.reducer_expression, acc_name, var_name, context_op
+        )
+
+        return f"AGGREGATE({list_sql}, {initial_sql}, ({acc_name}, {var_name}) -> {reducer_sql})"
+
+    def _render_reduce_expression(
+        self,
+        expr: QueryExpression,
+        acc_name: str,
+        var_name: str,
+        context_op: LogicalOperator,
+    ) -> str:
+        """Render an expression within a REDUCE, handling accumulator and variable references."""
+        if isinstance(expr, QueryExpressionProperty):
+            # Check if it's the accumulator or variable
+            if expr.property_name is None:
+                if expr.variable_name == acc_name:
+                    return acc_name
+                elif expr.variable_name == var_name:
+                    return var_name
+            return self._render_expression(expr, context_op)
+        elif isinstance(expr, QueryExpressionBinary):
+            if not expr.left_expression or not expr.right_expression or not expr.operator:
+                return "NULL"
+            left = self._render_reduce_expression(
+                expr.left_expression, acc_name, var_name, context_op
+            )
+            right = self._render_reduce_expression(
+                expr.right_expression, acc_name, var_name, context_op
+            )
+            pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
+            return pattern.format(left, right)
+        elif isinstance(expr, QueryExpressionFunction):
+            params = [
+                self._render_reduce_expression(p, acc_name, var_name, context_op)
+                for p in expr.parameters
+            ]
+            # Use the same function rendering logic
+            return self._render_function_with_params(expr.function, params)
+        else:
+            return self._render_expression(expr, context_op)
+
+    def _render_function_with_params(self, func: Function, params: list[str]) -> str:
+        """Render a function with pre-rendered parameters."""
+        if func == Function.NOT:
+            return f"NOT ({params[0]})" if params else "NOT (NULL)"
+        elif func == Function.NEGATIVE:
+            return f"-({params[0]})" if params else "-NULL"
+        elif func == Function.POSITIVE:
+            return f"+({params[0]})" if params else "+NULL"
+        elif func == Function.IS_NULL:
+            return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
+        elif func == Function.IS_NOT_NULL:
+            return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
+        elif func == Function.COALESCE:
+            if params:
+                return f"COALESCE({', '.join(params)})"
+            return "NULL"
+        elif func == Function.ABS:
+            return f"ABS({params[0]})" if params else "NULL"
+        elif func == Function.SQRT:
+            return f"SQRT({params[0]})" if params else "NULL"
+        elif func == Function.CEIL:
+            return f"CEIL({params[0]})" if params else "NULL"
+        elif func == Function.FLOOR:
+            return f"FLOOR({params[0]})" if params else "NULL"
+        elif func == Function.ROUND:
+            if len(params) >= 2:
+                return f"ROUND({params[0]}, {params[1]})"
+            return f"ROUND({params[0]})" if params else "NULL"
+        # Default: return function call syntax
+        return f"{func.name}({', '.join(params)})"
 
     def _render_exists(
         self, expr: QueryExpressionExists, context_op: LogicalOperator
@@ -1447,5 +2038,125 @@ class SQLRenderer:
 
     def _get_field_name(self, prefix: str, field_name: str) -> str:
         """Generate a field name with entity prefix."""
-        clean_prefix = "".join(c if c.isalnum() or c == "_" else "" for c in prefix)
+        clean_prefix = "".join(
+            c if c.isalnum() or c == "_" else "" for c in prefix
+        )
         return f"__{clean_prefix}_{field_name}"
+
+    def _render_map_literal(
+        self, expr: QueryExpressionMapLiteral, context_op: LogicalOperator
+    ) -> str:
+        """Render a map literal as a Databricks SQL STRUCT.
+
+        Cypher: {name: 'John', age: 30}
+        Databricks SQL: STRUCT('John' AS name, 30 AS age)
+        """
+        if not expr.entries:
+            return "STRUCT()"
+
+        parts = []
+        for key, value in expr.entries:
+            value_sql = self._render_expression(value, context_op)
+            parts.append(f"{value_sql} AS {key}")
+
+        return f"STRUCT({', '.join(parts)})"
+
+    def _render_date_from_map(
+        self, map_expr: QueryExpressionMapLiteral, context_op: LogicalOperator
+    ) -> str:
+        """Render date({year: y, month: m, day: d}) as MAKE_DATE.
+
+        Cypher: date({year: 2024, month: 1, day: 15})
+        Databricks SQL: MAKE_DATE(2024, 1, 15)
+        """
+        entries_dict = {}
+        for key, value in map_expr.entries:
+            entries_dict[key.lower()] = self._render_expression(
+                value, context_op
+            )
+
+        year = entries_dict.get("year", "1970")
+        month = entries_dict.get("month", "1")
+        day = entries_dict.get("day", "1")
+
+        return f"MAKE_DATE({year}, {month}, {day})"
+
+    def _render_datetime_from_map(
+        self, map_expr: QueryExpressionMapLiteral, context_op: LogicalOperator
+    ) -> str:
+        """Render datetime({...}) as MAKE_TIMESTAMP.
+
+        Cypher: datetime({year: 2024, month: 1, day: 15, hour: 10})
+        Databricks SQL: MAKE_TIMESTAMP(2024, 1, 15, 10, 0, 0)
+        """
+        entries_dict = {}
+        for key, value in map_expr.entries:
+            entries_dict[key.lower()] = self._render_expression(
+                value, context_op
+            )
+
+        year = entries_dict.get("year", "1970")
+        month = entries_dict.get("month", "1")
+        day = entries_dict.get("day", "1")
+        hour = entries_dict.get("hour", "0")
+        minute = entries_dict.get("minute", "0")
+        second = entries_dict.get("second", "0")
+
+        return f"MAKE_TIMESTAMP({year}, {month}, {day}, {hour}, {minute}, {second})"
+
+    def _render_time_from_map(
+        self, map_expr: QueryExpressionMapLiteral, context_op: LogicalOperator
+    ) -> str:
+        """Render time({hour: h, minute: m, second: s}) as time string.
+
+        Cypher: time({hour: 10, minute: 30, second: 0})
+        Databricks SQL: '10:30:00'
+        """
+        entries_dict = {}
+        for key, value in map_expr.entries:
+            entries_dict[key.lower()] = self._render_expression(
+                value, context_op
+            )
+
+        hour = entries_dict.get("hour", "0")
+        minute = entries_dict.get("minute", "0")
+        second = entries_dict.get("second", "0")
+
+        # Build time as formatted string
+        return f"CONCAT({hour}, ':', {minute}, ':', {second})"
+
+    def _render_duration_from_map(
+        self, map_expr: QueryExpressionMapLiteral, context_op: LogicalOperator
+    ) -> str:
+        """Render duration({...}) as Databricks INTERVAL.
+
+        Cypher: duration({days: 7, hours: 12})
+        Databricks SQL: INTERVAL '7' DAY + INTERVAL '12' HOUR
+        """
+        entries_dict = {}
+        for key, value in map_expr.entries:
+            entries_dict[key.lower()] = self._render_expression(
+                value, context_op
+            )
+
+        # Map Cypher duration components to Databricks INTERVAL units
+        interval_parts = []
+        unit_mapping = {
+            "years": "YEAR",
+            "months": "MONTH",
+            "weeks": "WEEK",
+            "days": "DAY",
+            "hours": "HOUR",
+            "minutes": "MINUTE",
+            "seconds": "SECOND",
+        }
+
+        for cypher_unit, sql_unit in unit_mapping.items():
+            if cypher_unit in entries_dict:
+                val = entries_dict[cypher_unit]
+                interval_parts.append(f"INTERVAL {val} {sql_unit}")
+
+        if not interval_parts:
+            return "INTERVAL '0' DAY"
+
+        return " + ".join(interval_parts)

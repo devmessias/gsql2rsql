@@ -11,6 +11,7 @@ from gsql2rsql.parser.ast import (
     InfixOperator,
     InfixQueryNode,
     LimitClause,
+    ListPredicateType,
     MatchClause,
     NodeEntity,
     PartialQueryNode,
@@ -21,7 +22,12 @@ from gsql2rsql.parser.ast import (
     QueryExpressionExists,
     QueryExpressionFunction,
     QueryExpressionList,
+    QueryExpressionListComprehension,
+    QueryExpressionListPredicate,
+    QueryExpressionMapLiteral,
+    QueryExpressionParameter,
     QueryExpressionProperty,
+    QueryExpressionReduce,
     QueryExpressionValue,
     QueryExpressionWithAlias,
     QueryNode,
@@ -30,6 +36,7 @@ from gsql2rsql.parser.ast import (
     SingleQueryNode,
     SortItem,
     SortOrder,
+    UnwindClause,
 )
 from gsql2rsql.parser.operators import (
     Function,
@@ -152,15 +159,90 @@ class CypherVisitor:
 
         return SingleQueryNode(parts=parts)
 
+    def visit_oC_MultiPartQuery(self, ctx: Any) -> list[PartialQueryNode]:
+        """Visit a multi-part query context.
+
+        Grammar:
+        oC_MultiPartQuery
+            : ( ( oC_ReadingClause SP? )* ( oC_UpdatingClause SP? )* oC_With SP? )+
+              oC_SinglePartQuery ;
+
+        Multi-part queries have WITH clauses that produce intermediate results.
+        """
+        parts: list[PartialQueryNode] = []
+
+        # Process each WITH clause and its preceding reading clauses
+        reading_clauses = ctx.oC_ReadingClause() or []
+        with_clauses = ctx.oC_With() or []
+
+        # Pair reading clauses with their corresponding WITH clauses
+        for with_ctx in with_clauses:
+            part = PartialQueryNode()
+
+            # Collect match and unwind clauses preceding this WITH
+            for reading_ctx in reading_clauses:
+                reading = self.visit(reading_ctx)
+                if isinstance(reading, MatchClause):
+                    part.match_clauses.append(reading)
+                elif isinstance(reading, UnwindClause):
+                    part.unwind_clauses.append(reading)
+
+            # Process the WITH clause
+            with_result = self.visit(with_ctx)
+            if isinstance(with_result, dict):
+                self._apply_return_result(part, with_result)
+
+            parts.append(part)
+
+            # Clear reading clauses after processing (they belong to this part)
+            reading_clauses = []
+
+        # Process the final single part query
+        if ctx.oC_SinglePartQuery():
+            final_part = self.visit(ctx.oC_SinglePartQuery())
+            if isinstance(final_part, PartialQueryNode):
+                parts.append(final_part)
+
+        return parts
+
+    def visit_oC_With(self, ctx: Any) -> dict[str, Any]:
+        """Visit a WITH clause context.
+
+        Grammar:
+        oC_With: WITH oC_ProjectionBody ( SP? oC_Where )? ;
+
+        WITH is like RETURN but passes results to the next part of the query.
+        The optional WHERE clause acts like HAVING when filtering aggregated columns.
+        """
+        result: dict[str, Any] = {}
+
+        # Process the projection body (same as RETURN)
+        if ctx.oC_ProjectionBody():
+            body_result = self.visit(ctx.oC_ProjectionBody())
+            if isinstance(body_result, dict):
+                result.update(body_result)
+
+        # Process the optional WHERE clause (acts as HAVING for aggregations)
+        if ctx.oC_Where():
+            where_expr = self.visit(ctx.oC_Where())
+            if isinstance(where_expr, QueryExpression):
+                # Store the WHERE/HAVING expression
+                # This will be used to generate HAVING clause in SQL
+                result["having"] = where_expr
+
+        return result
+
     def visit_oC_SinglePartQuery(self, ctx: Any) -> PartialQueryNode:
         """Visit a single part query context."""
         part = PartialQueryNode()
 
-        # Visit reading clauses
+        # Visit reading clauses (MATCH and UNWIND)
         for reading_ctx in ctx.oC_ReadingClause() or []:
             reading = self.visit(reading_ctx)
             if isinstance(reading, MatchClause):
                 part.match_clauses.append(reading)
+            elif isinstance(reading, UnwindClause):
+                part.unwind_clauses.append(reading)
 
         # Visit return clause
         if ctx.oC_Return():
@@ -180,16 +262,43 @@ class CypherVisitor:
             part.order_by = result["order"]
         if "limit" in result:
             part.limit_clause = result["limit"]
+        if "having" in result:
+            part.having_expression = result["having"]
 
     # =========================================================================
     # Reading clause visitors
     # =========================================================================
 
-    def visit_oC_ReadingClause(self, ctx: Any) -> MatchClause | None:
-        """Visit a reading clause context."""
+    def visit_oC_ReadingClause(self, ctx: Any) -> MatchClause | UnwindClause | None:
+        """Visit a reading clause context.
+
+        Grammar:
+        oC_ReadingClause: oC_Match | oC_Unwind | oC_InQueryCall ;
+        """
         if ctx.oC_Match():
             return self.visit(ctx.oC_Match())
+        if ctx.oC_Unwind():
+            return self.visit(ctx.oC_Unwind())
         return None
+
+    def visit_oC_Unwind(self, ctx: Any) -> UnwindClause:
+        """Visit an UNWIND clause context.
+
+        Grammar:
+        oC_Unwind: UNWIND SP oC_Expression SP AS SP oC_Variable ;
+
+        Example: UNWIND a.tags AS tag
+        """
+        # Get the expression to unwind
+        list_expression = self.visit(ctx.oC_Expression())
+
+        # Get the variable name
+        variable_name = ctx.oC_Variable().getText()
+
+        return UnwindClause(
+            list_expression=list_expression,
+            variable_name=variable_name,
+        )
 
     def visit_oC_Match(self, ctx: Any) -> MatchClause:
         """Visit a MATCH clause context."""
@@ -653,6 +762,21 @@ class CypherVisitor:
                             ),
                             data_type=bool,
                         )
+                elif "ListPredicateExpression" in child_name:
+                    # IN operator: a.id IN $watchlist or a.id IN [1, 2, 3]
+                    # The child contains: SP IN SP? oC_AddOrSubtractExpression
+                    right_expr = self.visit(child.oC_AddOrSubtractExpression())
+                    if isinstance(right_expr, QueryExpression):
+                        op_info = try_get_operator("in")
+                        result = QueryExpressionBinary(
+                            operator=op_info,
+                            left_expression=(
+                                result
+                                if isinstance(result, QueryExpression)
+                                else None
+                            ),
+                            right_expression=right_expr,
+                        )
 
         return result
 
@@ -775,6 +899,7 @@ class CypherVisitor:
             | oC_ListComprehension
             | oC_PatternComprehension
             | oC_Quantifier
+            | oC_Reduce
             | oC_PatternPredicate
             | oC_ParenthesizedExpression
             | oC_FunctionInvocation
@@ -784,6 +909,8 @@ class CypherVisitor:
         """
         if ctx.oC_Literal():
             return self.visit(ctx.oC_Literal())
+        if ctx.oC_Parameter():
+            return self.visit(ctx.oC_Parameter())
         if ctx.oC_Variable():
             return QueryExpressionProperty(variable_name=ctx.oC_Variable().getText())
         if ctx.oC_FunctionInvocation():
@@ -794,6 +921,10 @@ class CypherVisitor:
             return self.visit(ctx.oC_CaseExpression())
         if ctx.oC_ListComprehension():
             return self.visit(ctx.oC_ListComprehension())
+        if ctx.oC_Quantifier():
+            return self.visit(ctx.oC_Quantifier())
+        if ctx.oC_Reduce():
+            return self.visit(ctx.oC_Reduce())
         if ctx.oC_ExistentialSubquery():
             return self.visit(ctx.oC_ExistentialSubquery())
         # Check for COUNT(*) - it's a token, not a rule
@@ -852,8 +983,43 @@ class CypherVisitor:
                 items.append(expr)
         return QueryExpressionList(items=items)
 
+    def visit_oC_MapLiteral(self, ctx: Any) -> QueryExpressionMapLiteral:
+        """Visit a map literal context.
+
+        Grammar:
+        oC_MapLiteral
+            :  '{' SP? ( oC_PropertyKeyName SP? ':' SP? oC_Expression SP?
+               ( ',' SP? oC_PropertyKeyName SP? ':' SP? oC_Expression SP? )* )? '}' ;
+
+        Examples:
+        - {name: 'John', age: 30}
+        - {year: 2024, month: 1, day: 15}
+        - {}  (empty map)
+        """
+        entries: list[tuple[str, QueryExpression]] = []
+
+        # Get all property key names and expressions
+        key_ctxs = ctx.oC_PropertyKeyName() or []
+        expr_ctxs = ctx.oC_Expression() or []
+
+        # Pair them up
+        for key_ctx, expr_ctx in zip(key_ctxs, expr_ctxs):
+            key_name = key_ctx.getText()
+            value_expr = self.visit(expr_ctx)
+            if isinstance(value_expr, QueryExpression):
+                entries.append((key_name, value_expr))
+
+        return QueryExpressionMapLiteral(entries=entries)
+
     def visit_oC_FunctionInvocation(self, ctx: Any) -> QueryExpression:
-        """Visit a function invocation context."""
+        """Visit a function invocation context.
+
+        Grammar:
+        oC_FunctionInvocation
+            :  oC_FunctionName SP? '(' SP? ( DISTINCT SP? )?
+               ( oC_Expression SP? ( ',' SP? oC_Expression SP? )* )?
+               ( SP? ORDER SP BY SP oC_SortItem ( SP? ',' SP? oC_SortItem )* )? ')' ;
+        """
         func_name = ctx.oC_FunctionName().getText()
 
         # Check for DISTINCT
@@ -870,6 +1036,21 @@ class CypherVisitor:
             if isinstance(expr, QueryExpression):
                 params.append(expr)
 
+        # Parse ORDER BY for ordered aggregation (e.g., COLLECT(x ORDER BY y DESC))
+        order_by: list[tuple[QueryExpression, bool]] = []
+        sort_items = ctx.oC_SortItem() if hasattr(ctx, "oC_SortItem") else None
+        if sort_items:
+            for sort_item in sort_items if isinstance(sort_items, list) else [sort_items]:
+                sort_expr = self.visit(sort_item.oC_Expression())
+                is_desc = False
+                # Check for DESC keyword
+                if sort_item.DESC():
+                    is_desc = True
+                elif sort_item.DESCENDING():
+                    is_desc = True
+                if isinstance(sort_expr, QueryExpression):
+                    order_by.append((sort_expr, is_desc))
+
         # Check if it's an aggregation function
         agg_func = try_parse_aggregation_function(func_name)
         if agg_func:
@@ -877,6 +1058,7 @@ class CypherVisitor:
                 aggregation_function=agg_func,
                 is_distinct=is_distinct,
                 inner_expression=params[0] if params else None,
+                order_by=order_by,
             )
 
         # Check if it's a regular function
@@ -991,6 +1173,188 @@ class CypherVisitor:
             where_expression=where_expression,
             is_negated=False,  # NOT is handled in expression visitor
             subquery=subquery,
+        )
+
+    def visit_oC_Parameter(self, ctx: Any) -> QueryExpressionParameter:
+        """Visit a parameter context.
+
+        Grammar:
+        oC_Parameter: '$' ( oC_SymbolicName | DecimalInteger ) ;
+
+        Handles parameter syntax like $watchlist, $1, etc.
+        """
+        # Get the full text and remove the '$' prefix
+        text = ctx.getText()
+        param_name = text[1:] if text.startswith("$") else text
+        return QueryExpressionParameter(parameter_name=param_name)
+
+    def visit_oC_Quantifier(self, ctx: Any) -> QueryExpressionListPredicate:
+        """Visit a quantifier expression context.
+
+        Grammar:
+        oC_Quantifier: ( ALL SP? '(' SP? oC_FilterExpression SP? ')' )
+                     | ( ANY SP? '(' SP? oC_FilterExpression SP? ')' )
+                     | ( NONE SP? '(' SP? oC_FilterExpression SP? ')' )
+                     | ( SINGLE SP? '(' SP? oC_FilterExpression SP? ')' );
+
+        oC_FilterExpression: oC_IdInColl ( SP? oC_Where )? ;
+        oC_IdInColl: oC_Variable SP IN SP oC_Expression ;
+
+        Examples:
+        - ALL(x IN list WHERE x > 0)
+        - ANY(x IN accounts WHERE x.balance < 0)
+        - NONE(x IN transactions WHERE x.suspicious)
+        - SINGLE(x IN matches WHERE x.valid)
+        """
+        # Determine predicate type from the keyword
+        text = ctx.getText().upper()
+        if text.startswith("ALL"):
+            predicate_type = ListPredicateType.ALL
+        elif text.startswith("ANY"):
+            predicate_type = ListPredicateType.ANY
+        elif text.startswith("NONE"):
+            predicate_type = ListPredicateType.NONE
+        elif text.startswith("SINGLE"):
+            predicate_type = ListPredicateType.SINGLE
+        else:
+            predicate_type = ListPredicateType.ANY  # fallback
+
+        # Get the filter expression
+        filter_expr_ctx = ctx.oC_FilterExpression()
+        if not filter_expr_ctx:
+            raise TranspilerSyntaxErrorException(
+                "Quantifier requires a filter expression"
+            )
+
+        # Parse oC_IdInColl: oC_Variable SP IN SP oC_Expression
+        id_in_coll_ctx = filter_expr_ctx.oC_IdInColl()
+        if not id_in_coll_ctx:
+            raise TranspilerSyntaxErrorException(
+                "Quantifier requires variable IN list syntax"
+            )
+
+        variable_name = id_in_coll_ctx.oC_Variable().getText()
+        list_expression = self.visit(id_in_coll_ctx.oC_Expression())
+
+        # Parse optional WHERE clause
+        filter_expression: QueryExpression | None = None
+        where_ctx = filter_expr_ctx.oC_Where()
+        if where_ctx:
+            filter_expression = self.visit(where_ctx)
+
+        return QueryExpressionListPredicate(
+            predicate_type=predicate_type,
+            variable_name=variable_name,
+            list_expression=list_expression,
+            filter_expression=filter_expression,
+        )
+
+    def visit_oC_ListComprehension(self, ctx: Any) -> QueryExpressionListComprehension:
+        """Visit a list comprehension context.
+
+        Grammar:
+        oC_ListComprehension
+            :  '[' SP? oC_FilterExpression ( SP? '|' SP? oC_Expression )? SP? ']' ;
+
+        oC_FilterExpression: oC_IdInColl ( SP? oC_Where )? ;
+        oC_IdInColl: oC_Variable SP IN SP oC_Expression ;
+
+        Examples:
+        - [x IN list] -> just the list (identity)
+        - [x IN list WHERE x > 0] -> FILTER(list, x -> x > 0)
+        - [x IN list | x * 2] -> TRANSFORM(list, x -> x * 2)
+        - [x IN list WHERE x > 0 | x * 2] -> TRANSFORM(FILTER(list, x -> x > 0), x -> x * 2)
+        """
+        # Get the filter expression (contains variable IN list WHERE pred)
+        filter_expr_ctx = ctx.oC_FilterExpression()
+        if not filter_expr_ctx:
+            raise TranspilerSyntaxErrorException(
+                "List comprehension requires a filter expression"
+            )
+
+        # Parse oC_IdInColl: oC_Variable SP IN SP oC_Expression
+        id_in_coll_ctx = filter_expr_ctx.oC_IdInColl()
+        if not id_in_coll_ctx:
+            raise TranspilerSyntaxErrorException(
+                "List comprehension requires variable IN list syntax"
+            )
+
+        variable_name = id_in_coll_ctx.oC_Variable().getText()
+        list_expression = self.visit(id_in_coll_ctx.oC_Expression())
+
+        # Parse optional WHERE clause (filter)
+        filter_expression: QueryExpression | None = None
+        where_ctx = filter_expr_ctx.oC_Where()
+        if where_ctx:
+            filter_expression = self.visit(where_ctx)
+
+        # Parse optional map expression (after |)
+        map_expression: QueryExpression | None = None
+        # The map expression is the oC_Expression directly under oC_ListComprehension
+        # (not the one inside oC_FilterExpression)
+        exprs = ctx.oC_Expression()
+        if exprs:
+            # The grammar has oC_Expression after the |
+            map_expression = self.visit(exprs)
+
+        return QueryExpressionListComprehension(
+            variable_name=variable_name,
+            list_expression=list_expression,
+            filter_expression=filter_expression,
+            map_expression=map_expression,
+        )
+
+    def visit_oC_Reduce(self, ctx: Any) -> QueryExpressionReduce:
+        """Visit a REDUCE expression context.
+
+        Grammar:
+        oC_Reduce
+            :  REDUCE SP? '(' SP? oC_Variable SP? '=' SP? oC_Expression SP? ','
+               SP? oC_IdInColl SP? '|' SP? oC_Expression SP? ')' ;
+
+        oC_IdInColl: oC_Variable SP IN SP oC_Expression ;
+
+        Example:
+        REDUCE(total = 0, x IN amounts | total + x)
+        -> AGGREGATE(amounts, 0, (total, x) -> total + x)
+        """
+        # Get accumulator variable (the first oC_Variable in the rule)
+        acc_var_ctx = ctx.oC_Variable()
+        if not acc_var_ctx:
+            raise TranspilerSyntaxErrorException(
+                "REDUCE requires an accumulator variable"
+            )
+        accumulator_name = acc_var_ctx.getText()
+
+        # Get all expressions - there are 2 in the main rule:
+        # 1. Initial value (after =)
+        # 2. Reducer expression (after |)
+        # The list expression is inside oC_IdInColl
+        expressions = ctx.oC_Expression()
+        if not expressions or len(expressions) < 2:
+            raise TranspilerSyntaxErrorException(
+                "REDUCE requires initial value and reducer expression"
+            )
+
+        initial_value = self.visit(expressions[0])
+        reducer_expression = self.visit(expressions[1])
+
+        # Get oC_IdInColl for variable IN list
+        id_in_coll_ctx = ctx.oC_IdInColl()
+        if not id_in_coll_ctx:
+            raise TranspilerSyntaxErrorException(
+                "REDUCE requires variable IN list syntax"
+            )
+
+        variable_name = id_in_coll_ctx.oC_Variable().getText()
+        list_expression = self.visit(id_in_coll_ctx.oC_Expression())
+
+        return QueryExpressionReduce(
+            accumulator_name=accumulator_name,
+            initial_value=initial_value,
+            variable_name=variable_name,
+            list_expression=list_expression,
+            reducer_expression=reducer_expression,
         )
 
     # =========================================================================

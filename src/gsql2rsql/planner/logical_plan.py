@@ -27,6 +27,7 @@ from gsql2rsql.parser.ast import (
     RelationshipDirection,
     RelationshipEntity,
     SingleQueryNode,
+    UnwindClause,
 )
 from gsql2rsql.planner.operators import (
     DataSourceOperator,
@@ -42,6 +43,7 @@ from gsql2rsql.planner.operators import (
     SetOperationType,
     SetOperator,
     StartLogicalOperator,
+    UnwindOperator,
 )
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema
 
@@ -248,6 +250,17 @@ class LogicalPlan:
                 all_ops.append(select_op)
                 current_op = select_op
 
+        # Process UNWIND clauses
+        for unwind_clause in part.unwind_clauses:
+            if current_op:
+                unwind_op = UnwindOperator(
+                    list_expression=unwind_clause.list_expression,
+                    variable_name=unwind_clause.variable_name,
+                )
+                unwind_op.set_in_operator(current_op)
+                all_ops.append(unwind_op)
+                current_op = unwind_op
+
         # Process WHERE clause from PartialQueryNode (for compatibility)
         if part.where_expression and current_op:
             select_op = SelectionOperator(filter_expression=part.where_expression)
@@ -281,6 +294,8 @@ class LogicalPlan:
                     and part.limit_clause.skip_expression.value is not None
                     else None
                 ),
+                # HAVING expression from WITH ... WHERE on aggregated columns
+                having_expression=part.having_expression,
             )
             proj_op.set_in_operator(current_op)
             all_ops.append(proj_op)

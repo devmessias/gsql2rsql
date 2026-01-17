@@ -133,6 +133,15 @@ def try_parse_aggregation_function(function_name: str) -> AggregationFunction | 
     return mapping.get(function_name.lower())
 
 
+class ListPredicateType(Enum):
+    """Types of list predicate expressions (quantifiers)."""
+
+    ALL = auto()  # ALL(x IN list WHERE pred)
+    ANY = auto()  # ANY(x IN list WHERE pred)
+    NONE = auto()  # NONE(x IN list WHERE pred)
+    SINGLE = auto()  # SINGLE(x IN list WHERE pred)
+
+
 class Function(Enum):
     """Functions supported by the transpiler."""
 
@@ -171,6 +180,58 @@ class Function(Enum):
     # Null handling functions
     COALESCE = auto()
 
+    # List/Array functions
+    RANGE = auto()  # Cypher: RANGE(start, end[, step]) -> Databricks: SEQUENCE
+    SIZE = auto()  # Cypher: SIZE(list) -> Databricks: SIZE(list)
+
+    # Math functions
+    ABS = auto()
+    CEIL = auto()
+    FLOOR = auto()
+    ROUND = auto()
+    SQRT = auto()
+    SIGN = auto()
+    LOG = auto()  # Natural log
+    LOG10 = auto()
+    EXP = auto()
+    SIN = auto()
+    COS = auto()
+    TAN = auto()
+    ASIN = auto()
+    ACOS = auto()
+    ATAN = auto()
+    ATAN2 = auto()
+    DEGREES = auto()
+    RADIANS = auto()
+    RAND = auto()
+    PI = auto()
+    E = auto()
+
+    # Date/Time functions
+    DATE = auto()  # date() or date({...})
+    DATETIME = auto()  # datetime() or datetime({...})
+    LOCALDATETIME = auto()  # localdatetime()
+    TIME = auto()  # time()
+    LOCALTIME = auto()  # localtime()
+    DURATION = auto()  # duration({...})
+    DURATION_BETWEEN = auto()  # duration.between(d1, d2)
+
+    # Date/Time component extraction
+    DATE_YEAR = auto()  # date.year or datetime.year
+    DATE_MONTH = auto()  # date.month or datetime.month
+    DATE_DAY = auto()  # date.day or datetime.day
+    DATE_HOUR = auto()  # datetime.hour or time.hour
+    DATE_MINUTE = auto()  # datetime.minute or time.minute
+    DATE_SECOND = auto()  # datetime.second or time.second
+    DATE_WEEK = auto()  # date.week
+    DATE_DAYOFWEEK = auto()  # date.dayOfWeek
+    DATE_QUARTER = auto()  # date.quarter
+
+    # Date/Time arithmetic and manipulation
+    DATE_TRUNCATE = auto()  # date.truncate('unit', d)
+    DATE_ADD = auto()  # date + duration -> DATE_ADD
+    DATE_SUB = auto()  # date - duration -> DATE_SUB
+
 
 class FunctionInfo(NamedTuple):
     """Information about a function."""
@@ -201,9 +262,57 @@ FUNCTIONS: dict[str, FunctionInfo] = {
     "rtrim": FunctionInfo(Function.STRING_RTRIM, 1),
     "toupper": FunctionInfo(Function.STRING_TO_UPPER, 1),
     "tolower": FunctionInfo(Function.STRING_TO_LOWER, 1),
-    "size": FunctionInfo(Function.STRING_SIZE, 1),
     # Null handling - COALESCE takes 1+ args (variadic)
     "coalesce": FunctionInfo(Function.COALESCE, 1, 99),
+    # List/Array functions
+    "range": FunctionInfo(Function.RANGE, 2, 1),  # RANGE(start, end[, step])
+    "size": FunctionInfo(Function.SIZE, 1),  # SIZE works for both strings and arrays
+    "length": FunctionInfo(Function.SIZE, 1),  # LENGTH is alias for SIZE in Cypher
+    # Math functions
+    "abs": FunctionInfo(Function.ABS, 1),
+    "ceil": FunctionInfo(Function.CEIL, 1),
+    "ceiling": FunctionInfo(Function.CEIL, 1),  # alias
+    "floor": FunctionInfo(Function.FLOOR, 1),
+    "round": FunctionInfo(Function.ROUND, 1, 1),  # ROUND(x) or ROUND(x, precision)
+    "sqrt": FunctionInfo(Function.SQRT, 1),
+    "sign": FunctionInfo(Function.SIGN, 1),
+    "log": FunctionInfo(Function.LOG, 1),
+    "ln": FunctionInfo(Function.LOG, 1),  # alias
+    "log10": FunctionInfo(Function.LOG10, 1),
+    "exp": FunctionInfo(Function.EXP, 1),
+    "sin": FunctionInfo(Function.SIN, 1),
+    "cos": FunctionInfo(Function.COS, 1),
+    "tan": FunctionInfo(Function.TAN, 1),
+    "asin": FunctionInfo(Function.ASIN, 1),
+    "acos": FunctionInfo(Function.ACOS, 1),
+    "atan": FunctionInfo(Function.ATAN, 1),
+    "atan2": FunctionInfo(Function.ATAN2, 2),
+    "degrees": FunctionInfo(Function.DEGREES, 1),
+    "radians": FunctionInfo(Function.RADIANS, 1),
+    "rand": FunctionInfo(Function.RAND, 0),
+    "random": FunctionInfo(Function.RAND, 0),  # alias
+    "pi": FunctionInfo(Function.PI, 0),
+    "e": FunctionInfo(Function.E, 0),
+    # Date/Time functions
+    "date": FunctionInfo(Function.DATE, 0, 1),  # date() or date({...})
+    "datetime": FunctionInfo(Function.DATETIME, 0, 1),  # datetime() or datetime({...})
+    "localdatetime": FunctionInfo(Function.LOCALDATETIME, 0, 1),
+    "time": FunctionInfo(Function.TIME, 0, 1),  # time() or time({...})
+    "localtime": FunctionInfo(Function.LOCALTIME, 0, 1),
+    "duration": FunctionInfo(Function.DURATION, 1),  # duration({...})
+    "duration.between": FunctionInfo(Function.DURATION_BETWEEN, 2),
+    # Date component extraction (used as methods on date/datetime values)
+    "year": FunctionInfo(Function.DATE_YEAR, 1),
+    "month": FunctionInfo(Function.DATE_MONTH, 1),
+    "day": FunctionInfo(Function.DATE_DAY, 1),
+    "hour": FunctionInfo(Function.DATE_HOUR, 1),
+    "minute": FunctionInfo(Function.DATE_MINUTE, 1),
+    "second": FunctionInfo(Function.DATE_SECOND, 1),
+    "week": FunctionInfo(Function.DATE_WEEK, 1),
+    "dayofweek": FunctionInfo(Function.DATE_DAYOFWEEK, 1),
+    "quarter": FunctionInfo(Function.DATE_QUARTER, 1),
+    # Date truncation
+    "date.truncate": FunctionInfo(Function.DATE_TRUNCATE, 2),
 }
 
 

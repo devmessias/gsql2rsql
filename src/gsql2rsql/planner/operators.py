@@ -411,6 +411,8 @@ class ProjectionOperator(UnaryLogicalOperator):
     )  # (expr, is_descending)
     limit: int | None = None
     skip: int | None = None
+    # HAVING expression for filtering aggregated results
+    having_expression: QueryExpression | None = None
 
     @property
     def depth(self) -> int:
@@ -419,7 +421,8 @@ class ProjectionOperator(UnaryLogicalOperator):
     def __str__(self) -> str:
         base = super().__str__()
         projs = ", ".join(f"{alias}={expr}" for alias, expr in self.projections)
-        return f"{base}\n  Projections: {projs}"
+        having = f"\n  Having: {self.having_expression}" if self.having_expression else ""
+        return f"{base}\n  Projections: {projs}{having}"
 
 
 class SetOperationType(Enum):
@@ -486,3 +489,25 @@ class RecursiveTraversalOperator(LogicalOperator):
         edge_str = "|".join(self.edge_types)
         hops_str = f"*{self.min_hops}..{self.max_hops}" if self.max_hops else f"*{self.min_hops}.."
         return f"RecursiveTraversal({edge_str}{hops_str})"
+
+
+@dataclass
+class UnwindOperator(UnaryLogicalOperator):
+    """Operator for UNWIND clause that expands a list into rows.
+
+    UNWIND expression AS variable
+
+    In Databricks SQL, this becomes LATERAL EXPLODE:
+    FROM ..., LATERAL EXPLODE(expression) AS t(variable)
+    """
+
+    list_expression: QueryExpression | None = None
+    variable_name: str = ""
+
+    @property
+    def depth(self) -> int:
+        return (self.in_operator.depth if self.in_operator else 0) + 1
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        return f"{base}\n  Unwind: {self.list_expression} AS {self.variable_name}"

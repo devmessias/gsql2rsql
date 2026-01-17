@@ -13,6 +13,7 @@ from gsql2rsql.parser.operators import (
     BinaryOperator,
     BinaryOperatorInfo,
     Function,
+    ListPredicateType,
 )
 
 
@@ -192,18 +193,28 @@ class QueryExpressionFunction(QueryExpression):
 
 @dataclass
 class QueryExpressionAggregationFunction(QueryExpression):
-    """An aggregation function call expression."""
+    """An aggregation function call expression.
+
+    Supports ordered aggregation for COLLECT:
+    COLLECT(x ORDER BY y DESC) -> ARRAY_SORT(COLLECT_LIST(STRUCT(y, x)), ...), s -> s.x
+    """
 
     aggregation_function: AggregationFunction
     is_distinct: bool = False
     inner_expression: QueryExpression | None = None
     data_type: type[Any] | None = None
+    # Order by for ordered aggregation (e.g., COLLECT(x ORDER BY y DESC))
+    # List of (expression, is_descending) tuples
+    order_by: list[tuple[QueryExpression, bool]] = field(default_factory=list)
 
     @property
     def children(self) -> list[TreeNode]:
+        result: list[TreeNode] = []
         if self.inner_expression:
-            return [self.inner_expression]
-        return []
+            result.append(self.inner_expression)
+        for expr, _ in self.order_by:
+            result.append(expr)
+        return result
 
     def evaluate_type(self) -> type[Any] | None:
         return self.data_type
@@ -211,7 +222,14 @@ class QueryExpressionAggregationFunction(QueryExpression):
     def __str__(self) -> str:
         distinct = "DISTINCT " if self.is_distinct else ""
         inner = str(self.inner_expression) if self.inner_expression else "*"
-        return f"{self.aggregation_function.name}({distinct}{inner})"
+        order = ""
+        if self.order_by:
+            items = ", ".join(
+                f"{expr} {'DESC' if desc else 'ASC'}"
+                for expr, desc in self.order_by
+            )
+            order = f" ORDER BY {items}"
+        return f"{self.aggregation_function.name}({distinct}{inner}{order})"
 
 
 @dataclass
@@ -230,6 +248,34 @@ class QueryExpressionList(QueryExpression):
     def __str__(self) -> str:
         items = ", ".join(str(i) for i in self.items)
         return f"[{items}]"
+
+
+@dataclass
+class QueryExpressionMapLiteral(QueryExpression):
+    """A map literal expression (e.g., {name: 'John', age: 30}).
+
+    In Cypher, map literals use key: value syntax.
+    Databricks SQL: STRUCT(value1 AS key1, value2 AS key2, ...)
+
+    Can be used for:
+    - Creating structured data: {name: 'John', age: 30}
+    - Date/time construction: date({year: 2024, month: 1, day: 15})
+    - Duration specification: duration({days: 7, hours: 12})
+    """
+
+    # Map entries as list of (key, value) tuples
+    entries: list[tuple[str, QueryExpression]] = field(default_factory=list)
+
+    @property
+    def children(self) -> list[TreeNode]:
+        return [value for _, value in self.entries]
+
+    def evaluate_type(self) -> type[Any] | None:
+        return dict
+
+    def __str__(self) -> str:
+        entries = ", ".join(f"{key}: {value}" for key, value in self.entries)
+        return f"{{{entries}}}"
 
 
 @dataclass
@@ -288,6 +334,127 @@ class QueryExpressionWithAlias(QueryExpression):
 
     def __str__(self) -> str:
         return f"{self.inner_expression} AS {self.alias}"
+
+
+@dataclass
+class QueryExpressionParameter(QueryExpression):
+    """A parameter expression (e.g., $watchlist, $1).
+
+    Used for parameterized queries where values are provided at runtime.
+    """
+
+    parameter_name: str
+
+    @property
+    def children(self) -> list[TreeNode]:
+        return []
+
+    def evaluate_type(self) -> type[Any] | None:
+        # Type unknown at parse time
+        return None
+
+    def __str__(self) -> str:
+        return f"${self.parameter_name}"
+
+
+@dataclass
+class QueryExpressionListPredicate(QueryExpression):
+    """A list predicate expression (ALL, ANY, NONE, SINGLE).
+
+    Represents quantifier expressions like:
+    - ALL(x IN list WHERE predicate)
+    - ANY(x IN list WHERE predicate)
+    - NONE(x IN list WHERE predicate)
+    - SINGLE(x IN list WHERE predicate)
+    """
+
+    predicate_type: ListPredicateType
+    variable_name: str
+    list_expression: QueryExpression
+    filter_expression: QueryExpression | None = None
+
+    @property
+    def children(self) -> list[TreeNode]:
+        result: list[TreeNode] = [self.list_expression]
+        if self.filter_expression:
+            result.append(self.filter_expression)
+        return result
+
+    def evaluate_type(self) -> type[Any] | None:
+        return bool
+
+    def __str__(self) -> str:
+        filter_part = f" WHERE {self.filter_expression}" if self.filter_expression else ""
+        return f"{self.predicate_type.name}({self.variable_name} IN {self.list_expression}{filter_part})"
+
+
+@dataclass
+class QueryExpressionListComprehension(QueryExpression):
+    """A list comprehension expression.
+
+    Represents [x IN list WHERE predicate | expression]:
+    - FILTER: [x IN list WHERE x > 0] -> FILTER(list, x -> x > 0)
+    - MAP: [x IN list | x * 2] -> TRANSFORM(list, x -> x * 2)
+    - FILTER + MAP: [x IN list WHERE x > 0 | x * 2] -> TRANSFORM(FILTER(list, x -> x > 0), x -> x * 2)
+
+    Databricks SQL: TRANSFORM(FILTER(list, x -> pred), x -> expr)
+    """
+
+    variable_name: str
+    list_expression: QueryExpression
+    filter_expression: QueryExpression | None = None
+    map_expression: QueryExpression | None = None
+
+    @property
+    def children(self) -> list[TreeNode]:
+        result: list[TreeNode] = [self.list_expression]
+        if self.filter_expression:
+            result.append(self.filter_expression)
+        if self.map_expression:
+            result.append(self.map_expression)
+        return result
+
+    def evaluate_type(self) -> type[Any] | None:
+        return list
+
+    def __str__(self) -> str:
+        filter_part = f" WHERE {self.filter_expression}" if self.filter_expression else ""
+        map_part = f" | {self.map_expression}" if self.map_expression else ""
+        return f"[{self.variable_name} IN {self.list_expression}{filter_part}{map_part}]"
+
+
+@dataclass
+class QueryExpressionReduce(QueryExpression):
+    """A REDUCE expression.
+
+    Represents REDUCE(accumulator = initial, x IN list | expression):
+    - REDUCE(total = 0, x IN amounts | total + x)
+
+    Databricks SQL: AGGREGATE(list, initial, (acc, x) -> expression)
+    """
+
+    accumulator_name: str
+    initial_value: QueryExpression
+    variable_name: str
+    list_expression: QueryExpression
+    reducer_expression: QueryExpression
+
+    @property
+    def children(self) -> list[TreeNode]:
+        return [
+            self.initial_value,
+            self.list_expression,
+            self.reducer_expression,
+        ]
+
+    def evaluate_type(self) -> type[Any] | None:
+        return self.initial_value.evaluate_type()
+
+    def __str__(self) -> str:
+        return (
+            f"REDUCE({self.accumulator_name} = {self.initial_value}, "
+            f"{self.variable_name} IN {self.list_expression} | {self.reducer_expression})"
+        )
 
 
 @dataclass
@@ -472,6 +639,29 @@ class MatchClause(TreeNode):
         return f"{optional}MATCH {pattern}{where_part}"
 
 
+@dataclass
+class UnwindClause(TreeNode):
+    """An UNWIND clause that expands a list into rows.
+
+    UNWIND expression AS variable
+
+    In Databricks SQL, this becomes LATERAL EXPLODE:
+    FROM ..., LATERAL EXPLODE(expression) AS t(variable)
+    """
+
+    list_expression: QueryExpression | None = None
+    variable_name: str = ""
+
+    @property
+    def children(self) -> list[TreeNode]:
+        if self.list_expression:
+            return [self.list_expression]
+        return []
+
+    def __str__(self) -> str:
+        return f"UNWIND {self.list_expression} AS {self.variable_name}"
+
+
 # ==============================================================================
 # Query Nodes
 # ==============================================================================
@@ -489,27 +679,35 @@ class PartialQueryNode(QueryNode):
     """A partial query (single reading/updating clause)."""
 
     match_clauses: list[MatchClause] = field(default_factory=list)
+    unwind_clauses: list[UnwindClause] = field(default_factory=list)
     where_expression: QueryExpression | None = None
     return_body: list[QueryExpressionWithAlias] = field(default_factory=list)
     order_by: list[SortItem] = field(default_factory=list)
     limit_clause: LimitClause | None = None
     is_distinct: bool = False
+    # HAVING expression (from WITH ... WHERE on aggregated columns)
+    having_expression: QueryExpression | None = None
 
     @property
     def children(self) -> list[TreeNode]:
         result: list[TreeNode] = list(self.match_clauses)
+        result.extend(self.unwind_clauses)
         if self.where_expression:
             result.append(self.where_expression)
         result.extend(self.return_body)
         result.extend(self.order_by)
         if self.limit_clause:
             result.append(self.limit_clause)
+        if self.having_expression:
+            result.append(self.having_expression)
         return result
 
     def __str__(self) -> str:
         parts: list[str] = []
         for match in self.match_clauses:
             parts.append(str(match))
+        for unwind in self.unwind_clauses:
+            parts.append(str(unwind))
         if self.where_expression:
             parts.append(f"WHERE {self.where_expression}")
         if self.return_body:
