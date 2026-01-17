@@ -138,6 +138,30 @@ dump-sql-03:  ## Dump SQL for test 03 (property projection)
 dump-sql-06:  ## Dump SQL for test 06 (single-hop relationship)
 	@$(UV) run python scripts/dump_query_sql.py 06 single_hop_relationship --diff
 
+dump-sql-11:  ## Dump SQL for test 11 (aggregation with GROUP BY)
+	@$(UV) run python scripts/dump_query_sql.py 11 aggregation_group_by --diff
+
+dump-sql-12:  ## Dump SQL for test 12 (aggregation with ORDER BY)
+	@$(UV) run python scripts/dump_query_sql.py 12 aggregation_order_by --diff
+
+dump-sql-14:  ## Dump SQL for test 14 (COLLECT aggregation)
+	@$(UV) run python scripts/dump_query_sql.py 14 collect_aggregation --diff
+
+dump-sql-15:  ## Dump SQL for test 15 (DISTINCT rows)
+	@$(UV) run python scripts/dump_query_sql.py 15 distinct_rows --diff
+
+dump-sql-17:  ## Dump SQL for test 17 (CASE expression)
+	@$(UV) run python scripts/dump_query_sql.py 17 case_expression --diff
+
+dump-sql-18:  ## Dump SQL for test 18 (EXISTS pattern)
+	@$(UV) run python scripts/dump_query_sql.py 18 exists_pattern --diff
+
+dump-sql-19:  ## Dump SQL for test 19 (UNION)
+	@$(UV) run python scripts/dump_query_sql.py 19 union --diff
+
+dump-sql-20:  ## Dump SQL for test 20 (COALESCE)
+	@$(UV) run python scripts/dump_query_sql.py 20 coalesce --diff
+
 dump-sql:  ## Dump SQL for a specific test (usage: make dump-sql ID=01 NAME=simple_node_lookup)
 	@$(UV) run python scripts/dump_query_sql.py $(ID) $(NAME) --diff
 

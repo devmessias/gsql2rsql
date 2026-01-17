@@ -51,6 +51,14 @@ DEFAULT_QUERIES: dict[str, str] = {
     "02": "MATCH (p:Person) WHERE p.name = 'Alice' RETURN p",
     "03": "MATCH (p:Person) RETURN p.name AS personName, p.id AS personId",
     "06": "MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, f.name",
+    "11": "MATCH (p:Person)-[:LIVES_IN]->(c:City) RETURN c.name AS city, COUNT(p) AS population",
+    "12": "MATCH (p:Person)-[:LIVES_IN]->(c:City) RETURN c.name AS city, COUNT(p) AS population ORDER BY population DESC",
+    "14": "MATCH (c:City)<-[:LIVES_IN]-(p:Person) RETURN c.name AS city, COLLECT(p.name) AS residents",
+    "15": "MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN DISTINCT f.name",
+    "17": "MATCH (p:Person) RETURN p.name, CASE WHEN p.age < 18 THEN 'minor' WHEN p.age >= 65 THEN 'senior' ELSE 'adult' END AS ageGroup",
+    "18": "MATCH (p:Person) WHERE EXISTS { (p)-[:ACTED_IN]->(:Movie) } RETURN p.name",
+    "19": "MATCH (p:Person) RETURN p.name AS name UNION MATCH (c:City) RETURN c.name AS name",
+    "20": "MATCH (p:Person) RETURN COALESCE(p.nickname, p.name) AS displayName",
 }
 
 
@@ -67,6 +75,8 @@ def create_default_schema() -> tuple[
             properties=[
                 EntityProperty("id", int),
                 EntityProperty("name", str),
+                EntityProperty("age", int),
+                EntityProperty("nickname", str),
             ],
             node_id_property=EntityProperty("id", int),
         )
@@ -77,6 +87,16 @@ def create_default_schema() -> tuple[
             properties=[
                 EntityProperty("id", int),
                 EntityProperty("title", str),
+            ],
+            node_id_property=EntityProperty("id", int),
+        )
+    )
+    graph_schema.add_node(
+        NodeSchema(
+            name="City",
+            properties=[
+                EntityProperty("id", int),
+                EntityProperty("name", str),
             ],
             node_id_property=EntityProperty("id", int),
         )
@@ -95,6 +115,15 @@ def create_default_schema() -> tuple[
             name="ACTED_IN",
             source_node_id="Person",
             sink_node_id="Movie",
+        )
+    )
+    graph_schema.add_edge(
+        EdgeSchema(
+            name="LIVES_IN",
+            source_node_id="Person",
+            sink_node_id="City",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
         )
     )
 
@@ -143,6 +172,28 @@ def create_default_schema() -> tuple[
             entity_id="Person@ACTED_IN@Movie",
             table_name="dbo.ActedIn",
             node_id_columns=["person_id", "movie_id"],
+        ),
+    )
+    sql_schema.add_node(
+        NodeSchema(
+            name="City",
+            node_id_property=EntityProperty("id", int),
+        ),
+        SQLTableDescriptor(
+            table_name="graph.City",
+            node_id_columns=["id"],
+        ),
+    )
+    sql_schema.add_edge(
+        EdgeSchema(
+            name="LIVES_IN",
+            source_node_id="Person",
+            sink_node_id="City",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
+        ),
+        SQLTableDescriptor(
+            table_name="graph.LivesIn",
         ),
     )
 

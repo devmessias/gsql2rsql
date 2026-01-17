@@ -1,0 +1,15 @@
+--- expected+++ actual@@ -20,8 +20,6 @@  from (
+  select
+  id as __p_id
+- ,name as __p_name
+- ,age as __p_age
+  from
+  graph.Person
+  ) as _left
+@@ -38,7 +36,6 @@  select
+  id as __f_id
+  ,name as __f_name
+- ,age as __f_age
+  from
+  graph.Person
+  ) as _right on

@@ -99,5 +99,5 @@ class TestSingleHopRelationship:
         # Should have ON keyword for join condition
         assert " ON" in sql or " on" in sql or "ON\n" in sql
 
-        # Note: Current implementation may use cartesian joins (ON TRUE)
-        # This is a known limitation that should be improved
+        # Should NOT have cartesian joins (ON TRUE)
+        assert "ON TRUE" not in sql.upper()

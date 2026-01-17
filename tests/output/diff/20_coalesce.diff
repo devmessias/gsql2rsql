@@ -1,0 +1,9 @@
+--- expected+++ actual@@ -5,6 +5,9 @@  id as __p_id
+  ,name as __p_name
+  ,nickname as __p_nickname
++ ,alias as __p_alias
++ ,age as __p_age
++ ,city as __p_city
+  from
+  graph.Person
+ ) as _proj
