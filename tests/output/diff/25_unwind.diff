@@ -1,0 +1,6 @@
+--- expected+++ actual@@ -11,5 +11,5 @@  from
+  graph.Account
+  ) as _unwind_source,
+- LATERAL EXPLODE(__a_tags) as _exploded(tag)
++ EXPLODE(__a_tags) as _exploded(tag)
+ ) as _proj

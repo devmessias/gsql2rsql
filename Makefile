@@ -53,6 +53,10 @@ validate-sql-syntax:  ## Validate generated SQL syntax
 benchmark-queries:  ## Benchmark query transpilation performance
 	$(UV) run python scripts/benchmark.py
 
+test-recursive-query:  ## Test variable-length path query with custom schema
+	@echo "Testing recursive query transpilation..."
+	@echo "MATCH path = (root:Vertex)-[rels:REL*1..5]-(n:Vertex) WHERE root.node_id = '1234_algo' AND n.node_type = 'node_type' AND NONE(r IN rels WHERE r.relationship_type IN ['a', 'b']) RETURN rels AS edges, n AS vertex_info" | $(UV) run gsql2rsql transpile --schema tests/schemas/recursive_test_schema.json
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Code Quality
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +165,9 @@ dump-sql-19:  ## Dump SQL for test 19 (UNION)
 
 dump-sql-20:  ## Dump SQL for test 20 (COALESCE)
 	@$(UV) run python scripts/dump_query_sql.py 20 coalesce --diff
+
+dump-sql-21:  ## Dump SQL for test 21 (Variable-length *0..N)
+	@$(UV) run python scripts/dump_query_sql.py 21 variable_length_zero --diff
 
 dump-sql:  ## Dump SQL for a specific test (usage: make dump-sql ID=01 NAME=simple_node_lookup)
 	@$(UV) run python scripts/dump_query_sql.py $(ID) $(NAME) --diff

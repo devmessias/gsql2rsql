@@ -59,6 +59,7 @@ DEFAULT_QUERIES: dict[str, str] = {
     "18": "MATCH (p:Person) WHERE EXISTS { (p)-[:ACTED_IN]->(:Movie) } RETURN p.name",
     "19": "MATCH (p:Person) RETURN p.name AS name UNION MATCH (c:City) RETURN c.name AS name",
     "20": "MATCH (p:Person) RETURN COALESCE(p.nickname, p.name) AS displayName",
+    "21": "MATCH (p:Person)-[:KNOWS*0..2]->(f:Person) RETURN DISTINCT f.name",
 }
 
 
@@ -108,6 +109,8 @@ def create_default_schema() -> tuple[
             name="KNOWS",
             source_node_id="Person",
             sink_node_id="Person",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
         )
     )
     graph_schema.add_edge(
@@ -115,6 +118,8 @@ def create_default_schema() -> tuple[
             name="ACTED_IN",
             source_node_id="Person",
             sink_node_id="Movie",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
         )
     )
     graph_schema.add_edge(
@@ -133,6 +138,12 @@ def create_default_schema() -> tuple[
     sql_schema.add_node(
         NodeSchema(
             name="Person",
+            properties=[
+                EntityProperty("id", int),
+                EntityProperty("name", str),
+                EntityProperty("age", int),
+                EntityProperty("nickname", str),
+            ],
             node_id_property=EntityProperty("id", int),
         ),
         SQLTableDescriptor(
@@ -143,6 +154,10 @@ def create_default_schema() -> tuple[
     sql_schema.add_node(
         NodeSchema(
             name="Movie",
+            properties=[
+                EntityProperty("id", int),
+                EntityProperty("title", str),
+            ],
             node_id_property=EntityProperty("id", int),
         ),
         SQLTableDescriptor(
@@ -155,6 +170,8 @@ def create_default_schema() -> tuple[
             name="KNOWS",
             source_node_id="Person",
             sink_node_id="Person",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
         ),
         SQLTableDescriptor(
             entity_id="Person@KNOWS@Person",
@@ -167,6 +184,8 @@ def create_default_schema() -> tuple[
             name="ACTED_IN",
             source_node_id="Person",
             sink_node_id="Movie",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
         ),
         SQLTableDescriptor(
             entity_id="Person@ACTED_IN@Movie",
@@ -177,6 +196,10 @@ def create_default_schema() -> tuple[
     sql_schema.add_node(
         NodeSchema(
             name="City",
+            properties=[
+                EntityProperty("id", int),
+                EntityProperty("name", str),
+            ],
             node_id_property=EntityProperty("id", int),
         ),
         SQLTableDescriptor(

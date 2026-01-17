@@ -1,0 +1,27 @@
+{
+  "nodes": [
+    {
+      "name": "Vertex",
+      "tableName": "catalogo.schema.tabela_vertices",
+      "idProperty": {"name": "node_id", "type": "string"},
+      "properties": [
+        {"name": "node_type", "type": "string"},
+        {"name": "metadata", "type": "string"}
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "name": "REL",
+      "sourceNode": "Vertex",
+      "sinkNode": "Vertex",
+      "tableName": "catalogo.schema.tabela_edges",
+      "sourceIdProperty": {"name": "src", "type": "string"},
+      "sinkIdProperty": {"name": "dst", "type": "string"},
+      "properties": [
+        {"name": "relationship_type", "type": "string"},
+        {"name": "metadata", "type": "string"}
+      ]
+    }
+  ]
+}
