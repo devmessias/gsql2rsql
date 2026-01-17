@@ -366,7 +366,7 @@ class SQLRenderer:
                 f"No table descriptor for edges: {edge_type_str}"
             )
 
-        min_depth = op.min_hops or 1
+        min_depth = op.min_hops if op.min_hops is not None else 1
         max_depth = op.max_hops or 10  # Default max to prevent infinite loops
 
         # Check if all edge types use the same table (can use IN clause)
@@ -395,6 +395,34 @@ class SQLRenderer:
         # Build the recursive CTE
         lines: list[str] = []
         lines.append(f"  {cte_name} AS (")
+
+        # If min_depth is 0, add zero-length path base case first
+        if min_depth == 0:
+            # Get source node table descriptor
+            source_table = self._graph_def.get_sql_table_descriptors(op.source_node_type)
+            if not source_table:
+                raise TranspilerInternalErrorException(
+                    f"No table descriptor for source node: {op.source_node_type}"
+                )
+
+            lines.append("    -- Base case: Zero-length paths (depth = 0)")
+            lines.append("    SELECT")
+            lines.append(f"      n.{op.source_id_column} AS start_node,")
+            lines.append(f"      n.{op.source_id_column} AS end_node,")
+            lines.append("      0 AS depth,")
+            lines.append(f"      ARRAY(n.{op.source_id_column}) AS path,")
+            lines.append("      ARRAY() AS visited")
+            lines.append(f"    FROM {source_table.full_table_name} n")
+
+            # Add start_node_filter if present
+            if op.start_node_filter:
+                filter_sql = self._render_expression(op.start_node_filter, op)
+                lines.append(f"    WHERE n.{op.source_id_column} = {filter_sql}")
+
+            lines.append("")
+            lines.append("    UNION ALL")
+            lines.append("")
+
         lines.append("    -- Base case: direct edges (depth = 1)")
 
         if single_table:
@@ -548,7 +576,7 @@ class SQLRenderer:
         """Render a reference to a recursive CTE."""
         indent = self._indent(depth)
         cte_name = getattr(op, "cte_name", "paths")
-        min_depth = op.min_hops or 1
+        min_depth = op.min_hops if op.min_hops is not None else 1
 
         lines: list[str] = []
         lines.append(f"{indent}SELECT")
@@ -557,7 +585,12 @@ class SQLRenderer:
         lines.append(f"{indent}   depth,")
         lines.append(f"{indent}   path")
         lines.append(f"{indent}FROM {cte_name}")
-        lines.append(f"{indent}WHERE depth >= {min_depth}")
+
+        # Add WHERE clause for depth bounds
+        where_parts = [f"depth >= {min_depth}"]
+        if op.max_hops is not None:
+            where_parts.append(f"depth <= {op.max_hops}")
+        lines.append(f"{indent}WHERE {' AND '.join(where_parts)}")
 
         return "\n".join(lines)
 
@@ -575,7 +608,7 @@ class SQLRenderer:
         """
         indent = self._indent(depth)
         cte_name = getattr(recursive_op, "cte_name", "paths")
-        min_depth = recursive_op.min_hops or 1
+        min_depth = recursive_op.min_hops if recursive_op.min_hops is not None else 1
 
         # Get target node's table info
         target_entity = target_op.entity
@@ -634,8 +667,11 @@ class SQLRenderer:
         lines.append(f"{indent}JOIN {target_table.full_table_name} n")
         lines.append(f"{indent}  ON n.{target_id_col} = p.end_node")
 
-        # WHERE clause for minimum depth
-        lines.append(f"{indent}WHERE p.depth >= {min_depth}")
+        # WHERE clause for depth bounds
+        where_parts = [f"p.depth >= {min_depth}"]
+        if recursive_op.max_hops is not None:
+            where_parts.append(f"p.depth <= {recursive_op.max_hops}")
+        lines.append(f"{indent}WHERE {' AND '.join(where_parts)}")
 
         return "\n".join(lines)
 

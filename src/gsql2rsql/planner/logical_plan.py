@@ -362,7 +362,7 @@ class LogicalPlan:
             edge_types=edge_types,
             source_node_type=source_node.entity_name,
             target_node_type=target_node.entity_name,
-            min_hops=rel.min_hops or 1,
+            min_hops=rel.min_hops if rel.min_hops is not None else 1,
             max_hops=rel.max_hops,
             source_id_column="id",  # Default, could be from schema
             target_id_column="id",  # Default, could be from schema
