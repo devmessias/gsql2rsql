@@ -168,6 +168,9 @@ class Function(Enum):
     IS_NULL = auto()
     IS_NOT_NULL = auto()
 
+    # Null handling functions
+    COALESCE = auto()
+
 
 class FunctionInfo(NamedTuple):
     """Information about a function."""
@@ -199,6 +202,8 @@ FUNCTIONS: dict[str, FunctionInfo] = {
     "toupper": FunctionInfo(Function.STRING_TO_UPPER, 1),
     "tolower": FunctionInfo(Function.STRING_TO_LOWER, 1),
     "size": FunctionInfo(Function.STRING_SIZE, 1),
+    # Null handling - COALESCE takes 1+ args (variadic)
+    "coalesce": FunctionInfo(Function.COALESCE, 1, 99),
 }
 
 

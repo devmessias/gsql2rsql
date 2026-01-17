@@ -171,6 +171,10 @@ class SQLRenderer:
         self._graph_schema_provider = graph_schema_provider
         self._logger = logger
         self._cte_counter = 0
+        # Column pruning: set of required column aliases (e.g., "__p_name")
+        self._required_columns: set[str] = set()
+        # Enable column pruning by default
+        self._enable_column_pruning = True
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
@@ -187,6 +191,12 @@ class SQLRenderer:
 
         # Reset CTE counter
         self._cte_counter = 0
+
+        # Column pruning: collect required columns before rendering
+        self._required_columns = set()
+        if self._enable_column_pruning:
+            for terminal_op in plan.terminal_operators:
+                self._collect_required_columns(terminal_op)
 
         # Collect any recursive operators that need CTEs
         ctes: list[str] = []
@@ -212,6 +222,87 @@ class SQLRenderer:
 
         for out_op in op.out_operators:
             self._collect_recursive_ctes(out_op, ctes)
+
+    def _collect_required_columns(self, op: LogicalOperator) -> None:
+        """
+        Collect required column aliases from the operator tree (column pruning).
+
+        Traverses the operator tree and collects all column aliases that are
+        actually referenced in projections, filters, joins, aggregations, etc.
+        This allows the renderer to only output required columns in intermediate
+        subqueries, improving query performance.
+        """
+        if isinstance(op, ProjectionOperator):
+            # Collect columns from projection expressions
+            for _, expr in op.projections:
+                self._collect_columns_from_expression(expr)
+            # Collect from order by
+            if op.order_by:
+                for expr, _ in op.order_by:
+                    self._collect_columns_from_expression(expr)
+
+        elif isinstance(op, SelectionOperator):
+            # Collect columns from filter expression
+            if op.filter_expression:
+                self._collect_columns_from_expression(op.filter_expression)
+
+        elif isinstance(op, JoinOperator):
+            # Join key columns are always required for the join condition
+            # These are handled separately in _render_data_source via join fields
+            pass
+
+        elif isinstance(op, SetOperator):
+            # Recurse into both sides of set operation
+            if op.in_operator_left:
+                self._collect_required_columns(op.in_operator_left)
+            if op.in_operator_right:
+                self._collect_required_columns(op.in_operator_right)
+            return  # Don't recurse further for set operators
+
+        # Recurse into input operators
+        if hasattr(op, "in_operator") and op.in_operator:
+            self._collect_required_columns(op.in_operator)
+        if hasattr(op, "in_operator_left") and op.in_operator_left:
+            self._collect_required_columns(op.in_operator_left)
+        if hasattr(op, "in_operator_right") and op.in_operator_right:
+            self._collect_required_columns(op.in_operator_right)
+
+    def _collect_columns_from_expression(self, expr: QueryExpression) -> None:
+        """Extract column aliases from an expression and add to required set."""
+        if isinstance(expr, QueryExpressionProperty):
+            # Property access like p.name -> __p_name
+            if expr.variable_name and expr.property_name:
+                col_alias = self._get_field_name(expr.variable_name, expr.property_name)
+                self._required_columns.add(col_alias)
+            elif expr.variable_name:
+                # Just a variable reference (might reference all fields)
+                # We'll handle this conservatively by not pruning
+                pass
+        elif isinstance(expr, QueryExpressionBinary):
+            if expr.left_expression:
+                self._collect_columns_from_expression(expr.left_expression)
+            if expr.right_expression:
+                self._collect_columns_from_expression(expr.right_expression)
+        elif isinstance(expr, QueryExpressionFunction):
+            for param in expr.parameters:
+                self._collect_columns_from_expression(param)
+        elif isinstance(expr, QueryExpressionAggregationFunction):
+            if expr.inner_expression:
+                self._collect_columns_from_expression(expr.inner_expression)
+        elif isinstance(expr, QueryExpressionList):
+            for item in expr.items:
+                self._collect_columns_from_expression(item)
+        elif isinstance(expr, QueryExpressionCaseExpression):
+            if expr.test_expression:
+                self._collect_columns_from_expression(expr.test_expression)
+            for when_expr, then_expr in expr.alternatives:
+                self._collect_columns_from_expression(when_expr)
+                self._collect_columns_from_expression(then_expr)
+            if expr.else_expression:
+                self._collect_columns_from_expression(expr.else_expression)
+        elif isinstance(expr, QueryExpressionExists):
+            # EXISTS subquery - collect from pattern entities if they reference outer columns
+            pass  # EXISTS patterns are rendered separately
 
     def _render_recursive_cte(self, op: RecursiveTraversalOperator) -> str:
         """
@@ -607,8 +698,7 @@ class SQLRenderer:
                 )
 
         # Add other referenced fields
-        # Use encapsulated_fields instead of referenced_field_aliases
-        # to include all properties from the schema
+        # With column pruning enabled, only include fields that are actually used
         skip_fields = set()
         if entity_field.node_join_field:
             skip_fields.add(entity_field.node_join_field.field_alias)
@@ -622,7 +712,13 @@ class SQLRenderer:
                 field_alias = self._get_field_name(
                     entity_field.field_alias, encap_field.field_alias
                 )
-                field_lines.append(f"{encap_field.field_alias} AS {field_alias}")
+                # Column pruning: only include if required or pruning disabled
+                if (
+                    not self._enable_column_pruning
+                    or not self._required_columns
+                    or field_alias in self._required_columns
+                ):
+                    field_lines.append(f"{encap_field.field_alias} AS {field_alias}")
 
         # If no fields selected, select key field
         if not field_lines:
@@ -1076,6 +1172,10 @@ class SQLRenderer:
         elif func == Function.STRING_CONTAINS:
             if len(params) >= 2:
                 return f"CONTAINS({params[0]}, {params[1]})"
+            return "NULL"
+        elif func == Function.COALESCE:
+            if params:
+                return f"COALESCE({', '.join(params)})"
             return "NULL"
         else:
             # Unknown function
