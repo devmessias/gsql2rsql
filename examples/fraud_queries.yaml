@@ -236,12 +236,14 @@ examples:
     query: |
       MATCH (p1:Person)-[:HAS_ADDRESS]->(addr:Address)<-[:HAS_ADDRESS]-(p2:Person)
       WHERE p1.id <> p2.id AND p1.creation_date > DATE('2023-01-01')
-      RETURN addr.street, addr.city, COUNT(DISTINCT p1.id) AS person_count
-      HAVING person_count > 5
+      WITH addr.street AS street, addr.city AS city, COUNT(DISTINCT p1.id) AS person_count
+      WHERE person_count > 5
+      RETURN street, city, person_count
       ORDER BY person_count DESC
     notes: |
       Finds addresses associated with multiple recently created accounts.
       May indicate synthetic identities or identity fabrication rings.
+      Uses WITH...WHERE pattern for HAVING-like filtering on aggregated columns.
 
   - description: "Identify card testing patterns with small probe transactions"
     application: "Fraud: Card testing"
@@ -264,12 +266,14 @@ examples:
       WHERE a1.id < a2.id
         AND ABS(t1.timestamp - t2.timestamp) < DURATION('PT5M')
         AND t1.merchant_id = t2.merchant_id
-      RETURN a1.id, a2.id, t1.merchant_id, COUNT(*) AS coordinated_count
-      HAVING coordinated_count > 5
+      WITH a1.id AS a1_id, a2.id AS a2_id, t1.merchant_id AS merchant_id, COUNT(*) AS coordinated_count
+      WHERE coordinated_count > 5
+      RETURN a1_id, a2_id, merchant_id, coordinated_count
       ORDER BY coordinated_count DESC
     notes: |
       Identifies accounts making synchronized transactions at the same merchant.
       May indicate coordinated fraud or collusion rings.
+      Uses WITH...WHERE pattern for HAVING-like filtering on aggregated columns.
 
   - description: "Trace money mule networks with rapid transfer chains"
     application: "Fraud: Money mule detection"

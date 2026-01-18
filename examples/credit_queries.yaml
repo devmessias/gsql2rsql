@@ -251,7 +251,7 @@ examples:
       MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
       WHERE t.timestamp > TIMESTAMP() - DURATION('P365D')
       WITH c, card,
-           EXTRACT(month FROM t.timestamp) AS month,
+           month(t.timestamp) AS month,
            SUM(t.amount) AS monthly_spend
       WITH c, card, month, monthly_spend,
            AVG(monthly_spend) OVER (PARTITION BY c.id) AS avg_monthly_spend
