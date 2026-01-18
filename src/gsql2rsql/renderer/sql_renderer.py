@@ -1259,15 +1259,31 @@ class SQLRenderer:
                         ),
                     )
                 else:
-                    # Either - try source first
+                    # EITHER - undirected relationship, needs to match both directions
+                    # Generate: (node.id = rel.source_id OR node.id = rel.sink_id)
+                    source_key = None
+                    sink_key = None
+
                     if rel_field.rel_source_join_field:
-                        rel_key = self._get_field_name(
+                        source_key = self._get_field_name(
                             rel_alias, rel_field.rel_source_join_field.field_alias
                         )
-                    elif rel_field.rel_sink_join_field:
-                        rel_key = self._get_field_name(
+                    if rel_field.rel_sink_join_field:
+                        sink_key = self._get_field_name(
                             rel_alias, rel_field.rel_sink_join_field.field_alias
                         )
+
+                    if source_key and sink_key:
+                        # Both directions available - generate OR condition
+                        conditions.append(
+                            f"({node_var}.{node_key} = {rel_var}.{source_key} "
+                            f"OR {node_var}.{node_key} = {rel_var}.{sink_key})"
+                        )
+                        continue
+                    elif source_key:
+                        rel_key = source_key
+                    elif sink_key:
+                        rel_key = sink_key
                     else:
                         continue
 
