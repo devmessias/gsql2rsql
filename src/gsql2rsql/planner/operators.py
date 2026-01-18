@@ -402,7 +402,28 @@ class SelectionOperator(UnaryLogicalOperator):
 
 @dataclass
 class ProjectionOperator(UnaryLogicalOperator):
-    """Operator for projection (SELECT/RETURN clause)."""
+    """Operator for projection (SELECT/RETURN clause).
+
+    Attributes:
+        projections: List of (alias, expression) tuples for SELECT columns.
+        is_distinct: Whether to use SELECT DISTINCT.
+        order_by: List of (expression, is_descending) for ORDER BY.
+        limit: LIMIT value.
+        skip: OFFSET value.
+        filter_expression: WHERE clause filter (from flattened SelectionOperator).
+        having_expression: HAVING clause filter (for aggregated columns).
+
+    Note on filter_expression vs having_expression:
+        - filter_expression: Applied BEFORE aggregation (SQL WHERE clause)
+        - having_expression: Applied AFTER aggregation (SQL HAVING clause)
+
+        This distinction is critical for correct SQL generation:
+        - WHERE filters rows before GROUP BY
+        - HAVING filters groups after GROUP BY
+
+        The filter_expression is populated by SubqueryFlatteningOptimizer when
+        merging a SelectionOperator into this ProjectionOperator.
+    """
 
     projections: list[tuple[str, QueryExpression]] = field(default_factory=list)
     is_distinct: bool = False
@@ -411,7 +432,9 @@ class ProjectionOperator(UnaryLogicalOperator):
     )  # (expr, is_descending)
     limit: int | None = None
     skip: int | None = None
-    # HAVING expression for filtering aggregated results
+    # WHERE expression for filtering rows BEFORE aggregation (from flattened Selection)
+    filter_expression: QueryExpression | None = None
+    # HAVING expression for filtering aggregated results AFTER aggregation
     having_expression: QueryExpression | None = None
 
     @property
@@ -421,8 +444,9 @@ class ProjectionOperator(UnaryLogicalOperator):
     def __str__(self) -> str:
         base = super().__str__()
         projs = ", ".join(f"{alias}={expr}" for alias, expr in self.projections)
+        filter_str = f"\n  Filter: {self.filter_expression}" if self.filter_expression else ""
         having = f"\n  Having: {self.having_expression}" if self.having_expression else ""
-        return f"{base}\n  Projections: {projs}{having}"
+        return f"{base}\n  Projections: {projs}{filter_str}{having}"
 
 
 class SetOperationType(Enum):

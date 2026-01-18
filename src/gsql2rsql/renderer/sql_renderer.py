@@ -1263,7 +1263,13 @@ class SQLRenderer:
         return "\n".join(lines)
 
     def _render_projection(self, op: ProjectionOperator, depth: int) -> str:
-        """Render a projection (SELECT) operator."""
+        """Render a projection (SELECT) operator.
+
+        Handles both regular projections and flattened projections (where a
+        SelectionOperator was merged in via SubqueryFlatteningOptimizer).
+
+        SQL clause order: SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY ... LIMIT
+        """
         lines: list[str] = []
         indent = self._indent(depth)
 
@@ -1284,6 +1290,12 @@ class SQLRenderer:
         lines.append(self._render_operator(op.in_operator, depth + 1))
         lines.append(f"{indent}) AS _proj")
 
+        # WHERE clause (from flattened SelectionOperator)
+        # Applied BEFORE GROUP BY - filters individual rows
+        if op.filter_expression:
+            filter_sql = self._render_expression(op.filter_expression, op)
+            lines.append(f"{indent}WHERE {filter_sql}")
+
         # Group by for aggregations
         has_aggregation = any(
             self._has_aggregation(expr) for _, expr in op.projections
@@ -1299,6 +1311,7 @@ class SQLRenderer:
                 lines.append(f"{indent}GROUP BY {group_by}")
 
         # HAVING clause (filter on aggregated columns)
+        # Applied AFTER GROUP BY - filters groups
         if op.having_expression:
             having_sql = self._render_expression(op.having_expression, op)
             lines.append(f"{indent}HAVING {having_sql}")
