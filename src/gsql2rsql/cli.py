@@ -484,6 +484,30 @@ def tui(schema_file: Path | None) -> None:
     _run_tui(schema_file)
 
 
+def _get_config_path() -> Path:
+    """Get the config file path."""
+    config_dir = Path.home() / ".config" / "gsql2rsql"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "config.json"
+
+
+def _load_config() -> dict[str, Any]:
+    """Load config from file."""
+    config_path = _get_config_path()
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_config(config: dict[str, Any]) -> None:
+    """Save config to file."""
+    config_path = _get_config_path()
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
 def _run_tui(schema_file: Path | None) -> None:
     """Run the interactive Text User Interface using Textual."""
     import os
@@ -493,14 +517,20 @@ def _run_tui(schema_file: Path | None) -> None:
     from textual import work
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.containers import Horizontal, Vertical, VerticalScroll
+    from textual.containers import Center, Grid, Horizontal, Vertical, VerticalScroll
+    from textual.screen import ModalScreen
     from textual.widgets import (
         Button,
         DataTable,
+        DirectoryTree,
         Footer,
         Header,
         Input,
+        Label,
+        ListItem,
+        ListView,
         ProgressBar,
+        Select,
         Static,
         TextArea,
     )
@@ -541,6 +571,513 @@ def _run_tui(schema_file: Path | None) -> None:
     for cat, schema_data in yaml_schemas.items():
         with contextlib.suppress(Exception):
             category_schemas[cat] = _load_schema_from_yaml(schema_data)
+
+    # Load saved config for last used schema
+    saved_config = _load_config()
+    last_schema_name = saved_config.get("last_schema", None)
+    last_schema_path = saved_config.get("last_schema_path", None)
+
+    # Try to load last used schema if no CLI schema provided
+    if not graph_def and last_schema_name:
+        if last_schema_name in category_schemas:
+            graph_def = category_schemas[last_schema_name]
+            schema_status = f"✓ Schema: {last_schema_name.title()} (remembered)"
+        elif last_schema_name == "custom" and last_schema_path:
+            try:
+                custom_path = Path(last_schema_path)
+                if custom_path.exists():
+                    schema_data = json.loads(custom_path.read_text(encoding="utf-8"))
+                    graph_def = _load_schema(schema_data)
+                    schema_status = f"✓ Schema: {custom_path.name} (remembered)"
+            except Exception:
+                pass
+
+    # =========================================================================
+    # MODAL SCREENS
+    # =========================================================================
+
+    class SchemaSelectorModal(ModalScreen[str | None]):
+        """Modal for selecting a schema."""
+
+        BINDINGS = [
+            Binding("escape", "cancel", "Cancel"),
+        ]
+
+        CSS = """
+        SchemaSelectorModal {
+            align: center middle;
+        }
+
+        #schema-modal-container {
+            width: 60;
+            height: auto;
+            max-height: 80%;
+            border: thick $primary;
+            background: $surface;
+            padding: 1 2;
+        }
+
+        #schema-modal-title {
+            text-align: center;
+            text-style: bold;
+            margin-bottom: 1;
+        }
+
+        #schema-options {
+            height: auto;
+            max-height: 20;
+        }
+
+        .schema-btn {
+            width: 100%;
+            margin: 0 0 1 0;
+        }
+
+        #schema-current {
+            text-align: center;
+            color: $text-muted;
+            margin-top: 1;
+        }
+        """
+
+        def __init__(self, current_schema: str, available_schemas: list[str]) -> None:
+            super().__init__()
+            self.current_schema = current_schema
+            self.available_schemas = available_schemas
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="schema-modal-container"):
+                yield Static("🔧 Select Schema", id="schema-modal-title")
+                with Vertical(id="schema-options"):
+                    yield Button(
+                        "🔍 Fraud Detection Schema",
+                        id="schema-fraud",
+                        classes="schema-btn",
+                        variant="error" if self.current_schema == "fraud" else "default",
+                    )
+                    yield Button(
+                        "💳 Credit Analysis Schema",
+                        id="schema-credit",
+                        classes="schema-btn",
+                        variant="success" if self.current_schema == "credit" else "default",
+                    )
+                    yield Button(
+                        "⚡ Features Demo Schema",
+                        id="schema-features",
+                        classes="schema-btn",
+                        variant="primary" if self.current_schema == "features" else "default",
+                    )
+                    yield Button(
+                        "📂 Load from JSON file...",
+                        id="schema-file",
+                        classes="schema-btn",
+                    )
+                    yield Button(
+                        "🔨 Create New Schema (Wizard)...",
+                        id="schema-wizard",
+                        classes="schema-btn",
+                    )
+                    yield Button(
+                        "⚠️  No Schema (AST only)",
+                        id="schema-none",
+                        classes="schema-btn",
+                        variant="warning" if self.current_schema == "none" else "default",
+                    )
+                yield Static(
+                    f"Current: {self.current_schema or 'None'}",
+                    id="schema-current",
+                )
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            button_id = event.button.id
+            if button_id == "schema-fraud":
+                self.dismiss("fraud")
+            elif button_id == "schema-credit":
+                self.dismiss("credit")
+            elif button_id == "schema-features":
+                self.dismiss("features")
+            elif button_id == "schema-file":
+                self.dismiss("__file__")
+            elif button_id == "schema-wizard":
+                self.dismiss("__wizard__")
+            elif button_id == "schema-none":
+                self.dismiss("none")
+
+        def action_cancel(self) -> None:
+            self.dismiss(None)
+
+    class FileBrowserModal(ModalScreen[Path | None]):
+        """Modal for browsing and selecting a JSON file."""
+
+        BINDINGS = [
+            Binding("escape", "cancel", "Cancel"),
+        ]
+
+        CSS = """
+        FileBrowserModal {
+            align: center middle;
+        }
+
+        #file-modal-container {
+            width: 80;
+            height: 40;
+            border: thick $primary;
+            background: $surface;
+            padding: 1 2;
+        }
+
+        #file-modal-title {
+            text-align: center;
+            text-style: bold;
+            margin-bottom: 1;
+        }
+
+        #file-tree {
+            height: 1fr;
+            border: solid $secondary;
+        }
+
+        #file-path-input {
+            margin-top: 1;
+        }
+
+        #file-buttons {
+            height: auto;
+            margin-top: 1;
+            align: center middle;
+        }
+
+        #file-buttons Button {
+            margin: 0 1;
+        }
+        """
+
+        def __init__(self, start_path: Path | None = None) -> None:
+            super().__init__()
+            self.start_path = start_path or Path.home()
+            self.selected_path: Path | None = None
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="file-modal-container"):
+                yield Static("📂 Select Schema JSON File", id="file-modal-title")
+                yield DirectoryTree(str(self.start_path), id="file-tree")
+                yield Input(
+                    placeholder="Or type path directly...",
+                    id="file-path-input",
+                )
+                with Horizontal(id="file-buttons"):
+                    yield Button("Cancel", id="btn-cancel", variant="default")
+                    yield Button("Select", id="btn-select", variant="primary")
+
+        def on_directory_tree_file_selected(
+            self, event: DirectoryTree.FileSelected
+        ) -> None:
+            path = Path(event.path)
+            if path.suffix.lower() in (".json", ".yaml", ".yml"):
+                self.selected_path = path
+                self.query_one("#file-path-input", Input).value = str(path)
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "btn-cancel":
+                self.dismiss(None)
+            elif event.button.id == "btn-select":
+                # Check input field first
+                input_path = self.query_one("#file-path-input", Input).value.strip()
+                if input_path:
+                    path = Path(input_path)
+                    if path.exists() and path.is_file():
+                        self.dismiss(path)
+                    else:
+                        self.notify("File not found", severity="error")
+                elif self.selected_path:
+                    self.dismiss(self.selected_path)
+                else:
+                    self.notify("No file selected", severity="warning")
+
+        def action_cancel(self) -> None:
+            self.dismiss(None)
+
+    class SchemaWizardModal(ModalScreen[dict | None]):
+        """Modal wizard for creating a new schema step by step."""
+
+        BINDINGS = [
+            Binding("escape", "cancel", "Cancel"),
+        ]
+
+        CSS = """
+        SchemaWizardModal {
+            align: center middle;
+        }
+
+        #wizard-container {
+            width: 90;
+            height: 45;
+            border: thick $primary;
+            background: $surface;
+            padding: 1 2;
+        }
+
+        #wizard-title {
+            text-align: center;
+            text-style: bold;
+            margin-bottom: 1;
+        }
+
+        #wizard-step {
+            text-align: center;
+            color: $text-muted;
+            margin-bottom: 1;
+        }
+
+        #wizard-content {
+            height: 1fr;
+            border: solid $secondary;
+            padding: 1;
+        }
+
+        .wizard-form-row {
+            height: auto;
+            margin-bottom: 1;
+        }
+
+        .wizard-label {
+            width: 20;
+        }
+
+        .wizard-input {
+            width: 1fr;
+        }
+
+        #wizard-buttons {
+            height: auto;
+            margin-top: 1;
+            align: center middle;
+        }
+
+        #wizard-buttons Button {
+            margin: 0 1;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #step1-content, #step2-content, #step3-content, #step4-content {
+            height: auto;
+        }
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.step = 1
+            self.schema: dict[str, Any] = {"nodes": [], "edges": []}
+
+        def compose(self) -> ComposeResult:
+            with Vertical(id="wizard-container"):
+                yield Static("Schema Creation Wizard", id="wizard-title")
+                yield Static("Step 1 of 4", id="wizard-step")
+                with VerticalScroll(id="wizard-content"):
+                    # Step 1: Introduction
+                    with Vertical(id="step1-content"):
+                        yield Static(
+                            "[bold cyan]Welcome![/bold cyan]\n\n"
+                            "Create a graph schema for transpilation.\n\n"
+                            "[bold]Schema defines:[/bold]\n"
+                            "- Nodes: Entities (Person, Movie)\n"
+                            "- Edges: Relationships (KNOWS, ACTED_IN)\n\n"
+                            "Press Next to start."
+                        )
+
+                    # Step 2: Add Nodes
+                    with Vertical(id="step2-content", classes="hidden"):
+                        yield Static(
+                            "[bold green]Define Nodes[/bold green]",
+                            id="step2-title"
+                        )
+                        yield Static("Nodes added: 0", id="nodes-count")
+                        yield Static("[bold]Add Node:[/bold]")
+                        yield Input(placeholder="Label (e.g. Person)", id="nl")
+                        yield Input(placeholder="Table (e.g. cat.sch.Person)", id="nt")
+                        yield Input(placeholder="ID property (e.g. id)", id="nid")
+                        yield Input(placeholder="Props: name:str,age:int", id="np")
+                        yield Button("Add Node", id="btn-add-node")
+
+                    # Step 3: Add Edges
+                    with Vertical(id="step3-content", classes="hidden"):
+                        yield Static(
+                            "[bold blue]Define Edges[/bold blue]",
+                            id="step3-title"
+                        )
+                        yield Static("Edges added: 0", id="edges-count")
+                        yield Static("[bold]Add Edge:[/bold]")
+                        yield Input(placeholder="Type (e.g. KNOWS)", id="et")
+                        yield Input(placeholder="Source node label", id="es")
+                        yield Input(placeholder="Target node label", id="ed")
+                        yield Input(placeholder="Table name", id="etbl")
+                        yield Input(placeholder="Source FK (e.g. person_id)", id="esfk")
+                        yield Input(placeholder="Target FK (e.g. friend_id)", id="etfk")
+                        yield Button("Add Edge", id="btn-add-edge")
+
+                    # Step 4: Save
+                    with Vertical(id="step4-content", classes="hidden"):
+                        yield Static(
+                            "[bold yellow]Save Schema[/bold yellow]",
+                            id="step4-title"
+                        )
+                        yield Static("", id="schema-preview")
+                        yield Input(placeholder="Filename (e.g. my.json)", id="fn")
+                        yield Button("Save", id="btn-save-schema")
+
+                with Horizontal(id="wizard-buttons"):
+                    yield Button("Cancel", id="btn-cancel")
+                    yield Button("Back", id="btn-back", disabled=True)
+                    yield Button("Next", id="btn-next", variant="primary")
+
+        def _update_view(self) -> None:
+            """Update visibility based on current step."""
+            for i in range(1, 5):
+                container = self.query_one(f"#step{i}-content", Vertical)
+                if i == self.step:
+                    container.remove_class("hidden")
+                else:
+                    container.add_class("hidden")
+
+            self.query_one("#wizard-step", Static).update(f"Step {self.step} of 4")
+            self.query_one("#btn-back", Button).disabled = (self.step == 1)
+
+            btn_next = self.query_one("#btn-next", Button)
+            btn_next.label = "Finish" if self.step == 4 else "Next"
+
+            # Update counts
+            if self.step == 2:
+                n = len(self.schema["nodes"])
+                self.query_one("#nodes-count", Static).update(f"Nodes: {n}")
+            elif self.step == 3:
+                e = len(self.schema["edges"])
+                self.query_one("#edges-count", Static).update(f"Edges: {e}")
+            elif self.step == 4:
+                import json as jm
+                preview = jm.dumps(self.schema, indent=2)[:500]
+                self.query_one("#schema-preview", Static).update(preview)
+
+        def on_mount(self) -> None:
+            self._update_view()
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            btn = event.button.id
+            if btn == "btn-cancel":
+                self.dismiss(None)
+            elif btn == "btn-back" and self.step > 1:
+                self.step -= 1
+                self._update_view()
+            elif btn == "btn-next":
+                if self.step == 2 and not self.schema["nodes"]:
+                    self.notify("Add at least one node", severity="warning")
+                    return
+                if self.step < 4:
+                    self.step += 1
+                    self._update_view()
+                else:
+                    self.dismiss(self.schema)
+            elif btn == "btn-add-node":
+                self._add_node()
+            elif btn == "btn-add-edge":
+                self._add_edge()
+            elif btn == "btn-save-schema":
+                self._save_schema()
+
+        def _add_node(self) -> None:
+            try:
+                label = self.query_one("#nl", Input).value.strip()
+                table = self.query_one("#nt", Input).value.strip()
+                id_prop = self.query_one("#nid", Input).value.strip() or "id"
+                props_str = self.query_one("#np", Input).value.strip()
+
+                if not label or not table:
+                    self.notify("Label and table required", severity="error")
+                    return
+
+                props = []
+                if props_str:
+                    for p in props_str.split(","):
+                        if ":" in p:
+                            nm, tp = p.split(":", 1)
+                            props.append({"name": nm.strip(), "type": tp.strip()})
+
+                self.schema["nodes"].append({
+                    "name": label,
+                    "tableName": table,
+                    "idProperty": {"name": id_prop, "type": "int"},
+                    "properties": props,
+                })
+                self.notify(f"Added: {label}")
+
+                # Clear
+                self.query_one("#nl", Input).value = ""
+                self.query_one("#nt", Input).value = ""
+                self.query_one("#nid", Input).value = ""
+                self.query_one("#np", Input).value = ""
+                self._update_view()
+            except Exception as e:
+                self.notify(f"Error: {e}", severity="error")
+
+        def _add_edge(self) -> None:
+            try:
+                rel = self.query_one("#et", Input).value.strip()
+                src = self.query_one("#es", Input).value.strip()
+                tgt = self.query_one("#ed", Input).value.strip()
+                tbl = self.query_one("#etbl", Input).value.strip()
+                sfk = self.query_one("#esfk", Input).value.strip()
+                tfk = self.query_one("#etfk", Input).value.strip()
+
+                if not all([rel, src, tgt, tbl, sfk, tfk]):
+                    self.notify("All fields required", severity="error")
+                    return
+
+                nodes = [n["name"] for n in self.schema["nodes"]]
+                if src not in nodes or tgt not in nodes:
+                    self.notify("Invalid node names", severity="error")
+                    return
+
+                self.schema["edges"].append({
+                    "name": rel,
+                    "sourceNode": src,
+                    "sinkNode": tgt,
+                    "tableName": tbl,
+                    "sourceIdProperty": {"name": sfk, "type": "int"},
+                    "sinkIdProperty": {"name": tfk, "type": "int"},
+                    "properties": [],
+                })
+                self.notify(f"Added: {rel}")
+
+                # Clear
+                for fid in ["#et", "#es", "#ed", "#etbl", "#esfk", "#etfk"]:
+                    self.query_one(fid, Input).value = ""
+                self._update_view()
+            except Exception as e:
+                self.notify(f"Error: {e}", severity="error")
+
+        def _save_schema(self) -> None:
+            try:
+                fn = self.query_one("#fn", Input).value.strip()
+                if not fn:
+                    self.notify("Enter filename", severity="error")
+                    return
+                if not fn.endswith(".json"):
+                    fn += ".json"
+
+                ex_dir = Path(__file__).parent.parent.parent / "examples"
+                path = ex_dir / fn if ex_dir.exists() else Path(fn)
+
+                import json as jm
+                path.write_text(jm.dumps(self.schema, indent=2), encoding="utf-8")
+                self.notify(f"Saved: {path}")
+                self.dismiss(self.schema)
+            except Exception as e:
+                self.notify(f"Error: {e}", severity="error")
+
+        def action_cancel(self) -> None:
+            self.dismiss(None)
 
     class CypherTUI(App[None]):
         """Textual TUI for OpenCypher to SQL transpilation."""
@@ -703,6 +1240,8 @@ def _run_tui(schema_file: Path | None) -> None:
             Binding("2", "filter_fraud", "Fraud", priority=True),
             Binding("3", "filter_credit", "Credit", priority=True),
             Binding("4", "filter_features", "Features", priority=True),
+            Binding("5", "select_schema", "Schema", priority=True),
+            Binding("ctrl+e", "edit_mode", "Edit", priority=True),
             Binding("r", "run_all", "Run All", priority=True),
             Binding("s", "copy_sql", "Copy SQL"),
             Binding("g", "copy_cypher", "Copy Cypher"),
@@ -716,6 +1255,8 @@ def _run_tui(schema_file: Path | None) -> None:
             schema: Any,
             status: str,
             cat_schemas: dict[str, Any],
+            initial_schema_name: str | None = None,
+            initial_schema_path: str | None = None,
         ) -> None:
             super().__init__()
             self.all_examples = examples
@@ -733,6 +1274,10 @@ def _run_tui(schema_file: Path | None) -> None:
             self.query_status: dict[int, str] = {}
             # Flag to block shortcuts during run_all
             self._is_running: bool = False
+            # Active schema tracking
+            self.active_schema_name: str = initial_schema_name or "none"
+            self.active_schema_path: str | None = initial_schema_path
+            self.active_schema: Any = schema  # The actual schema provider
 
         def compose(self) -> ComposeResult:
             yield Header()
@@ -817,6 +1362,7 @@ def _run_tui(schema_file: Path | None) -> None:
         def on_mount(self) -> None:
             """Initialize the table."""
             self._refresh_table()
+            self._update_status_bar()
             self.query_one("#examples-table", DataTable).focus()
 
         def _refresh_table(self) -> None:
@@ -973,10 +1519,18 @@ def _run_tui(schema_file: Path | None) -> None:
             if category:
                 self.current_category = category
 
-            # Use category-specific schema if available, otherwise CLI schema
-            schema_to_use = self.category_schemas.get(
-                self.current_category, self.graph_def
-            )
+            # Determine which schema to use:
+            # 1. If in custom query mode (no category), use active_schema
+            # 2. If viewing an example, use category-specific schema
+            # 3. Fallback to CLI-provided schema
+            if not self.current_category:
+                # Custom query mode - use active schema
+                schema_to_use = self.active_schema
+            else:
+                # Example mode - use category schema
+                schema_to_use = self.category_schemas.get(
+                    self.current_category, self.active_schema
+                )
             if not schema_to_use:
                 schema_to_use = self.graph_def
 
@@ -1132,7 +1686,7 @@ def _run_tui(schema_file: Path | None) -> None:
 
         def action_run_all(self) -> None:
             """Run all queries sequentially to check status."""
-            if self.query_one("#filter-input", Input).has_focus:
+            if self._has_text_input_focus():
                 return
             if self._is_running:
                 self.notify("Already running...", severity="warning")
@@ -1219,27 +1773,38 @@ def _run_tui(schema_file: Path | None) -> None:
             label.update(f"Running {current}/{total}: {desc}...")
             bar.update(progress=percent)
 
+        def _has_text_input_focus(self) -> bool:
+            """Check if any text input widget has focus."""
+            try:
+                if self.query_one("#filter-input", Input).has_focus:
+                    return True
+                if self.query_one("#query-input", TextArea).has_focus:
+                    return True
+            except Exception:
+                pass
+            return False
+
         def action_copy_cypher(self) -> None:
             """Copy Cypher query to clipboard."""
-            if self._is_running or self.query_one("#filter-input", Input).has_focus:
+            if self._is_running or self._has_text_input_focus():
                 return
             self._do_copy(self.last_query, "Cypher query")
 
         def action_copy_sql(self) -> None:
             """Copy SQL to clipboard."""
-            if self._is_running or self.query_one("#filter-input", Input).has_focus:
+            if self._is_running or self._has_text_input_focus():
                 return
             self._do_copy(self.last_sql, "SQL")
 
         def action_copy_ast(self) -> None:
             """Copy AST to clipboard."""
-            if self._is_running or self.query_one("#filter-input", Input).has_focus:
+            if self._is_running or self._has_text_input_focus():
                 return
             self._do_copy(self.last_ast, "AST")
 
         def action_copy_all(self) -> None:
             """Copy all to clipboard."""
-            if self._is_running or self.query_one("#filter-input", Input).has_focus:
+            if self._is_running or self._has_text_input_focus():
                 return
             self._copy_all()
 
@@ -1347,11 +1912,145 @@ def _run_tui(schema_file: Path | None) -> None:
             else:
                 self.notify(f"Copy failed: {msg}", severity="error")
 
+        def action_select_schema(self) -> None:
+            """Open schema selector modal."""
+            if self._is_running:
+                return
+            available = list(self.category_schemas.keys())
+            modal = SchemaSelectorModal(self.active_schema_name, available)
+            self.push_screen(modal, self._on_schema_selected)
+
+        def _on_schema_selected(self, result: str | None) -> None:
+            """Handle schema selection result."""
+            if result is None:
+                return  # Cancelled
+
+            if result == "__file__":
+                # Open file browser
+                modal = FileBrowserModal(Path.home())
+                self.push_screen(modal, self._on_file_selected)
+            elif result == "__wizard__":
+                # Open schema wizard
+                modal = SchemaWizardModal()
+                self.push_screen(modal, self._on_wizard_complete)
+            elif result == "none":
+                # No schema mode
+                self.active_schema_name = "none"
+                self.active_schema_path = None
+                self.active_schema = None
+                self._update_status_bar()
+                self._save_schema_config()
+                self.notify("Schema cleared - AST only mode", severity="information")
+            elif result in self.category_schemas:
+                # Built-in schema
+                self.active_schema_name = result
+                self.active_schema_path = None
+                self.active_schema = self.category_schemas[result]
+                self._update_status_bar()
+                self._save_schema_config()
+                self.notify(f"Switched to {result.title()} schema", severity="information")
+
+        def _on_file_selected(self, result: Path | None) -> None:
+            """Handle file selection result."""
+            if result is None:
+                return
+
+            try:
+                if result.suffix.lower() in (".yaml", ".yml"):
+                    data = yaml.safe_load(result.read_text(encoding="utf-8"))
+                    if "schema" in data:
+                        schema_data = data["schema"]
+                    else:
+                        schema_data = data
+                else:
+                    schema_data = json.loads(result.read_text(encoding="utf-8"))
+
+                loaded_schema = _load_schema_from_yaml(schema_data)
+                self.active_schema_name = "custom"
+                self.active_schema_path = str(result)
+                self.active_schema = loaded_schema
+                self._update_status_bar()
+                self._save_schema_config()
+                self.notify(f"Loaded schema from {result.name}", severity="information")
+            except Exception as e:
+                self.notify(f"Failed to load schema: {e}", severity="error")
+
+        def _on_wizard_complete(self, result: dict | None) -> None:
+            """Handle wizard completion."""
+            if result is None:
+                return
+
+            try:
+                loaded_schema = _load_schema_from_yaml(result)
+                self.active_schema_name = "custom"
+                self.active_schema_path = None
+                self.active_schema = loaded_schema
+                self._update_status_bar()
+                self._save_schema_config()
+                self.notify("Custom schema created and activated", severity="information")
+            except Exception as e:
+                self.notify(f"Failed to activate schema: {e}", severity="error")
+
+        def _update_status_bar(self) -> None:
+            """Update status bar with current schema info."""
+            status_bar = self.query_one("#status-bar", Static)
+            if self.active_schema_name == "none" or self.active_schema is None:
+                status_bar.update(" [5]Schema: None (AST only)")
+            elif self.active_schema_name == "custom" and self.active_schema_path:
+                path = Path(self.active_schema_path)
+                status_bar.update(f" [5]Schema: {path.name}")
+            elif self.active_schema_name == "custom":
+                status_bar.update(" [5]Schema: Custom (wizard)")
+            else:
+                status_bar.update(f" [5]Schema: {self.active_schema_name.title()}")
+
+        def _save_schema_config(self) -> None:
+            """Save current schema selection to config."""
+            config = _load_config()
+            config["last_schema"] = self.active_schema_name
+            config["last_schema_path"] = self.active_schema_path
+            _save_config(config)
+
+        def action_edit_mode(self) -> None:
+            """Enter edit mode for custom query input."""
+            if self._is_running:
+                return
+
+            # Skip if an input or textarea already has focus (let them handle the key)
+            if self._has_text_input_focus():
+                return
+
+            # Update header to show custom query mode
+            header_section = self.query_one("#section-header", Static)
+            schema_info = self.active_schema_name.title() if self.active_schema_name != "none" else "None (AST only)"
+            header_section.update(
+                f"[bold cyan]Custom Query Mode[/bold cyan]\n"
+                f"Schema: {schema_info}\n"
+                f"[dim]Type your query below, press Ctrl+X to execute[/dim]"
+            )
+
+            # Clear example tracking
+            self.last_example_idx = None
+            self.current_category = ""
+
+            # Focus the TextArea
+            query_input = self.query_one("#query-input", TextArea)
+            query_input.focus()
+
+    # Determine initial schema info
+    initial_schema_name: str | None = None
+    initial_schema_path: str | None = None
+    if last_schema_name:
+        initial_schema_name = last_schema_name
+        initial_schema_path = last_schema_path
+
     app = CypherTUI(
         examples=examples_data,
         schema=graph_def,
         status=schema_status,
         cat_schemas=category_schemas,
+        initial_schema_name=initial_schema_name,
+        initial_schema_path=initial_schema_path,
     )
     app.run()
 

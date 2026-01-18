@@ -112,6 +112,13 @@ schema:
       sourceIdProperty: { name: customer_id, type: int }
       sinkIdProperty: { name: loan_id, type: int }
 
+    - name: CARD_TRANSACTION
+      sourceNode: CreditCard
+      sinkNode: Transaction
+      tableName: catalog.credit.CardTransaction
+      sourceIdProperty: { name: card_id, type: int }
+      sinkIdProperty: { name: transaction_id, type: int }
+
 examples:
   - description: "Calculate credit risk scores based on transaction history"
     application: "Credit: Risk scoring"
@@ -241,7 +248,7 @@ examples:
   - description: "Identify seasonal spending patterns for credit limit adjustments"
     application: "Credit: Seasonal analysis"
     query: |
-      MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:TRANSACTION]->(t:Transaction)
+      MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
       WHERE t.timestamp > TIMESTAMP() - DURATION('P365D')
       WITH c, card,
            EXTRACT(month FROM t.timestamp) AS month,
@@ -304,7 +311,7 @@ examples:
   - description: "Identify customers suitable for credit line decreases"
     application: "Credit: Risk mitigation"
     query: |
-      MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:TRANSACTION]->(t:Transaction)
+      MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
       WHERE t.timestamp > TIMESTAMP() - DURATION('P180D')
       WITH c, card,
            MAX(card.credit_limit) AS credit_limit,

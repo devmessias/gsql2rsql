@@ -259,8 +259,8 @@ examples:
   - description: "Find collusion networks via coordinated transaction timing"
     application: "Fraud: Collusion detection"
     query: |
-      MATCH (a1:Account)-[:TRANSACTION]->(t1:Transaction),
-            (a2:Account)-[:TRANSACTION]->(t2:Transaction)
+      MATCH (a1:Account)-[:HAS_TRANSACTION]->(t1:Transaction),
+            (a2:Account)-[:HAS_TRANSACTION]->(t2:Transaction)
       WHERE a1.id < a2.id
         AND ABS(t1.timestamp - t2.timestamp) < DURATION('PT5M')
         AND t1.merchant_id = t2.merchant_id
@@ -310,7 +310,7 @@ examples:
   - description: "Find velocity abuse patterns with high-frequency transactions"
     application: "Fraud: Velocity abuse"
     query: |
-      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)
+      MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)
       WHERE t.timestamp > TIMESTAMP() - DURATION('PT1H')
       WITH a, COUNT(t) AS tx_per_hour, SUM(t.amount) AS total_amount
       WHERE tx_per_hour > 20
@@ -369,7 +369,7 @@ examples:
   - description: "Identify anomalous cross-border transaction patterns"
     application: "Fraud: Cross-border anomaly"
     query: |
-      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)-[:TO_COUNTRY]->(c:Country)
+      MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)-[:TO_COUNTRY]->(c:Country)
       WHERE c.code <> a.home_country AND t.amount > 10000
       WITH a, c, COUNT(t) AS cross_border_count, SUM(t.amount) AS total_amount
       WHERE cross_border_count > 5
@@ -382,7 +382,7 @@ examples:
   - description: "Detect account takeover via sudden behavioral changes"
     application: "Fraud: Account takeover"
     query: |
-      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)
+      MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)
       WITH a,
            AVG(CASE WHEN t.timestamp < TIMESTAMP() - DURATION('P30D') THEN t.amount END) AS avg_30d_ago,
            AVG(CASE WHEN t.timestamp >= TIMESTAMP() - DURATION('P7D') THEN t.amount END) AS avg_recent
@@ -410,7 +410,7 @@ examples:
   - description: "Analyze transaction volumes by merchant category for suspicious accounts"
     application: "Fraud: Category-based volume analysis"
     query: |
-      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)-[:AT_MERCHANT]->(m:Merchant)
+      MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)-[:AT_MERCHANT]->(m:Merchant)
       WHERE a.kyc_status = 'incomplete' OR a.days_since_creation < 30
       WITH a,
            m.category AS merchant_category,
