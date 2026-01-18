@@ -911,3 +911,143 @@ class TestVolatileFunctionSafetyCheck:
             f"Deterministic predicate (p.age > 30) should be pushed.\n"
             f"p.filters = {p_filters}"
         )
+
+
+class TestCorrelatedSubquerySafetyCheck:
+    """Test that predicates with EXISTS/NOT EXISTS are NOT pushed.
+
+    Correlated subqueries (EXISTS, NOT EXISTS) reference variables from
+    the outer query scope. Pushing them would break the correlation semantics.
+
+    Example:
+        MATCH (p:Person)
+        WHERE p.age > 30 AND EXISTS { (p)-[:KNOWS]->(:Person) }
+        RETURN p.name
+
+    The EXISTS subquery references `p` from the outer MATCH.
+    - p.age > 30 → CAN be pushed (simple property reference)
+    - EXISTS {...} → CANNOT be pushed (correlated subquery)
+    """
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.parser = OpenCypherParser()
+
+        self.graph_schema = SimpleGraphSchemaProvider()
+        self.graph_schema.add_node(
+            NodeSchema(
+                name="Person",
+                properties=[
+                    EntityProperty("id", int),
+                    EntityProperty("name", str),
+                    EntityProperty("age", int),
+                ],
+                node_id_property=EntityProperty("id", int),
+            )
+        )
+        self.graph_schema.add_edge(
+            EdgeSchema(
+                name="KNOWS",
+                source_node_id="Person",
+                sink_node_id="Person",
+                source_id_property=EntityProperty("source_id", int),
+                sink_id_property=EntityProperty("target_id", int),
+            )
+        )
+
+    def _get_plan(self, cypher: str, optimize: bool = True) -> LogicalPlan:
+        """Helper to get logical plan for a query."""
+        ast = self.parser.parse(cypher)
+        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        if optimize:
+            optimize_plan(plan)
+        return plan
+
+    def _get_datasources_with_filters(
+        self, plan: LogicalPlan
+    ) -> dict[str, list[str | None]]:
+        """Get DataSources and their filter expressions."""
+        result: dict[str, list[str | None]] = {}
+        for op in plan.starting_operators:
+            if isinstance(op, DataSourceOperator):
+                alias = op.entity.alias if op.entity else "unknown"
+                filter_str = str(op.filter_expression) if op.filter_expression else None
+                if alias not in result:
+                    result[alias] = []
+                result[alias].append(filter_str)
+        return result
+
+    def test_exists_not_pushed(self) -> None:
+        """Test: EXISTS predicate is NOT pushed to DataSource.
+
+        WHERE EXISTS { (p)-[:KNOWS]->() } should stay in Selection.
+        """
+        cypher = """
+        MATCH (p:Person)
+        WHERE EXISTS { (p)-[:KNOWS]->(:Person) }
+        RETURN p.name
+        """
+        plan = self._get_plan(cypher)
+        ds_filters = self._get_datasources_with_filters(plan)
+
+        # p should NOT have the EXISTS filter pushed
+        p_filters = ds_filters.get("p", [])
+        for p_filter in p_filters:
+            if p_filter:
+                assert "EXISTS" not in p_filter.upper(), (
+                    f"EXISTS subquery was incorrectly pushed!\n"
+                    f"p.filter = {p_filter}"
+                )
+
+    def test_exists_mixed_with_pushable_predicate(self) -> None:
+        """Test: EXISTS stays while pushable predicate is pushed.
+
+        WHERE p.age > 30 AND EXISTS { (p)-[:KNOWS]->() }
+        - p.age > 30 → CAN be pushed (deterministic property)
+        - EXISTS {...} → CANNOT be pushed (correlated subquery)
+        """
+        cypher = """
+        MATCH (p:Person)
+        WHERE p.age > 30 AND EXISTS { (p)-[:KNOWS]->(:Person) }
+        RETURN p.name
+        """
+        plan = self._get_plan(cypher)
+        ds_filters = self._get_datasources_with_filters(plan)
+
+        # p CAN have age > 30 pushed
+        p_filters = ds_filters.get("p", [])
+        has_age_filter = any(f is not None and "30" in f for f in p_filters)
+        assert has_age_filter, (
+            f"Deterministic predicate (p.age > 30) should be pushed.\n"
+            f"p.filters = {p_filters}"
+        )
+
+        # EXISTS should NOT be in any DataSource filter
+        for p_filter in p_filters:
+            if p_filter:
+                assert "EXISTS" not in p_filter.upper(), (
+                    f"EXISTS subquery was incorrectly pushed!\n"
+                    f"p.filter = {p_filter}"
+                )
+
+    def test_not_exists_not_pushed(self) -> None:
+        """Test: NOT EXISTS predicate is NOT pushed to DataSource.
+
+        WHERE NOT EXISTS { (p)-[:KNOWS]->() } should stay in Selection.
+        """
+        cypher = """
+        MATCH (p:Person)
+        WHERE NOT EXISTS { (p)-[:KNOWS]->(:Person) }
+        RETURN p.name
+        """
+        plan = self._get_plan(cypher)
+        ds_filters = self._get_datasources_with_filters(plan)
+
+        # p should NOT have the NOT EXISTS filter pushed
+        p_filters = ds_filters.get("p", [])
+        for p_filter in p_filters:
+            if p_filter:
+                assert "EXISTS" not in p_filter.upper(), (
+                    f"NOT EXISTS subquery was incorrectly pushed!\n"
+                    f"p.filter = {p_filter}"
+                )

@@ -679,8 +679,9 @@ class SelectionPushdownOptimizer:
     │                       │ pushed before grouping        │ _contains_      │
     │                       │                               │ aggregation     │
     ├──────────────────────────────────────────────────────────────────────────┤
-    │  Correlated subquery  │ EXISTS/NOT EXISTS with outer  │ ❌ N/A          │
-    │                       │ reference                     │ Not in parser   │
+    │  Correlated subquery  │ EXISTS/NOT EXISTS with outer  │ ✅ YES          │
+    │  (EXISTS, NOT EXISTS) │ reference - must evaluate in  │ _contains_      │
+    │                       │ context of each outer row     │ correlated_subq │
     └──────────────────────────────────────────────────────────────────────────┘
 
     TODO: Future safety checks to consider:
@@ -998,7 +999,19 @@ class SelectionPushdownOptimizer:
                 continue
 
             # =================================================================
-            # Safety Check 3: Variable count
+            # Safety Check 3: Correlated subqueries (EXISTS, NOT EXISTS)
+            # =================================================================
+            # EXISTS/NOT EXISTS expressions contain correlated references to
+            # variables from the outer query. They CANNOT be pushed because:
+            # 1. The correlation references the outer scope (e.g., p in EXISTS{(p)-[:R]->()})
+            # 2. The subquery must be evaluated in the context of each outer row
+            # 3. Pushing would break the correlation semantics
+            if self._contains_correlated_subquery(pred):
+                groups.setdefault(None, []).append(pred)
+                continue
+
+            # =================================================================
+            # Safety Check 4: Variable count
             # =================================================================
             # Collect all property references in this predicate
             properties = self._collect_property_references(pred)
@@ -1312,6 +1325,91 @@ class SelectionPushdownOptimizer:
         elif hasattr(expr, 'children'):
             for child in expr.children:
                 if isinstance(child, QueryExpression) and self._contains_aggregation_function(child):
+                    return True
+
+        return False
+
+    def _contains_correlated_subquery(self, expr: QueryExpression) -> bool:
+        """Check if expression contains EXISTS or NOT EXISTS subquery.
+
+        Correlated subqueries (EXISTS, NOT EXISTS) reference variables from
+        the outer query scope. They CANNOT be pushed because:
+
+        1. The pattern inside EXISTS references outer variables:
+           MATCH (p:Person)
+           WHERE EXISTS { (p)-[:KNOWS]->() }  ← p comes from outer MATCH
+                          ^
+        2. The subquery must evaluate in context of each outer row
+        3. Pushing to DataSource would break the correlation
+
+        Example:
+            MATCH (p:Person)
+            WHERE p.age > 30 AND EXISTS { (p)-[:KNOWS]->(:Person) }
+            RETURN p.name
+
+            - p.age > 30 → CAN be pushed (simple property reference)
+            - EXISTS {...} → CANNOT be pushed (correlated subquery)
+
+        Args:
+            expr: The expression to analyze.
+
+        Returns:
+            True if the expression contains EXISTS/NOT EXISTS.
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionExists,
+            QueryExpressionBinary,
+            QueryExpressionFunction,
+            QueryExpressionCaseExpression,
+            QueryExpressionList,
+            QueryExpressionListPredicate,
+            QueryExpressionWithAlias,
+        )
+
+        # Direct EXISTS expression
+        if isinstance(expr, QueryExpressionExists):
+            return True
+
+        elif isinstance(expr, QueryExpressionBinary):
+            if expr.left_expression and self._contains_correlated_subquery(expr.left_expression):
+                return True
+            if expr.right_expression and self._contains_correlated_subquery(expr.right_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionFunction):
+            for arg in expr.parameters or []:
+                if self._contains_correlated_subquery(arg):
+                    return True
+
+        elif isinstance(expr, QueryExpressionCaseExpression):
+            if expr.test_expression and self._contains_correlated_subquery(expr.test_expression):
+                return True
+            for when_expr, then_expr in expr.alternatives or []:
+                if self._contains_correlated_subquery(when_expr):
+                    return True
+                if self._contains_correlated_subquery(then_expr):
+                    return True
+            if expr.else_expression and self._contains_correlated_subquery(expr.else_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionList):
+            for item in expr.items or []:
+                if self._contains_correlated_subquery(item):
+                    return True
+
+        elif isinstance(expr, QueryExpressionListPredicate):
+            if expr.list_expression and self._contains_correlated_subquery(expr.list_expression):
+                return True
+            if expr.filter_expression and self._contains_correlated_subquery(expr.filter_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionWithAlias):
+            if expr.inner_expression and self._contains_correlated_subquery(expr.inner_expression):
+                return True
+
+        elif hasattr(expr, 'children'):
+            for child in expr.children:
+                if isinstance(child, QueryExpression) and self._contains_correlated_subquery(child):
                     return True
 
         return False
