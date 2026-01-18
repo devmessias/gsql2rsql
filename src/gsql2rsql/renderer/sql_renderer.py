@@ -491,11 +491,60 @@ class SQLRenderer:
         lines: list[str] = []
         lines.append(f"  {cte_name} AS (")
 
+        # ═══════════════════════════════════════════════════════════════════
+        # SOURCE NODE FILTER PUSHDOWN
+        # ═══════════════════════════════════════════════════════════════════
+        # If we have a filter on the source node (e.g., WHERE p.name = 'Alice'),
+        # we push it into the CTE base case by JOINing with the source node table.
+        #
+        # This is a critical optimization:
+        # - Without pushdown: Explore ALL paths from ALL nodes, then filter
+        # - With pushdown: Only explore paths from nodes matching the filter
+        #
+        # Example:
+        #   MATCH (p:Person)-[:KNOWS*1..3]->(f:Person) WHERE p.name = 'Alice'
+        #
+        #   Before (inefficient):
+        #     WITH RECURSIVE paths AS (
+        #       SELECT ... FROM Knows e  -- Starts from ALL persons
+        #       UNION ALL ...
+        #     )
+        #     SELECT ... WHERE p.name = 'Alice'  -- Filters AFTER CTE
+        #
+        #   After (optimized):
+        #     WITH RECURSIVE paths AS (
+        #       SELECT ... FROM Knows e
+        #       JOIN Person src ON src.id = e.person_id
+        #       WHERE src.name = 'Alice'  -- Filters AT START
+        #       UNION ALL ...
+        #     )
+        #     SELECT ...
+        # ═══════════════════════════════════════════════════════════════════
+        source_node_filter_sql: str | None = None
+        source_node_table: SQLTableDescriptor | None = None
+        if op.start_node_filter:
+            # Get source node table for JOIN
+            source_node_table = self._graph_def.get_sql_table_descriptors(
+                op.source_node_type
+            )
+            if source_node_table:
+                # Rewrite filter: p.name -> src.name
+                rewritten_filter = rewrite_predicate_for_edge_alias(
+                    op.start_node_filter,
+                    op.source_alias,  # e.g., "p"
+                    edge_alias="src",  # Rewrite to "src"
+                )
+                source_node_filter_sql = self._render_edge_filter_expression(
+                    rewritten_filter
+                )
+
         # If min_depth is 0, add zero-length path base case first
         if min_depth == 0:
             # Get source node table descriptor
-            source_table = self._graph_def.get_sql_table_descriptors(op.source_node_type)
-            if not source_table:
+            zero_len_source_table = self._graph_def.get_sql_table_descriptors(
+                op.source_node_type
+            )
+            if not zero_len_source_table:
                 raise TranspilerInternalErrorException(
                     f"No table descriptor for source node: {op.source_node_type}"
                 )
@@ -510,12 +559,17 @@ class SQLRenderer:
                 # Empty array of structs for zero-length path
                 lines.append("      ARRAY() AS path_edges,")
             lines.append("      ARRAY() AS visited")
-            lines.append(f"    FROM {source_table.full_table_name} n")
+            lines.append(f"    FROM {zero_len_source_table.full_table_name} n")
 
-            # Add start_node_filter if present
+            # Add start_node_filter if present (rewrite to use 'n' alias)
             if op.start_node_filter:
-                filter_sql = self._render_expression(op.start_node_filter, op)
-                lines.append(f"    WHERE n.{op.source_id_column} = {filter_sql}")
+                rewritten = rewrite_predicate_for_edge_alias(
+                    op.start_node_filter,
+                    op.source_alias,
+                    edge_alias="n",
+                )
+                filter_sql = self._render_edge_filter_expression(rewritten)
+                lines.append(f"    WHERE {filter_sql}")
 
             lines.append("")
             lines.append("    UNION ALL")
@@ -539,12 +593,22 @@ class SQLRenderer:
             base_sql.append(f"      ARRAY(e.{source_id_col}) AS visited")
             base_sql.append(f"    FROM {table_name} e")
 
+            # Add JOIN with source node table if we have a source filter
+            if source_node_filter_sql and source_node_table:
+                base_sql.append(
+                    f"    JOIN {source_node_table.full_table_name} src "
+                    f"ON src.{op.source_id_column} = e.{source_id_col}"
+                )
+
             # Build WHERE clause
             where_parts = []
             if combined_filter:
                 where_parts.append(f"({combined_filter})")
-            if op.start_node_filter:
-                where_parts.append(f"e.{source_id_col} = {op.start_node_filter}")
+            # ═══════════════════════════════════════════════════════════════
+            # SOURCE NODE FILTER PUSHDOWN: Apply source filter in base case
+            # ═══════════════════════════════════════════════════════════════
+            if source_node_filter_sql:
+                where_parts.append(source_node_filter_sql)
             # ═══════════════════════════════════════════════════════════════
             # PREDICATE PUSHDOWN: Apply edge filter in base case
             # ═══════════════════════════════════════════════════════════════
@@ -573,11 +637,19 @@ class SQLRenderer:
                 base_sql.append(f"      ARRAY(e.{source_id_col}) AS visited")
                 base_sql.append(f"    FROM {edge_table.full_table_name} e")
 
+                # Add JOIN with source node table if we have a source filter
+                if source_node_filter_sql and source_node_table:
+                    base_sql.append(
+                        f"    JOIN {source_node_table.full_table_name} src "
+                        f"ON src.{op.source_id_column} = e.{source_id_col}"
+                    )
+
                 filters = []
                 if edge_table.filter:
                     filters.append(edge_table.filter)
-                if op.start_node_filter:
-                    filters.append(f"e.{source_id_col} = {op.start_node_filter}")
+                # SOURCE NODE FILTER PUSHDOWN
+                if source_node_filter_sql:
+                    filters.append(source_node_filter_sql)
                 # PREDICATE PUSHDOWN: Apply edge filter in multi-table base case
                 if edge_filter_sql:
                     filters.append(edge_filter_sql)
@@ -858,6 +930,9 @@ class SQLRenderer:
         where_parts = [f"p.depth >= {min_depth}"]
         if recursive_op.max_hops is not None:
             where_parts.append(f"p.depth <= {recursive_op.max_hops}")
+        # Circular path check: require start_node = end_node for patterns like (a)-[*]->(a)
+        if recursive_op.is_circular:
+            where_parts.append("p.start_node = p.end_node")
         lines.append(f"{indent}WHERE {' AND '.join(where_parts)}")
 
         return "\n".join(lines)

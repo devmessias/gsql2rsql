@@ -237,6 +237,9 @@ class LogicalPlan:
             ret.inner_expression for ret in part.return_body
         ] if part.return_body else []
 
+        # Track node aliases seen across all match clauses for correlation
+        seen_node_aliases: set[str] = set()
+
         # Process MATCH clauses
         for match_clause in part.match_clauses:
             match_op = self._create_match_tree(match_clause, all_ops, return_exprs)
@@ -246,10 +249,27 @@ class LogicalPlan:
                 join_type = JoinType.LEFT if match_clause.is_optional else JoinType.INNER
                 join_op = JoinOperator(join_type=join_type)
                 join_op.set_in_operators(current_op, match_op)
+
+                # Add join pairs for shared node variables (correlation)
+                # This is critical for OPTIONAL MATCH to work correctly
+                for entity in match_clause.pattern_parts:
+                    if isinstance(entity, NodeEntity) and entity.alias in seen_node_aliases:
+                        # Found a shared variable - add NODE_ID join pair
+                        join_op.add_join_pair(JoinKeyPair(
+                            node_alias=entity.alias,
+                            relationship_or_node_alias=entity.alias,
+                            pair_type=JoinKeyPairType.NODE_ID,
+                        ))
+
                 all_ops.append(join_op)
                 current_op = join_op
             else:
                 current_op = match_op
+
+            # Track all node aliases from this match clause
+            for entity in match_clause.pattern_parts:
+                if isinstance(entity, NodeEntity) and entity.alias:
+                    seen_node_aliases.add(entity.alias)
 
             # Process WHERE clause from MatchClause
             if match_clause.where_expression and current_op:
@@ -533,84 +553,171 @@ class LogicalPlan:
         join_op.set_in_operators(recursive_op, target_ds)
         all_ops.append(join_op)
 
-        return join_op
+        # Find index of target node to process any remaining pattern parts
+        # This handles patterns like: (a)-[:KNOWS*1..2]-(b)-[:HAS_LOAN]->(l)
+        # where we need to continue processing [:HAS_LOAN]->(l) after the recursive path
+        current_op: LogicalOperator = join_op
+        target_idx = match_clause.pattern_parts.index(target_node)
+        remaining_parts = match_clause.pattern_parts[target_idx + 1:]
+
+        if remaining_parts:
+            # First pass: assign aliases and update entity names
+            auto_alias_counter = 0
+            prev_node: NodeEntity | None = target_node
+            for entity in remaining_parts:
+                if not entity.alias:
+                    auto_alias_counter += 1
+                    entity.alias = f"_anon{auto_alias_counter}"
+
+                if isinstance(entity, NodeEntity):
+                    prev_node = entity
+                elif isinstance(entity, RelationshipEntity) and prev_node:
+                    entity.left_entity_name = prev_node.entity_name
+
+            # Second pass: update right_entity_name for relationships
+            prev_entity: Entity | None = None
+            for entity in remaining_parts:
+                if isinstance(entity, NodeEntity) and prev_entity:
+                    if isinstance(prev_entity, RelationshipEntity):
+                        prev_entity.right_entity_name = entity.entity_name
+                prev_entity = entity
+
+            # Third pass: create operators and join them
+            prev_node_alias = target_node.alias
+
+            for entity in remaining_parts:
+                ds_op = DataSourceOperator(entity=entity)
+                all_ops.append(ds_op)
+
+                # Determine join type and create join pairs
+                new_join_op = JoinOperator(join_type=JoinType.INNER)
+
+                if isinstance(entity, RelationshipEntity):
+                    # Join target node to relationship
+                    if prev_node_alias:
+                        pair_type = self._determine_join_pair_type(entity)
+                        new_join_op.add_join_pair(JoinKeyPair(
+                            node_alias=prev_node_alias,
+                            relationship_or_node_alias=entity.alias,
+                            pair_type=pair_type,
+                        ))
+                elif isinstance(entity, NodeEntity):
+                    # Find the previous relationship to join with
+                    for prev_ent in remaining_parts:
+                        if isinstance(prev_ent, RelationshipEntity):
+                            if prev_ent.right_entity_name == entity.entity_name:
+                                pair_type = self._determine_sink_join_type(prev_ent)
+                                new_join_op.add_join_pair(
+                                    JoinKeyPair(
+                                        node_alias=entity.alias,
+                                        relationship_or_node_alias=prev_ent.alias,
+                                        pair_type=pair_type,
+                                    )
+                                )
+                    prev_node_alias = entity.alias
+
+                new_join_op.set_in_operators(current_op, ds_op)
+                all_ops.append(new_join_op)
+                current_op = new_join_op
+
+        return current_op
 
     def _extract_source_node_filter(
         self,
         where_expr: QueryExpression | None,
         source_alias: str,
-    ) -> tuple[str | None, QueryExpression | None]:
+    ) -> tuple[QueryExpression | None, QueryExpression | None]:
         """
-        Extract simple equality filter on source node's id from WHERE clause.
+        Extract filters on the source node variable from WHERE clause.
 
-        Returns (filter_value, remaining_expression).
-        For example, WHERE p.id = 1 AND f.age > 25 returns ("1", f.age > 25).
+        This optimization pushes filters like `p.name = 'Alice'` into the
+        recursive CTE's base case, dramatically reducing the number of paths
+        explored.
+
+        Returns (source_filter, remaining_expression).
+
+        Examples:
+        - WHERE p.name = 'Alice' -> (p.name = 'Alice', None)
+        - WHERE p.name = 'Alice' AND f.age > 25 -> (p.name = 'Alice', f.age > 25)
+        - WHERE f.age > 25 -> (None, f.age > 25)
+
+        The source_filter is applied to the source node JOIN in the CTE base case,
+        limiting the starting points of the recursive traversal.
         """
         if not where_expr:
             return None, None
 
-        # Handle simple equality: p.id = value
-        if isinstance(where_expr, QueryExpressionBinary):
-            if self._is_source_id_equality(where_expr, source_alias):
-                filter_val = self._extract_filter_value(where_expr)
-                return filter_val, None
+        # Check if the entire expression references only the source node
+        if self._references_only_variable(where_expr, source_alias):
+            return where_expr, None
 
-            # Handle AND: check if one side is source filter
+        # Handle AND: split into source-only and other predicates
+        if isinstance(where_expr, QueryExpressionBinary):
             if (where_expr.operator and
                     where_expr.operator.name.name == "AND"):
                 left = where_expr.left_expression
                 right = where_expr.right_expression
 
-                # Check left side
-                if isinstance(left, QueryExpressionBinary):
-                    if self._is_source_id_equality(left, source_alias):
-                        filter_val = self._extract_filter_value(left)
-                        return filter_val, right
+                left_is_source = self._references_only_variable(left, source_alias)
+                right_is_source = self._references_only_variable(right, source_alias)
 
-                # Check right side
-                if isinstance(right, QueryExpressionBinary):
-                    if self._is_source_id_equality(right, source_alias):
-                        filter_val = self._extract_filter_value(right)
-                        return filter_val, left
+                if left_is_source and right_is_source:
+                    # Both sides reference only source - return entire expression
+                    return where_expr, None
+                elif left_is_source:
+                    # Left is source filter, right is remaining
+                    return left, right
+                elif right_is_source:
+                    # Right is source filter, left is remaining
+                    return right, left
 
         return None, where_expr
 
-    def _is_source_id_equality(
+    def _references_only_variable(
         self,
-        expr: QueryExpressionBinary,
-        source_alias: str,
+        expr: QueryExpression,
+        variable: str,
     ) -> bool:
-        """Check if expression is source_alias.id = value."""
-        if not expr.operator or expr.operator.name.name != "EQ":
+        """Check if expression references only the specified variable.
+
+        Returns True if ALL property references in the expression use the
+        given variable name. Used to identify filters that can be pushed
+        into the CTE base case.
+
+        Examples with variable='p':
+        - p.name = 'Alice'              -> True (only references p)
+        - p.age > 30 AND p.active       -> True (only references p)
+        - p.name = f.name               -> False (references both p and f)
+        - f.age > 25                    -> False (references f, not p)
+        - 1 = 1                         -> False (no property references)
+        """
+        properties = self._collect_property_references(expr)
+
+        if not properties:
+            # No property references - can't push (e.g., literal comparison)
             return False
 
-        left = expr.left_expression
-        right = expr.right_expression
+        # All properties must reference the specified variable
+        return all(prop.variable_name == variable for prop in properties)
 
-        # Check left side is source.id
-        if isinstance(left, QueryExpressionProperty):
-            if (left.variable_name == source_alias and
-                    left.property_name == "id"):
-                return isinstance(right, QueryExpressionValue)
+    def _collect_property_references(
+        self,
+        expr: QueryExpression,
+    ) -> list[QueryExpressionProperty]:
+        """Collect all property references from an expression tree."""
+        properties: list[QueryExpressionProperty] = []
 
-        # Check right side is source.id (reversed: value = source.id)
-        if isinstance(right, QueryExpressionProperty):
-            if (right.variable_name == source_alias and
-                    right.property_name == "id"):
-                return isinstance(left, QueryExpressionValue)
+        if isinstance(expr, QueryExpressionProperty):
+            properties.append(expr)
+        elif isinstance(expr, QueryExpressionBinary):
+            properties.extend(self._collect_property_references(expr.left_expression))
+            properties.extend(self._collect_property_references(expr.right_expression))
+        elif hasattr(expr, 'children'):
+            for child in expr.children:
+                if isinstance(child, QueryExpression):
+                    properties.extend(self._collect_property_references(child))
 
-        return False
-
-    def _extract_filter_value(self, expr: QueryExpressionBinary) -> str | None:
-        """Extract the literal value from an equality expression."""
-        left = expr.left_expression
-        right = expr.right_expression
-
-        if isinstance(right, QueryExpressionValue):
-            return str(right.value)
-        if isinstance(left, QueryExpressionValue):
-            return str(left.value)
-        return None
+        return properties
 
     def _create_standard_match_tree(
         self, match_clause: MatchClause, all_ops: list[LogicalOperator]

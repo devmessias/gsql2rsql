@@ -613,11 +613,17 @@ class RecursiveTraversalOperator(LogicalOperator):
             return 1
         return max(op.depth for op in self._in_operators) + 1
 
+    @property
+    def is_circular(self) -> bool:
+        """Check if this is a circular path (source and target are the same variable)."""
+        return bool(self.source_alias and self.source_alias == self.target_alias)
+
     def __str__(self) -> str:
         edge_str = "|".join(self.edge_types)
         hops_str = f"*{self.min_hops}..{self.max_hops}" if self.max_hops else f"*{self.min_hops}.."
         path_str = f", path={self.path_variable}" if self.path_variable else ""
-        return f"RecursiveTraversal({edge_str}{hops_str}{path_str})"
+        circular_str = ", circular=True" if self.is_circular else ""
+        return f"RecursiveTraversal({edge_str}{hops_str}{path_str}{circular_str})"
 
 
 @dataclass
