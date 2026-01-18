@@ -1,0 +1,463 @@
+# Fraud Detection Query Examples for OpenCypher to Databricks SQL Transpiler
+# These examples demonstrate various fraud detection patterns and graph analytics techniques
+
+# Schema definition for fraud detection examples
+schema:
+  nodes:
+    - name: Account
+      tableName: catalog.fraud.Account
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: holder_name, type: string }
+        - { name: risk_score, type: int }
+        - { name: status, type: string }
+        - { name: default_date, type: string }
+        - { name: home_country, type: string }
+        - { name: kyc_status, type: string }
+        - { name: days_since_creation, type: int }
+
+    - name: Merchant
+      tableName: catalog.fraud.Merchant
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: category, type: string }
+
+    - name: Transaction
+      tableName: catalog.fraud.Transaction
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+        - { name: type, type: string }
+        - { name: merchant_id, type: int }
+
+    - name: Person
+      tableName: catalog.fraud.Person
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: creation_date, type: string }
+
+    - name: Address
+      tableName: catalog.fraud.Address
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: street, type: string }
+        - { name: city, type: string }
+
+    - name: Card
+      tableName: catalog.fraud.Card
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: number, type: string }
+
+    - name: POS
+      tableName: catalog.fraud.POS
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: location, type: string }
+        - { name: risk_status, type: string }
+        - { name: flagged, type: boolean }
+
+    - name: Customer
+      tableName: catalog.fraud.Customer
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: status, type: string }
+
+    - name: Purchase
+      tableName: catalog.fraud.Purchase
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+
+    - name: Return
+      tableName: catalog.fraud.Return
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+
+    - name: Country
+      tableName: catalog.fraud.Country
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: code, type: string }
+        - { name: name, type: string }
+
+  edges:
+    - name: TRANSACTION
+      sourceNode: Account
+      sinkNode: Merchant
+      tableName: catalog.fraud.AccountTransaction
+      sourceIdProperty: { name: account_id, type: int }
+      sinkIdProperty: { name: merchant_id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+
+    - name: TRANSFER
+      sourceNode: Account
+      sinkNode: Account
+      tableName: catalog.fraud.Transfer
+      sourceIdProperty: { name: source_account_id, type: int }
+      sinkIdProperty: { name: target_account_id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+
+    - name: HAS_ADDRESS
+      sourceNode: Person
+      sinkNode: Address
+      tableName: catalog.fraud.PersonAddress
+      sourceIdProperty: { name: person_id, type: int }
+      sinkIdProperty: { name: address_id, type: int }
+
+    - name: USED_IN
+      sourceNode: Card
+      sinkNode: Transaction
+      tableName: catalog.fraud.CardTransaction
+      sourceIdProperty: { name: card_id, type: int }
+      sinkIdProperty: { name: transaction_id, type: int }
+
+    - name: PROCESSED
+      sourceNode: POS
+      sinkNode: Transaction
+      tableName: catalog.fraud.POSTransaction
+      sourceIdProperty: { name: pos_id, type: int }
+      sinkIdProperty: { name: transaction_id, type: int }
+
+    - name: HAS_CARD
+      sourceNode: Customer
+      sinkNode: Card
+      tableName: catalog.fraud.CustomerCard
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: card_id, type: int }
+
+    - name: USED_AT
+      sourceNode: Card
+      sinkNode: Merchant
+      tableName: catalog.fraud.CardMerchant
+      sourceIdProperty: { name: card_id, type: int }
+      sinkIdProperty: { name: merchant_id, type: int }
+
+    - name: MADE_PURCHASE
+      sourceNode: Customer
+      sinkNode: Purchase
+      tableName: catalog.fraud.CustomerPurchase
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: purchase_id, type: int }
+
+    - name: RETURNED
+      sourceNode: Purchase
+      sinkNode: Return
+      tableName: catalog.fraud.PurchaseReturn
+      sourceIdProperty: { name: purchase_id, type: int }
+      sinkIdProperty: { name: return_id, type: int }
+
+    - name: HAS_TRANSACTION
+      sourceNode: Account
+      sinkNode: Transaction
+      tableName: catalog.fraud.AccountTx
+      sourceIdProperty: { name: account_id, type: int }
+      sinkIdProperty: { name: transaction_id, type: int }
+
+    - name: DEPOSIT
+      sourceNode: Account
+      sinkNode: Transaction
+      tableName: catalog.fraud.AccountDeposit
+      sourceIdProperty: { name: account_id, type: int }
+      sinkIdProperty: { name: transaction_id, type: int }
+
+    - name: AT_MERCHANT
+      sourceNode: Transaction
+      sinkNode: Merchant
+      tableName: catalog.fraud.TransactionMerchant
+      sourceIdProperty: { name: transaction_id, type: int }
+      sinkIdProperty: { name: merchant_id, type: int }
+
+    - name: TO_COUNTRY
+      sourceNode: Transaction
+      sinkNode: Country
+      tableName: catalog.fraud.TransactionCountry
+      sourceIdProperty: { name: transaction_id, type: int }
+      sinkIdProperty: { name: country_id, type: int }
+
+examples:
+  - description: "Detect co-shopper fraud rings via shared transaction paths"
+    application: "Fraud: Co-shopper detection"
+    query: |
+      MATCH (a:Account)-[:TRANSACTION]->(m:Merchant)<-[:TRANSACTION]-(b:Account)
+      WHERE a.id <> b.id
+      RETURN a.id, b.id, m.name, COUNT(*) AS shared_transactions
+      ORDER BY shared_transactions DESC
+      LIMIT 10
+    notes: |
+      Finds pairs of accounts that share transactions at the same merchant.
+      High shared transaction counts may indicate coordinated fraud or account sharing.
+
+  - description: "Identify camouflage patterns with hidden relationship chains"
+    application: "Fraud: Camouflage detection"
+    query: |
+      MATCH path = (a:Account)-[:TRANSFER*2..4]->(b:Account)
+      WHERE a.risk_score > 70 AND b.risk_score > 70
+      RETURN a.id, b.id, LENGTH(path) AS chain_length,
+             [node IN nodes(path) | node.id] AS path_nodes
+      ORDER BY chain_length DESC
+    notes: |
+      Detects indirect transfer chains between high-risk accounts.
+      Fraudsters often use intermediary accounts to obscure direct connections.
+
+  - description: "Find high-risk POS machines with suspicious transaction patterns"
+    application: "Fraud: High-risk device monitoring"
+    query: |
+      MATCH (p:POS)-[:PROCESSED]->(t:Transaction)
+      WHERE p.risk_status = 'high_risk' OR p.flagged = true
+      WITH p,
+           COUNT(t) AS total_transactions,
+           SUM(t.amount) AS total_volume,
+           AVG(t.amount) AS avg_amount,
+           STDDEV(t.amount) AS stddev_amount
+      WHERE total_transactions > 50
+      RETURN p.id, p.location, p.risk_status,
+             total_transactions, total_volume, avg_amount, stddev_amount
+      ORDER BY total_volume DESC
+      LIMIT 20
+    notes: |
+      Monitors POS machines already flagged as high-risk for ongoing suspicious activity.
+      Filters by vertex metadata (risk_status, flagged) to focus on known problem devices.
+      Total volume and transaction counts help prioritize investigation.
+
+  - description: "Detect synthetic identity networks via shared attributes"
+    application: "Fraud: Synthetic identity detection"
+    query: |
+      MATCH (p1:Person)-[:HAS_ADDRESS]->(addr:Address)<-[:HAS_ADDRESS]-(p2:Person)
+      WHERE p1.id <> p2.id AND p1.creation_date > DATE('2023-01-01')
+      RETURN addr.street, addr.city, COUNT(DISTINCT p1.id) AS person_count
+      HAVING person_count > 5
+      ORDER BY person_count DESC
+    notes: |
+      Finds addresses associated with multiple recently created accounts.
+      May indicate synthetic identities or identity fabrication rings.
+
+  - description: "Identify card testing patterns with small probe transactions"
+    application: "Fraud: Card testing"
+    query: |
+      MATCH (c:Card)-[:USED_IN]->(t:Transaction)
+      WHERE t.amount < 1.00 AND t.timestamp > TIMESTAMP() - DURATION('P1D')
+      WITH c, COUNT(t) AS small_tx_count, COLLECT(t.merchant_id) AS merchants
+      WHERE small_tx_count > 10
+      RETURN c.number, small_tx_count, SIZE(merchants) AS merchant_count
+      ORDER BY small_tx_count DESC
+    notes: |
+      Detects cards with many small-value transactions in a short time.
+      Common pattern for fraudsters testing stolen card validity.
+
+  - description: "Find collusion networks via coordinated transaction timing"
+    application: "Fraud: Collusion detection"
+    query: |
+      MATCH (a1:Account)-[:TRANSACTION]->(t1:Transaction),
+            (a2:Account)-[:TRANSACTION]->(t2:Transaction)
+      WHERE a1.id < a2.id
+        AND ABS(t1.timestamp - t2.timestamp) < DURATION('PT5M')
+        AND t1.merchant_id = t2.merchant_id
+      RETURN a1.id, a2.id, t1.merchant_id, COUNT(*) AS coordinated_count
+      HAVING coordinated_count > 5
+      ORDER BY coordinated_count DESC
+    notes: |
+      Identifies accounts making synchronized transactions at the same merchant.
+      May indicate coordinated fraud or collusion rings.
+
+  - description: "Trace money mule networks with rapid transfer chains"
+    application: "Fraud: Money mule detection"
+    query: |
+      MATCH path = (source:Account)-[:TRANSFER*3..6]->(sink:Account)
+      WHERE ALL(rel IN relationships(path) WHERE rel.timestamp > TIMESTAMP() - DURATION('P7D'))
+        AND ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+      WITH source, sink, path,
+           REDUCE(total = 0, rel IN relationships(path) | total + rel.amount) AS total_amount
+      RETURN source.id, sink.id, LENGTH(path) AS hops, total_amount
+      ORDER BY total_amount DESC
+      LIMIT 15
+    notes: |
+      Finds multi-hop transfer chains moving large amounts quickly.
+      Classic pattern for money laundering via mule accounts.
+
+  - description: "Calculate customer similarity via shared card usage patterns"
+    application: "Fraud: Customer similarity clustering"
+    query: |
+      MATCH (c1:Customer)-[:HAS_CARD]->(card:Card)<-[:HAS_CARD]-(c2:Customer)
+      WHERE c1.id < c2.id
+      WITH c1, c2, COUNT(DISTINCT card) AS shared_cards
+      WHERE shared_cards > 0
+      MATCH (c1)-[:HAS_CARD]->(card1:Card)-[:USED_AT]->(m:Merchant)
+      MATCH (c2)-[:HAS_CARD]->(card2:Card)-[:USED_AT]->(m)
+      WITH c1, c2, shared_cards,
+           COUNT(DISTINCT m) AS shared_merchants,
+           shared_cards * 1.0 / (shared_cards + shared_merchants) AS similarity_score
+      WHERE similarity_score > 0.3
+      RETURN c1.id, c2.id, shared_cards, shared_merchants, similarity_score
+      ORDER BY similarity_score DESC
+      LIMIT 50
+    notes: |
+      Measures similarity between customers based on shared cards and merchants.
+      High similarity scores may indicate card sharing, family fraud, or organized rings.
+      Combines multiple metrics for more accurate clustering.
+
+  - description: "Find velocity abuse patterns with high-frequency transactions"
+    application: "Fraud: Velocity abuse"
+    query: |
+      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('PT1H')
+      WITH a, COUNT(t) AS tx_per_hour, SUM(t.amount) AS total_amount
+      WHERE tx_per_hour > 20
+      RETURN a.id, a.holder_name, tx_per_hour, total_amount
+      ORDER BY tx_per_hour DESC
+    notes: |
+      Detects accounts with abnormally high transaction frequency.
+      May indicate automated fraud, account compromise, or velocity attacks.
+
+  - description: "Identify return fraud patterns with high return rates"
+    application: "Fraud: Return fraud"
+    query: |
+      MATCH (c:Customer)-[:MADE_PURCHASE]->(p:Purchase)-[:RETURNED]->(r:Return)
+      WITH c, COUNT(p) AS total_purchases, COUNT(r) AS total_returns
+      WHERE total_purchases > 10
+      WITH c, total_purchases, total_returns,
+           (total_returns * 1.0 / total_purchases) AS return_rate
+      WHERE return_rate > 0.5
+      RETURN c.id, c.name, total_purchases, total_returns, return_rate
+      ORDER BY return_rate DESC
+    notes: |
+      Finds customers with suspiciously high return rates.
+      May indicate wardrobing, receipt fraud, or return fraud schemes.
+
+  - description: "Detect bust-out fraud with sudden spending spikes before default"
+    application: "Fraud: Bust-out fraud"
+    query: |
+      MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)
+      WHERE a.status = 'defaulted' AND t.timestamp > a.default_date - DURATION('P30D')
+      WITH a,
+           SUM(CASE WHEN t.timestamp > a.default_date - DURATION('P7D') THEN t.amount ELSE 0 END) AS last_week,
+           SUM(CASE WHEN t.timestamp <= a.default_date - DURATION('P7D') THEN t.amount ELSE 0 END) AS prior_weeks
+      WHERE prior_weeks > 0 AND (last_week / prior_weeks) > 5.0
+      RETURN a.id, last_week, prior_weeks, (last_week / prior_weeks) AS spike_ratio
+      ORDER BY spike_ratio DESC
+    notes: |
+      Identifies accounts with sudden spending increases before defaulting.
+      Classic bust-out fraud pattern where fraudsters max out credit before disappearing.
+
+  - description: "Find circular payment patterns indicating money laundering"
+    application: "Fraud: Circular payment detection"
+    query: |
+      MATCH path = (a:Account)-[:TRANSFER*4..8]->(a)
+      WHERE ALL(rel IN relationships(path) WHERE rel.amount > 500)
+        AND LENGTH(path) >= 4
+      WITH path, REDUCE(total = 0, rel IN relationships(path) | total + rel.amount) AS cycle_amount
+      RETURN [node IN nodes(path) | node.id] AS cycle_accounts,
+             LENGTH(path) AS cycle_length,
+             cycle_amount
+      ORDER BY cycle_amount DESC
+      LIMIT 10
+    notes: |
+      Detects circular money flows where funds return to origin account.
+      Strong indicator of structuring or layering in money laundering.
+
+  - description: "Identify anomalous cross-border transaction patterns"
+    application: "Fraud: Cross-border anomaly"
+    query: |
+      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)-[:TO_COUNTRY]->(c:Country)
+      WHERE c.code <> a.home_country AND t.amount > 10000
+      WITH a, c, COUNT(t) AS cross_border_count, SUM(t.amount) AS total_amount
+      WHERE cross_border_count > 5
+      RETURN a.id, c.name AS destination_country, cross_border_count, total_amount
+      ORDER BY total_amount DESC
+    notes: |
+      Finds accounts with high-value cross-border transaction activity.
+      May indicate trade-based money laundering or sanctions evasion.
+
+  - description: "Detect account takeover via sudden behavioral changes"
+    application: "Fraud: Account takeover"
+    query: |
+      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)
+      WITH a,
+           AVG(CASE WHEN t.timestamp < TIMESTAMP() - DURATION('P30D') THEN t.amount END) AS avg_30d_ago,
+           AVG(CASE WHEN t.timestamp >= TIMESTAMP() - DURATION('P7D') THEN t.amount END) AS avg_recent
+      WHERE avg_30d_ago IS NOT NULL AND avg_recent > avg_30d_ago * 3
+      RETURN a.id, avg_30d_ago, avg_recent, (avg_recent / avg_30d_ago) AS behavior_change_ratio
+      ORDER BY behavior_change_ratio DESC
+    notes: |
+      Identifies accounts with dramatic changes in transaction patterns.
+      Sudden increases may indicate account takeover by fraudsters.
+
+  - description: "Find smurfing patterns with structured deposits below reporting thresholds"
+    application: "Fraud: Structuring/Smurfing"
+    query: |
+      MATCH (a:Account)-[:DEPOSIT]->(d:Transaction)
+      WHERE d.amount > 9000 AND d.amount < 10000
+        AND d.timestamp > TIMESTAMP() - DURATION('P30D')
+      WITH a, COUNT(d) AS deposit_count, SUM(d.amount) AS total_deposits
+      WHERE deposit_count > 5
+      RETURN a.id, deposit_count, total_deposits, (total_deposits / deposit_count) AS avg_deposit
+      ORDER BY deposit_count DESC
+    notes: |
+      Detects multiple deposits just under regulatory reporting thresholds.
+      Classic smurfing/structuring pattern to avoid currency transaction reports.
+
+  - description: "Analyze transaction volumes by merchant category for suspicious accounts"
+    application: "Fraud: Category-based volume analysis"
+    query: |
+      MATCH (a:Account)-[:TRANSACTION]->(t:Transaction)-[:AT_MERCHANT]->(m:Merchant)
+      WHERE a.kyc_status = 'incomplete' OR a.days_since_creation < 30
+      WITH a,
+           m.category AS merchant_category,
+           COUNT(t) AS transaction_count,
+           SUM(t.amount) AS total_volume,
+           AVG(t.amount) AS avg_transaction
+      WHERE transaction_count > 10
+      RETURN a.id,
+             a.kyc_status,
+             a.days_since_creation,
+             merchant_category,
+             transaction_count,
+             total_volume,
+             avg_transaction
+      ORDER BY total_volume DESC
+      LIMIT 100
+    notes: |
+      Filters accounts by metadata (KYC status, account age) to focus on risky profiles.
+      Aggregates transaction volumes by merchant category to identify unusual spending patterns.
+      New accounts with high volumes in specific categories (e.g., electronics, gift cards) are red flags.
+      Combines vertex filtering with edge aggregation for comprehensive risk assessment.
+
+  - description: "Detect shared card usage across blacklisted and verified customers"
+    application: "Fraud: Card contamination tracking"
+    query: |
+      MATCH (blacklisted:Customer)-[:HAS_CARD]->(card:Card)<-[:HAS_CARD]-(verified:Customer)
+      WHERE blacklisted.status = 'blacklisted' AND verified.status = 'verified'
+      WITH card,
+           COLLECT(DISTINCT blacklisted.id) AS blacklisted_customers,
+           COLLECT(DISTINCT verified.id) AS verified_customers
+      MATCH (card)-[:USED_IN]->(t:Transaction)
+      WITH card,
+           blacklisted_customers,
+           verified_customers,
+           COUNT(t) AS total_transactions,
+           SUM(t.amount) AS total_amount
+      RETURN card.number,
+             SIZE(blacklisted_customers) AS blacklisted_count,
+             SIZE(verified_customers) AS verified_count,
+             total_transactions,
+             total_amount,
+             blacklisted_customers,
+             verified_customers
+      ORDER BY total_amount DESC
+      LIMIT 25
+    notes: |
+      Identifies cards shared between blacklisted and verified customers (contamination).
+      Uses customer status metadata to filter and categorize relationships.
+      Calculates total transaction metrics to assess card usage impact.
+      Critical for identifying compromised cards or insider fraud networks.

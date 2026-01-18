@@ -1,0 +1,351 @@
+# Credit Analysis Query Examples for OpenCypher to Databricks SQL Transpiler
+# These examples demonstrate credit risk assessment and financial analytics patterns
+
+# Schema definition for credit analysis examples
+schema:
+  nodes:
+    - name: Customer
+      tableName: catalog.credit.Customer
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: status, type: string }
+
+    - name: Account
+      tableName: catalog.credit.Account
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: balance, type: float }
+        - { name: customer_id, type: int }
+
+    - name: Transaction
+      tableName: catalog.credit.Transaction
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+        - { name: type, type: string }
+        - { name: category, type: string }
+
+    - name: Loan
+      tableName: catalog.credit.Loan
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: balance, type: float }
+        - { name: interest_rate, type: float }
+        - { name: status, type: string }
+        - { name: origination_date, type: string }
+
+    - name: Payment
+      tableName: catalog.credit.Payment
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+        - { name: on_time, type: boolean }
+
+    - name: CreditCard
+      tableName: catalog.credit.CreditCard
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: credit_limit, type: float }
+        - { name: number, type: string }
+
+  edges:
+    - name: HAS_ACCOUNT
+      sourceNode: Customer
+      sinkNode: Account
+      tableName: catalog.credit.CustomerAccount
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: account_id, type: int }
+
+    - name: TRANSACTION
+      sourceNode: Account
+      sinkNode: Transaction
+      tableName: catalog.credit.AccountTransaction
+      sourceIdProperty: { name: account_id, type: int }
+      sinkIdProperty: { name: transaction_id, type: int }
+
+    - name: HAS_LOAN
+      sourceNode: Customer
+      sinkNode: Loan
+      tableName: catalog.credit.CustomerLoan
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: loan_id, type: int }
+
+    - name: PAYMENT
+      sourceNode: Loan
+      sinkNode: Payment
+      tableName: catalog.credit.LoanPayment
+      sourceIdProperty: { name: loan_id, type: int }
+      sinkIdProperty: { name: payment_id, type: int }
+
+    - name: TRANSFER
+      sourceNode: Account
+      sinkNode: Account
+      tableName: catalog.credit.Transfer
+      sourceIdProperty: { name: source_account_id, type: int }
+      sinkIdProperty: { name: target_account_id, type: int }
+      properties:
+        - { name: amount, type: float }
+        - { name: timestamp, type: string }
+
+    - name: HAS_CARD
+      sourceNode: Customer
+      sinkNode: CreditCard
+      tableName: catalog.credit.CustomerCard
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: card_id, type: int }
+
+    - name: KNOWS
+      sourceNode: Customer
+      sinkNode: Customer
+      tableName: catalog.credit.CustomerKnows
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: knows_customer_id, type: int }
+
+    - name: CO_BORROWER
+      sourceNode: Customer
+      sinkNode: Loan
+      tableName: catalog.credit.CoBorrower
+      sourceIdProperty: { name: customer_id, type: int }
+      sinkIdProperty: { name: loan_id, type: int }
+
+examples:
+  - description: "Calculate credit risk scores based on transaction history"
+    application: "Credit: Risk scoring"
+    query: |
+      MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('P90D')
+      WITH c, a,
+           COUNT(t) AS tx_count,
+           AVG(t.amount) AS avg_transaction,
+           SUM(CASE WHEN t.type = 'overdraft' THEN 1 ELSE 0 END) AS overdraft_count
+      RETURN c.id, c.name,
+             tx_count,
+             avg_transaction,
+             overdraft_count,
+             (overdraft_count * 1.0 / tx_count) AS overdraft_rate
+      ORDER BY overdraft_rate DESC
+    notes: |
+      Analyzes recent transaction patterns to assess credit risk.
+      High overdraft rates indicate elevated default risk.
+
+  - description: "Identify credit-worthy customers via payment consistency"
+    application: "Credit: Payment reliability assessment"
+    query: |
+      MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)-[:PAYMENT]->(p:Payment)
+      WHERE l.status = 'active'
+      WITH c, l,
+           COUNT(p) AS total_payments,
+           SUM(CASE WHEN p.on_time = true THEN 1 ELSE 0 END) AS on_time_payments
+      WHERE total_payments > 6
+      WITH c, l, total_payments, on_time_payments,
+           (on_time_payments * 1.0 / total_payments) AS on_time_rate
+      WHERE on_time_rate > 0.95
+      RETURN c.id, c.name, l.amount, on_time_rate, total_payments
+      ORDER BY l.amount DESC
+    notes: |
+      Finds customers with excellent payment history for credit line increases.
+      High on-time rates indicate low default probability.
+
+  - description: "Trace debt consolidation opportunities via multiple loan analysis"
+    application: "Credit: Debt consolidation"
+    query: |
+      MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)
+      WHERE l.status = 'active'
+      WITH c, COUNT(l) AS active_loans, SUM(l.balance) AS total_debt, AVG(l.interest_rate) AS avg_rate
+      WHERE active_loans >= 3 AND total_debt > 10000
+      RETURN c.id, c.name, active_loans, total_debt, avg_rate
+      ORDER BY total_debt DESC
+    notes: |
+      Identifies customers with multiple active loans suitable for consolidation.
+      Can improve customer retention and reduce default risk.
+
+  - description: "Predict default probability using behavioral patterns"
+    application: "Credit: Default prediction"
+    query: |
+      MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('P60D')
+      WITH c, a,
+           COUNT(CASE WHEN t.type = 'NSF' THEN 1 END) AS nsf_count,
+           COUNT(CASE WHEN t.type = 'late_fee' THEN 1 END) AS late_fee_count,
+           MIN(a.balance) AS min_balance
+      WHERE nsf_count > 2 OR late_fee_count > 3 OR min_balance < 0
+      RETURN c.id, c.name, nsf_count, late_fee_count, min_balance,
+             (nsf_count + late_fee_count * 2) AS default_risk_score
+      ORDER BY default_risk_score DESC
+    notes: |
+      Combines multiple risk indicators to predict default probability.
+      NSF fees and late payments are strong default predictors.
+
+  - description: "Analyze transaction chains to assess liquidity patterns"
+    application: "Credit: Liquidity assessment"
+    query: |
+      MATCH path = (source:Account)-[:TRANSFER*1..3]->(sink:Account)
+      WHERE source.customer_id = sink.customer_id
+        AND ALL(rel IN relationships(path) WHERE rel.timestamp > TIMESTAMP() - DURATION('P30D'))
+      WITH source.customer_id AS customer_id,
+           COUNT(DISTINCT path) AS transfer_chains,
+           AVG(LENGTH(path)) AS avg_chain_length
+      RETURN customer_id, transfer_chains, avg_chain_length
+      ORDER BY transfer_chains DESC
+      LIMIT 20
+    notes: |
+      Examines internal transfer patterns to understand liquidity management.
+      Frequent internal transfers may indicate cash flow stress.
+
+  - description: "Find high-value customers for premium credit products"
+    application: "Credit: Customer segmentation"
+    query: |
+      MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('P180D')
+      WITH c, SUM(t.amount) AS total_volume, AVG(a.balance) AS avg_balance, COUNT(DISTINCT a) AS account_count
+      WHERE total_volume > 100000 AND avg_balance > 10000
+      RETURN c.id, c.name, total_volume, avg_balance, account_count
+      ORDER BY total_volume DESC
+    notes: |
+      Identifies high-value customers suitable for premium offerings.
+      High transaction volume and balances indicate creditworthiness.
+
+  - description: "Detect early warning signs of financial distress"
+    application: "Credit: Early warning system"
+    query: |
+      MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+      WITH c, a,
+           AVG(CASE WHEN t.timestamp > TIMESTAMP() - DURATION('P7D') THEN a.balance END) AS recent_avg,
+           AVG(CASE WHEN t.timestamp <= TIMESTAMP() - DURATION('P30D') AND t.timestamp > TIMESTAMP() - DURATION('P60D') THEN a.balance END) AS historical_avg
+      WHERE historical_avg > 0 AND recent_avg < historical_avg * 0.5
+      RETURN c.id, c.name, historical_avg, recent_avg,
+             ((historical_avg - recent_avg) / historical_avg) AS balance_decline_pct
+      ORDER BY balance_decline_pct DESC
+    notes: |
+      Identifies customers with sudden balance declines.
+      Sharp drops may indicate financial distress or income loss.
+
+  - description: "Assess creditworthiness via social network analysis"
+    application: "Credit: Network-based scoring"
+    query: |
+      MATCH (c:Customer)-[:KNOWS*1..2]-(peer:Customer)-[:HAS_LOAN]->(l:Loan)
+      WHERE l.status = 'defaulted'
+      WITH c, COUNT(DISTINCT peer) AS defaulted_peers, COUNT(DISTINCT l) AS defaulted_loans
+      WHERE defaulted_peers > 0
+      RETURN c.id, c.name, defaulted_peers, defaulted_loans,
+             (defaulted_peers * 1.0) AS network_risk_score
+      ORDER BY network_risk_score DESC
+    notes: |
+      Analyzes credit risk based on social network connections.
+      Proximity to defaulted borrowers increases risk score.
+
+  - description: "Identify seasonal spending patterns for credit limit adjustments"
+    application: "Credit: Seasonal analysis"
+    query: |
+      MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('P365D')
+      WITH c, card,
+           EXTRACT(month FROM t.timestamp) AS month,
+           SUM(t.amount) AS monthly_spend
+      WITH c, card, month, monthly_spend,
+           AVG(monthly_spend) OVER (PARTITION BY c.id) AS avg_monthly_spend
+      WHERE monthly_spend > avg_monthly_spend * 1.5
+      RETURN c.id, month, monthly_spend, avg_monthly_spend
+      ORDER BY monthly_spend DESC
+    notes: |
+      Identifies months with above-average spending for each customer.
+      Useful for temporary credit limit increases during peak periods.
+
+  - description: "Calculate debt-to-income ratio estimates from transaction data"
+    application: "Credit: DTI estimation"
+    query: |
+      MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('P90D')
+      WITH c,
+           SUM(CASE WHEN t.category = 'income' THEN t.amount ELSE 0 END) AS income,
+           SUM(CASE WHEN t.category = 'debt_payment' THEN t.amount ELSE 0 END) AS debt_payments
+      WHERE income > 0
+      RETURN c.id, c.name, income, debt_payments,
+             (debt_payments * 1.0 / income) AS estimated_dti
+      ORDER BY estimated_dti DESC
+    notes: |
+      Estimates debt-to-income ratio from transaction patterns.
+      DTI is a critical metric for credit approval decisions.
+
+  - description: "Find cross-sell opportunities for additional credit products"
+    application: "Credit: Cross-sell targeting"
+    query: |
+      MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)
+      WHERE NOT (c)-[:HAS_LOAN]->(:Loan) AND a.balance > 5000
+      WITH c, AVG(a.balance) AS avg_balance, COUNT(a) AS account_count
+      WHERE account_count >= 2
+      RETURN c.id, c.name, avg_balance, account_count
+      ORDER BY avg_balance DESC
+      LIMIT 50
+    notes: |
+      Identifies customers without loans but with strong deposit relationships.
+      Prime candidates for personal loan or credit card offers.
+
+  - description: "Analyze payment velocity to detect cash flow improvements"
+    application: "Credit: Payment velocity analysis"
+    query: |
+      MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)-[:PAYMENT]->(p:Payment)
+      WHERE p.timestamp > TIMESTAMP() - DURATION('P180D')
+      WITH c, l,
+           AVG(CASE WHEN p.timestamp > TIMESTAMP() - DURATION('P30D') THEN p.amount END) AS recent_avg,
+           AVG(CASE WHEN p.timestamp <= TIMESTAMP() - DURATION('P90D') THEN p.amount END) AS historical_avg
+      WHERE historical_avg > 0 AND recent_avg > historical_avg * 1.2
+      RETURN c.id, c.name, l.id AS loan_id, historical_avg, recent_avg,
+             ((recent_avg - historical_avg) / historical_avg) AS payment_increase_pct
+      ORDER BY payment_increase_pct DESC
+    notes: |
+      Detects customers increasing loan payment amounts.
+      Indicates improved cash flow and reduced default risk.
+
+  - description: "Identify customers suitable for credit line decreases"
+    application: "Credit: Risk mitigation"
+    query: |
+      MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:TRANSACTION]->(t:Transaction)
+      WHERE t.timestamp > TIMESTAMP() - DURATION('P180D')
+      WITH c, card,
+           MAX(card.credit_limit) AS credit_limit,
+           MAX(t.amount) AS max_transaction,
+           AVG(t.amount) AS avg_transaction
+      WHERE max_transaction < credit_limit * 0.3 AND avg_transaction < credit_limit * 0.1
+      RETURN c.id, card.id AS card_id, credit_limit, max_transaction, avg_transaction,
+             (credit_limit - max_transaction * 3) AS suggested_new_limit
+      ORDER BY suggested_new_limit DESC
+    notes: |
+      Finds credit cards with limits far exceeding usage patterns.
+      Reducing limits can decrease exposure while maintaining customer satisfaction.
+
+  - description: "Detect refinancing opportunities via interest rate comparison"
+    application: "Credit: Refinancing targeting"
+    query: |
+      MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)
+      WHERE l.status = 'active' AND l.origination_date < TIMESTAMP() - DURATION('P730D')
+        AND l.interest_rate > 7.0
+      WITH c, l, l.interest_rate AS current_rate, 5.5 AS market_rate
+      WHERE current_rate > market_rate + 1.0
+      RETURN c.id, c.name, l.id AS loan_id, l.balance, current_rate, market_rate,
+             (l.balance * (current_rate - market_rate) / 100) AS annual_savings_potential
+      ORDER BY annual_savings_potential DESC
+    notes: |
+      Identifies loans with rates significantly above current market.
+      Proactive refinancing offers can improve retention and customer satisfaction.
+
+  - description: "Analyze co-borrower relationships for joint credit assessment"
+    application: "Credit: Co-borrower analysis"
+    query: |
+      MATCH (c1:Customer)-[:CO_BORROWER]->(l:Loan)<-[:CO_BORROWER]-(c2:Customer)
+      WHERE c1.id < c2.id
+      MATCH (c1)-[:HAS_ACCOUNT]->(a1:Account), (c2)-[:HAS_ACCOUNT]->(a2:Account)
+      WITH c1, c2, l,
+           AVG(a1.balance) AS c1_avg_balance,
+           AVG(a2.balance) AS c2_avg_balance
+      RETURN c1.id, c2.id, l.id AS loan_id, l.balance,
+             c1_avg_balance, c2_avg_balance,
+             (c1_avg_balance + c2_avg_balance) AS combined_liquidity
+      ORDER BY combined_liquidity DESC
+    notes: |
+      Examines financial strength of co-borrowers for joint loans.
+      Combined liquidity assessment provides more accurate risk picture.

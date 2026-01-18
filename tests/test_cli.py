@@ -272,3 +272,30 @@ class TestDatabricksSQLOutput:
         # Databricks uses LIMIT, not TOP
         assert "LIMIT" in result.output
         assert "TOP" not in result.output
+
+
+class TestTUICommand:
+    """Tests for the TUI command.
+
+    Note: TUI mode uses prompt_toolkit which requires a real terminal.
+    These tests verify the command is available but cannot test interactive features
+    with Click's CliRunner. For full TUI testing, manual testing is required.
+    """
+
+    def test_tui_command_exists(
+        self,
+        cli_runner: CliRunner,
+    ) -> None:
+        """Test that the tui command is available."""
+        result = cli_runner.invoke(main, ["--help"])
+        assert result.exit_code == 0
+        assert "tui" in result.output
+
+    def test_tui_has_schema_option(
+        self,
+        cli_runner: CliRunner,
+    ) -> None:
+        """Test that TUI command has --schema option."""
+        result = cli_runner.invoke(main, ["tui", "--help"])
+        assert result.exit_code == 0
+        assert "--schema" in result.output or "-s" in result.output

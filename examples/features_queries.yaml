@@ -1,0 +1,455 @@
+# Feature Showcase Query Examples for OpenCypher to Databricks SQL Transpiler
+# These examples demonstrate each implemented feature with simple, clear queries
+# Focus: Understanding features, complexity, and computational cost
+
+# Schema definition for feature demonstration
+schema:
+  nodes:
+    - name: Person
+      tableName: catalog.demo.Person
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: age, type: int }
+        - { name: nickname, type: string }
+        - { name: salary, type: float }
+        - { name: active, type: boolean }
+
+    - name: City
+      tableName: catalog.demo.City
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: population, type: int }
+        - { name: country, type: string }
+
+    - name: Movie
+      tableName: catalog.demo.Movie
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: title, type: string }
+        - { name: year, type: int }
+        - { name: genre, type: string }
+        - { name: rating, type: float }
+
+    - name: Company
+      tableName: catalog.demo.Company
+      idProperty: { name: id, type: int }
+      properties:
+        - { name: name, type: string }
+        - { name: industry, type: string }
+
+  edges:
+    - name: KNOWS
+      sourceNode: Person
+      sinkNode: Person
+      tableName: catalog.demo.Knows
+      sourceIdProperty: { name: person_id, type: int }
+      sinkIdProperty: { name: friend_id, type: int }
+      properties:
+        - { name: since, type: int }
+        - { name: strength, type: float }
+
+    - name: LIVES_IN
+      sourceNode: Person
+      sinkNode: City
+      tableName: catalog.demo.LivesIn
+      sourceIdProperty: { name: person_id, type: int }
+      sinkIdProperty: { name: city_id, type: int }
+
+    - name: ACTED_IN
+      sourceNode: Person
+      sinkNode: Movie
+      tableName: catalog.demo.ActedIn
+      sourceIdProperty: { name: person_id, type: int }
+      sinkIdProperty: { name: movie_id, type: int }
+      properties:
+        - { name: role, type: string }
+
+    - name: DIRECTED
+      sourceNode: Person
+      sinkNode: Movie
+      tableName: catalog.demo.Directed
+      sourceIdProperty: { name: person_id, type: int }
+      sinkIdProperty: { name: movie_id, type: int }
+
+    - name: WORKS_AT
+      sourceNode: Person
+      sinkNode: Company
+      tableName: catalog.demo.WorksAt
+      sourceIdProperty: { name: person_id, type: int }
+      sinkIdProperty: { name: company_id, type: int }
+      properties:
+        - { name: since, type: int }
+        - { name: position, type: string }
+
+examples:
+  # =============================================================================
+  # BASIC QUERIES
+  # =============================================================================
+
+  - description: "Simple node lookup - retrieve all nodes of a type"
+    application: "Features: Basic MATCH"
+    query: |
+      MATCH (p:Person)
+      RETURN p.name, p.age
+    notes: |
+      The simplest query pattern - retrieves all nodes with a label.
+
+      WHY USEFUL: Foundation of all graph queries. Start here to explore data.
+
+      DATABRICKS COMPLEXITY: O(n) - single table scan
+      COST: Very low. Maps to: SELECT name, age FROM Person
+      Optimizations: Partition pruning if table is partitioned.
+
+  - description: "Property filter with WHERE clause"
+    application: "Features: WHERE filtering"
+    query: |
+      MATCH (p:Person)
+      WHERE p.age > 30 AND p.active = true
+      RETURN p.name, p.age
+    notes: |
+      Filters nodes by property values using boolean conditions.
+
+      WHY USEFUL: Essential for narrowing results. Supports =, <>, <, >, <=, >=, AND, OR, NOT.
+
+      DATABRICKS COMPLEXITY: O(n) without index, O(log n) with Delta index
+      COST: Low. WHERE pushdown to storage layer in Delta Lake.
+      TIP: Create Z-ORDER on frequently filtered columns.
+
+  - description: "Property projection with aliases"
+    application: "Features: SELECT aliases"
+    query: |
+      MATCH (p:Person)
+      RETURN p.name AS personName, p.age AS personAge, p.salary AS income
+    notes: |
+      Projects specific properties with custom column names.
+
+      WHY USEFUL: Control output schema, rename for clarity, reduce data transfer.
+
+      DATABRICKS COMPLEXITY: O(n) - projection happens after scan
+      COST: Very low. Column pruning reduces I/O.
+      Note: Only requested columns are read from Delta Lake.
+
+  - description: "Pagination with ORDER BY, SKIP and LIMIT"
+    application: "Features: Pagination"
+    query: |
+      MATCH (p:Person)
+      RETURN p.name, p.age
+      ORDER BY p.age DESC
+      SKIP 10 LIMIT 5
+    notes: |
+      Orders results and returns a specific page of data.
+
+      WHY USEFUL: Implement pagination in APIs, get top-N results.
+
+      DATABRICKS COMPLEXITY: O(n log n) for sorting
+      COST: Medium. Full sort before SKIP/LIMIT.
+      WARNING: SKIP without ORDER BY gives non-deterministic results.
+      TIP: For large offsets, consider keyset pagination instead.
+
+  # =============================================================================
+  # AGGREGATION
+  # =============================================================================
+
+  - description: "COUNT aggregation without grouping"
+    application: "Features: COUNT"
+    query: |
+      MATCH (p:Person)
+      RETURN COUNT(p) AS totalPeople
+    notes: |
+      Counts all nodes matching the pattern.
+
+      WHY USEFUL: Get cardinality metrics, validate data.
+
+      DATABRICKS COMPLEXITY: O(n) - single pass
+      COST: Very low. COUNT(*) is highly optimized in Delta Lake.
+      Returns single row. NULL values are counted.
+
+  - description: "GROUP BY with multiple aggregations"
+    application: "Features: GROUP BY"
+    query: |
+      MATCH (p:Person)-[:LIVES_IN]->(c:City)
+      RETURN c.name AS city,
+             COUNT(p) AS population,
+             AVG(p.age) AS avgAge,
+             MIN(p.salary) AS minSalary,
+             MAX(p.salary) AS maxSalary
+    notes: |
+      Groups by non-aggregated columns, computes multiple metrics per group.
+
+      WHY USEFUL: Analytics dashboards, summary reports, KPIs.
+
+      DATABRICKS COMPLEXITY: O(n) with hash aggregation
+      COST: Medium. Memory for hash table proportional to group count.
+      Cypher implicit GROUP BY: all non-aggregated RETURN columns become keys.
+
+  - description: "Aggregation with ORDER BY on aggregated column"
+    application: "Features: ORDER BY aggregates"
+    query: |
+      MATCH (p:Person)-[:LIVES_IN]->(c:City)
+      RETURN c.name AS city, COUNT(p) AS population
+      ORDER BY population DESC
+      LIMIT 10
+    notes: |
+      Orders grouped results by aggregated values.
+
+      WHY USEFUL: Find top cities, worst performers, outliers.
+
+      DATABRICKS COMPLEXITY: O(n) aggregate + O(g log g) sort where g = groups
+      COST: Medium. Sort happens after aggregation.
+      TIP: LIMIT reduces sort cost significantly.
+
+  - description: "HAVING-style filter using WITH...WHERE"
+    application: "Features: HAVING filter"
+    query: |
+      MATCH (p:Person)-[:LIVES_IN]->(c:City)
+      WITH c.name AS city, COUNT(p) AS population
+      WHERE population > 1000
+      RETURN city, population
+      ORDER BY population DESC
+    notes: |
+      Filters aggregated results (SQL HAVING equivalent).
+
+      WHY USEFUL: Filter groups by computed values. Find "cities with > 1000 people".
+
+      DATABRICKS COMPLEXITY: O(n) aggregate + O(g) filter
+      COST: Low. Filter applied after aggregation, before final output.
+      Pattern: WITH creates intermediate result, WHERE filters it.
+
+  - description: "COLLECT aggregation into arrays"
+    application: "Features: COLLECT_LIST"
+    query: |
+      MATCH (c:City)<-[:LIVES_IN]-(p:Person)
+      RETURN c.name AS city, COLLECT(p.name) AS residents
+    notes: |
+      Collects values into an array per group.
+
+      WHY USEFUL: Denormalize data, create nested structures for JSON APIs.
+
+      DATABRICKS COMPLEXITY: O(n) - single pass
+      COST: Medium-High. Memory for array construction.
+      Maps to COLLECT_LIST() in Databricks SQL.
+      WARNING: Large arrays can cause OOM. Consider LIMIT inside COLLECT.
+
+  # =============================================================================
+  # RELATIONSHIPS
+  # =============================================================================
+
+  - description: "Directed relationship traversal"
+    application: "Features: Directed edges"
+    query: |
+      MATCH (p:Person)-[:ACTED_IN]->(m:Movie)
+      RETURN p.name AS actor, m.title AS movie
+    notes: |
+      Matches directed relationships from source to target.
+
+      WHY USEFUL: Traverse graph edges in specific direction.
+
+      DATABRICKS COMPLEXITY: O(n * m) worst case, O(n + e) with proper joins
+      COST: Medium. Translates to INNER JOIN.
+      TIP: Ensure foreign keys have indexes/Z-ORDER.
+
+  - description: "Relationship with property filter"
+    application: "Features: Edge properties"
+    query: |
+      MATCH (p:Person)-[r:KNOWS]->(f:Person)
+      WHERE r.since > 2020 AND r.strength > 0.8
+      RETURN p.name AS person, f.name AS friend, r.since, r.strength
+    notes: |
+      Filters relationships by their properties.
+
+      WHY USEFUL: Find "strong" relationships, recent connections.
+
+      DATABRICKS COMPLEXITY: O(e) where e = edges
+      COST: Medium. Filter on edge table reduces join size.
+      Edge properties stored in edge table as columns.
+
+  - description: "Undirected relationship (both directions)"
+    application: "Features: Undirected edges"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Alice'
+      RETURN DISTINCT f.name AS friend
+    notes: |
+      Matches relationships in both directions.
+
+      WHY USEFUL: Social networks where direction doesn't matter.
+
+      DATABRICKS COMPLEXITY: O(2e) - UNION of both directions
+      COST: Higher. Translates to UNION of forward and reverse joins.
+      May produce duplicates - use DISTINCT if needed.
+
+  - description: "OPTIONAL MATCH (left join semantics)"
+    application: "Features: OPTIONAL MATCH"
+    query: |
+      MATCH (p:Person)
+      OPTIONAL MATCH (p)-[:ACTED_IN]->(m:Movie)
+      RETURN p.name, m.title
+    notes: |
+      Returns all people, with movies if they exist (NULL otherwise).
+
+      WHY USEFUL: Include all entities even without relationships.
+
+      DATABRICKS COMPLEXITY: O(n + e) - LEFT JOIN
+      COST: Medium. LEFT JOIN preserves all left-side rows.
+      CRITICAL: Uses LEFT JOIN, not INNER JOIN.
+      NULL values appear where no relationship exists.
+
+  # =============================================================================
+  # VARIABLE-LENGTH PATHS
+  # =============================================================================
+
+  - description: "Variable-length path traversal (1 to 3 hops)"
+    application: "Features: Recursive paths"
+    query: |
+      MATCH (p:Person)-[:KNOWS*1..3]->(f:Person)
+      WHERE p.name = 'Alice'
+      RETURN DISTINCT f.name AS reachable
+    notes: |
+      Finds all people reachable within 1-3 hops.
+
+      WHY USEFUL: Friend-of-friend queries, network analysis, influence propagation.
+
+      DATABRICKS COMPLEXITY: O(k^d) where k=avg degree, d=max depth
+      COST: HIGH. Uses WITH RECURSIVE CTE.
+      Includes cycle detection to prevent infinite loops.
+
+      SQL Pattern:
+      WITH RECURSIVE paths AS (
+        -- base case
+        UNION ALL
+        -- recursive case with depth < max_depth
+      )
+
+  - description: "Variable-length path with zero-length (includes self)"
+    application: "Features: Zero-length paths"
+    query: |
+      MATCH (p:Person)-[:KNOWS*0..2]->(f:Person)
+      WHERE p.name = 'Alice'
+      RETURN DISTINCT f.name AS reachable
+    notes: |
+      Includes the starting node (depth=0) plus 1-2 hop neighbors.
+
+      WHY USEFUL: Include self in results, optional relationship matching.
+
+      DATABRICKS COMPLEXITY: O(1 + k + k^2) - identity + 1-hop + 2-hop
+      COST: HIGH. Recursive CTE with special depth=0 base case.
+      Depth 0 = no joins, just the starting node.
+
+  # =============================================================================
+  # EXPRESSIONS AND FUNCTIONS
+  # =============================================================================
+
+  - description: "CASE expression for conditional values"
+    application: "Features: CASE WHEN"
+    query: |
+      MATCH (p:Person)
+      RETURN p.name,
+             CASE
+               WHEN p.age < 18 THEN 'minor'
+               WHEN p.age < 65 THEN 'adult'
+               ELSE 'senior'
+             END AS ageGroup
+    notes: |
+      Evaluates conditions sequentially, returns first match.
+
+      WHY USEFUL: Categorize data, compute derived fields, business logic.
+
+      DATABRICKS COMPLEXITY: O(n) - evaluated per row
+      COST: Very low. Direct translation to SQL CASE.
+      First matching WHEN wins. ELSE is optional (defaults to NULL).
+      Can be used in WHERE, ORDER BY, GROUP BY.
+
+  - description: "COALESCE for null-safe default values"
+    application: "Features: COALESCE"
+    query: |
+      MATCH (p:Person)
+      RETURN COALESCE(p.nickname, p.name) AS displayName,
+             COALESCE(p.salary, 0) AS salary
+    notes: |
+      Returns first non-NULL value from the argument list.
+
+      WHY USEFUL: Handle missing data, provide defaults.
+
+      DATABRICKS COMPLEXITY: O(n) - evaluated per row
+      COST: Very low. Native Databricks function.
+      Left-to-right evaluation with short-circuit.
+      COALESCE(a, b, c) = first non-NULL of a, b, c.
+
+  - description: "DISTINCT for deduplication"
+    application: "Features: DISTINCT"
+    query: |
+      MATCH (p:Person)-[:ACTED_IN]->(m:Movie)
+      RETURN DISTINCT m.genre
+    notes: |
+      Removes duplicate rows from results.
+
+      WHY USEFUL: Get unique values, eliminate duplicates from traversals.
+
+      DATABRICKS COMPLEXITY: O(n log n) or O(n) with hash
+      COST: Medium. Requires sorting or hashing.
+      NULL is treated as a distinct value.
+      Compares ALL returned columns for uniqueness.
+
+  # =============================================================================
+  # SET OPERATIONS
+  # =============================================================================
+
+  - description: "UNION to combine query results"
+    application: "Features: UNION"
+    query: |
+      MATCH (p:Person)-[:ACTED_IN]->(m:Movie)
+      RETURN p.name AS name
+      UNION
+      MATCH (d:Person)-[:DIRECTED]->(m:Movie)
+      RETURN d.name AS name
+    notes: |
+      Combines results from two queries, removes duplicates.
+
+      WHY USEFUL: Merge different query paths, find "actors OR directors".
+
+      DATABRICKS COMPLEXITY: O(n + m + (n+m) log(n+m)) for dedup
+      COST: High. UNION requires deduplication.
+      Both queries must have same column count and compatible types.
+      Use UNION ALL if duplicates are OK (faster).
+
+  # =============================================================================
+  # ADVANCED PATTERNS
+  # =============================================================================
+
+  - description: "Multi-hop path with intermediate filtering"
+    application: "Features: Chained patterns"
+    query: |
+      MATCH (p:Person)-[:LIVES_IN]->(c:City),
+            (p)-[:WORKS_AT]->(co:Company)
+      WHERE c.country = 'USA' AND co.industry = 'Tech'
+      RETURN p.name, c.name AS city, co.name AS company
+    notes: |
+      Matches multiple relationship patterns from the same node.
+
+      WHY USEFUL: Complex entity queries with multiple constraints.
+
+      DATABRICKS COMPLEXITY: O(n * j1 * j2) worst case
+      COST: Medium-High. Multiple JOINs.
+      Comma-separated patterns share the same variable scope.
+      Filter pushdown optimizes join order.
+
+  - description: "Chained WITH for multi-stage computation"
+    application: "Features: WITH chaining"
+    query: |
+      MATCH (p:Person)-[:LIVES_IN]->(c:City)
+      WITH c, COUNT(p) AS pop
+      WHERE pop > 100
+      WITH c.name AS city, pop, pop * 1.0 / 1000 AS popK
+      RETURN city, popK
+      ORDER BY popK DESC
+    notes: |
+      Chains multiple WITH clauses for staged computation.
+
+      WHY USEFUL: Break complex queries into steps, compute derived values.
+
+      DATABRICKS COMPLEXITY: O(n) per stage
+      COST: Medium. Each WITH creates a logical stage.
+      Variables from previous WITH are available in next stage.
+      Useful for aggregation → filtering → transformation pipelines.
