@@ -1,0 +1,6 @@
+--- expected+++ actual@@ -6,5 +6,5 @@  id as __p_id
+  ,name as __p_name
+  from
+- dbo.Person
++ Person
+ ) as _proj

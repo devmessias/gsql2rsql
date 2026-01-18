@@ -35,16 +35,20 @@ select distinct
  __f_name as name
 from (
  select
- n.id as __f_id
- ,n.name as __f_name
- ,n.age as __f_age
- ,p.start_node as __p_id
+ sink.id as __f_id
+ ,sink.name as __f_name
+ ,sink.age as __f_age
+ ,source.id as __p_id
+ ,source.name as __p_name
+ ,source.age as __p_age
  ,p.start_node
  ,p.end_node
  ,p.depth
  ,p.path
  from paths_1 p
- join graph.Person n
- on n.id = p.end_node
+ join graph.Person sink
+ on sink.id = p.end_node
+ join graph.Person source
+ on source.id = p.start_node
  where p.depth >= 0 and p.depth <= 2
 ) as _proj

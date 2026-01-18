@@ -3,18 +3,13 @@ select distinct
 from (
  select
  _left.__p_id as __p_id
- ,_left.__p_name as __p_name
- ,_left.__p_age as __p_age
  ,_left.___anon1_source_id as ___anon1_source_id
  ,_left.___anon1_target_id as ___anon1_target_id
  ,_right.__f_id as __f_id
  ,_right.__f_name as __f_name
- ,_right.__f_age as __f_age
  from (
  select
  _left.__p_id as __p_id
- ,_left.__p_name as __p_name
- ,_left.__p_age as __p_age
  ,_right.___anon1_source_id as ___anon1_source_id
  ,_right.___anon1_target_id as ___anon1_target_id
  from (

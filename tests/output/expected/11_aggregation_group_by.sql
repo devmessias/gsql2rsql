@@ -4,8 +4,6 @@ select
 from (
  select
  _left.__p_id as __p_id
- ,_left.__p_name as __p_name
- ,_left.__p_age as __p_age
  ,_left.___anon1_source_id as ___anon1_source_id
  ,_left.___anon1_target_id as ___anon1_target_id
  ,_right.__c_id as __c_id
@@ -13,8 +11,6 @@ from (
  from (
  select
  _left.__p_id as __p_id
- ,_left.__p_name as __p_name
- ,_left.__p_age as __p_age
  ,_right.___anon1_source_id as ___anon1_source_id
  ,_right.___anon1_target_id as ___anon1_target_id
  from (

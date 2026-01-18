@@ -116,7 +116,7 @@ class TestTranspileCommand:
         cli_runner: CliRunner,
         schema_file: Path,
     ) -> None:
-        """Test that backticks are used for identifiers (Databricks format)."""
+        """Test Databricks SQL format - no T-SQL brackets, proper table names."""
         query = "MATCH (p:Person) RETURN p.name"
 
         result = cli_runner.invoke(
@@ -126,16 +126,16 @@ class TestTranspileCommand:
         )
 
         assert result.exit_code == 0
-        # Databricks uses backticks for identifiers
-        assert "`" in result.output
         # T-SQL uses brackets, we should NOT have them
         assert "[" not in result.output
+        # Should have proper table reference (graph.Person without dbo prefix)
+        assert "graph.Person" in result.output
 
     def test_transpile_boolean_databricks_format(
         self,
         cli_runner: CliRunner,
     ) -> None:
-        """Test that backticks are used, not T-SQL brackets."""
+        """Test Databricks SQL format - proper table names without T-SQL brackets."""
         # Create schema with boolean property
         schema = {
             "nodes": [
@@ -167,8 +167,10 @@ class TestTranspileCommand:
         )
 
         assert result.exit_code == 0
-        # Databricks uses backticks
-        assert "`catalog.Items`" in result.output
+        # Databricks format: catalog.Items (not [catalog.Items] like T-SQL)
+        assert "catalog.Items" in result.output
+        # Should NOT have T-SQL brackets
+        assert "[" not in result.output
 
 
 class TestParseCommand:

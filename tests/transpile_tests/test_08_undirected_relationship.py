@@ -148,3 +148,44 @@ class TestUndirectedRelationship:
         assert "FROM" in sql.upper()
         # Should project both names
         assert "name" in sql.lower()
+
+    def test_undirected_queries_both_directions(self) -> None:
+        """Test that undirected pattern queries both forward and reverse directions.
+
+        An undirected relationship -[:KNOWS]- should match edges where:
+        - p is the source AND f is the target, OR
+        - f is the source AND p is the target
+
+        The SQL should either:
+        - Use OR condition in join: (p.id = source_id AND f.id = target_id) OR (p.id = target_id AND f.id = source_id)
+        - Or use UNION of both directions
+        """
+        cypher = "MATCH (p:Person)-[:KNOWS]-(f:Person) RETURN p.name, f.name"
+        sql = self._transpile(cypher)
+
+        sql_lower = sql.lower()
+
+        # The SQL must query both directions
+        # Check for UNION approach
+        has_union = "union" in sql_lower
+
+        # Check for OR approach in join conditions
+        # The join conditions should have OR with both source_id and target_id (possibly aliased)
+        # Look for patterns like: "(x = y_source_id OR x = y_target_id)"
+        has_or_in_joins = " or " in sql_lower
+
+        # Also verify both source and target columns appear in the SQL
+        has_source_col = "source_id" in sql_lower
+        has_target_col = "target_id" in sql_lower
+
+        # For proper undirected semantics with OR approach:
+        # - Must have OR in join condition
+        # - Must reference both source and target columns
+        has_both_direction_joins = has_or_in_joins and has_source_col and has_target_col
+
+        assert has_union or has_both_direction_joins, (
+            f"Undirected relationship should query both directions. "
+            f"Expected either UNION or OR conditions referencing both source_id and target_id. "
+            f"has_or={has_or_in_joins}, has_source={has_source_col}, has_target={has_target_col}. "
+            f"SQL:\n{sql}"
+        )
