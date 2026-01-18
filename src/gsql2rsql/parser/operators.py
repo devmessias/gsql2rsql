@@ -184,6 +184,10 @@ class Function(Enum):
     RANGE = auto()  # Cypher: RANGE(start, end[, step]) -> Databricks: SEQUENCE
     SIZE = auto()  # Cypher: SIZE(list) -> Databricks: SIZE(list)
 
+    # Path functions
+    NODES = auto()  # nodes(path) -> returns array of node IDs
+    RELATIONSHIPS = auto()  # relationships(path) -> returns array of edge structs
+
     # Math functions
     ABS = auto()
     CEIL = auto()
@@ -268,6 +272,10 @@ FUNCTIONS: dict[str, FunctionInfo] = {
     "range": FunctionInfo(Function.RANGE, 2, 1),  # RANGE(start, end[, step])
     "size": FunctionInfo(Function.SIZE, 1),  # SIZE works for both strings and arrays
     "length": FunctionInfo(Function.SIZE, 1),  # LENGTH is alias for SIZE in Cypher
+    # Path functions
+    "nodes": FunctionInfo(Function.NODES, 1),  # nodes(path) -> array of node IDs
+    "relationships": FunctionInfo(Function.RELATIONSHIPS, 1),  # rels(path) -> array of edges
+    "rels": FunctionInfo(Function.RELATIONSHIPS, 1),  # alias for relationships
     # Math functions
     "abs": FunctionInfo(Function.ABS, 1),
     "ceil": FunctionInfo(Function.CEIL, 1),

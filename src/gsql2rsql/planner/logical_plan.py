@@ -373,6 +373,7 @@ class LogicalPlan:
         match_clause.where_expression = remaining_where
 
         # Create recursive traversal operator
+        # Pass path_variable to enable edge property collection for relationships(path)
         recursive_op = RecursiveTraversalOperator(
             edge_types=edge_types,
             source_node_type=source_node.entity_name,
@@ -385,6 +386,7 @@ class LogicalPlan:
             cte_name=f"paths_{rel.alias or 'r'}",
             source_alias=source_node.alias,
             target_alias=target_node.alias,
+            path_variable=match_clause.path_variable,  # Enable edge collection if path is named
         )
         recursive_op.add_in_operator(source_ds)
         source_ds.add_out_operator(recursive_op)

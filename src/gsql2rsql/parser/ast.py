@@ -619,11 +619,17 @@ class RelationshipEntity(Entity):
 
 @dataclass
 class MatchClause(TreeNode):
-    """A MATCH clause."""
+    """A MATCH clause.
+
+    Supports named paths like: MATCH path = (a)-[*1..3]->(b)
+    The path_variable stores the variable name (e.g., 'path') for later use
+    in functions like relationships(path) or nodes(path).
+    """
 
     pattern_parts: list[Entity] = field(default_factory=list)
     is_optional: bool = False
     where_expression: QueryExpression | None = None
+    path_variable: str = ""  # Named path variable, e.g., "path" in "MATCH path = ..."
 
     @property
     def children(self) -> list[TreeNode]:
@@ -634,9 +640,10 @@ class MatchClause(TreeNode):
 
     def __str__(self) -> str:
         optional = "OPTIONAL " if self.is_optional else ""
+        path_assign = f"{self.path_variable} = " if self.path_variable else ""
         pattern = ", ".join(str(p) for p in self.pattern_parts)
         where_part = f" WHERE {self.where_expression}" if self.where_expression else ""
-        return f"{optional}MATCH {pattern}{where_part}"
+        return f"{optional}MATCH {path_assign}{pattern}{where_part}"
 
 
 @dataclass

@@ -452,7 +452,17 @@ class SetOperator(BinaryLogicalOperator):
 
 
 class RecursiveTraversalOperator(LogicalOperator):
-    """Operator for recursive traversal (BFS/DFS with variable-length paths)."""
+    """Operator for recursive traversal (BFS/DFS with variable-length paths).
+
+    Supports path accumulation for nodes(path) and relationships(path) functions.
+    When path_variable is set, the CTE accumulates:
+    - path_nodes: ARRAY of node IDs in traversal order
+    - path_edges: ARRAY of STRUCT with edge properties
+
+    This enables HoF predicates like:
+    - ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+    - [n IN nodes(path) | n.id]
+    """
 
     def __init__(
         self,
@@ -467,6 +477,10 @@ class RecursiveTraversalOperator(LogicalOperator):
         cte_name: str = "",
         source_alias: str = "",
         target_alias: str = "",
+        path_variable: str = "",
+        collect_nodes: bool = False,
+        collect_edges: bool = False,
+        edge_properties: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.edge_types = edge_types
@@ -480,15 +494,23 @@ class RecursiveTraversalOperator(LogicalOperator):
         self.cte_name = cte_name
         self.source_alias = source_alias
         self.target_alias = target_alias
+        # Path accumulation support
+        self.path_variable = path_variable
+        self.collect_nodes = collect_nodes or bool(path_variable)
+        self.collect_edges = collect_edges or bool(path_variable)
+        self.edge_properties = edge_properties or []
 
     @property
     def depth(self) -> int:
-        return (self.in_operator.depth if self.in_operator else 0) + 1
+        if not self._in_operators:
+            return 1
+        return max(op.depth for op in self._in_operators) + 1
 
     def __str__(self) -> str:
         edge_str = "|".join(self.edge_types)
         hops_str = f"*{self.min_hops}..{self.max_hops}" if self.max_hops else f"*{self.min_hops}.."
-        return f"RecursiveTraversal({edge_str}{hops_str})"
+        path_str = f", path={self.path_variable}" if self.path_variable else ""
+        return f"RecursiveTraversal({edge_str}{hops_str}{path_str})"
 
 
 @dataclass

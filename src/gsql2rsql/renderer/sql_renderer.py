@@ -317,6 +317,9 @@ class SQLRenderer:
 
         Generates Databricks SQL WITH RECURSIVE for BFS/DFS traversal.
         Supports multiple edge types (e.g., [:KNOWS|FOLLOWS*1..3]).
+
+        When path accumulation is enabled (collect_edges=True), the CTE also
+        accumulates an array of edge STRUCTs for relationships(path) access.
         """
         from gsql2rsql.common.schema import EdgeSchema
 
@@ -331,6 +334,9 @@ class SQLRenderer:
         edge_tables: list[tuple[str, SQLTableDescriptor]] = []
         source_id_col = op.source_id_column or "source_id"
         target_id_col = op.target_id_column or "target_id"
+
+        # Collect edge properties for path_edges accumulation
+        edge_props: list[str] = list(op.edge_properties) if op.edge_properties else []
 
         if edge_types:
             # Specific edge types provided
@@ -347,7 +353,7 @@ class SQLRenderer:
                 if edge_table:
                     edge_tables.append((edge_type, edge_table))
 
-                # Get column names from first edge schema
+                # Get column names and properties from first edge schema
                 if len(edge_tables) == 1:
                     edge_schema = self._graph_def.get_edge_definition(
                         edge_type,
@@ -359,6 +365,11 @@ class SQLRenderer:
                             source_id_col = edge_schema.source_id_property.property_name
                         if edge_schema.sink_id_property:
                             target_id_col = edge_schema.sink_id_property.property_name
+                        # Auto-collect edge properties if not specified
+                        if op.collect_edges and not edge_props:
+                            for prop in edge_schema.properties:
+                                if prop.property_name not in (source_id_col, target_id_col):
+                                    edge_props.append(prop.property_name)
         else:
             # No specific types - would need to get all edges between nodes
             # For now, raise an error - this could be improved later
@@ -399,6 +410,17 @@ class SQLRenderer:
             else:
                 combined_filter = None
 
+        # Helper to build NAMED_STRUCT for edge properties
+        def build_edge_struct(alias: str = "e") -> str:
+            """Build NAMED_STRUCT expression for edge with its properties."""
+            struct_parts = [
+                f"'{source_id_col}', {alias}.{source_id_col}",
+                f"'{target_id_col}', {alias}.{target_id_col}",
+            ]
+            for prop in edge_props:
+                struct_parts.append(f"'{prop}', {alias}.{prop}")
+            return f"NAMED_STRUCT({', '.join(struct_parts)})"
+
         # Build the recursive CTE
         lines: list[str] = []
         lines.append(f"  {cte_name} AS (")
@@ -418,6 +440,9 @@ class SQLRenderer:
             lines.append(f"      n.{op.source_id_column} AS end_node,")
             lines.append("      0 AS depth,")
             lines.append(f"      ARRAY(n.{op.source_id_column}) AS path,")
+            if op.collect_edges:
+                # Empty array of structs for zero-length path
+                lines.append("      ARRAY() AS path_edges,")
             lines.append("      ARRAY() AS visited")
             lines.append(f"    FROM {source_table.full_table_name} n")
 
@@ -442,6 +467,9 @@ class SQLRenderer:
             base_sql.append(
                 f"      ARRAY(e.{source_id_col}, e.{target_id_col}) AS path,"
             )
+            if op.collect_edges:
+                # Array with single edge struct
+                base_sql.append(f"      ARRAY({build_edge_struct()}) AS path_edges,")
             base_sql.append(f"      ARRAY(e.{source_id_col}) AS visited")
             base_sql.append(f"    FROM {table_name} e")
 
@@ -467,6 +495,8 @@ class SQLRenderer:
                 base_sql.append(
                     f"      ARRAY(e.{source_id_col}, e.{target_id_col}) AS path,"
                 )
+                if op.collect_edges:
+                    base_sql.append(f"      ARRAY({build_edge_struct()}) AS path_edges,")
                 base_sql.append(f"      ARRAY(e.{source_id_col}) AS visited")
                 base_sql.append(f"    FROM {edge_table.full_table_name} e")
 
@@ -500,6 +530,11 @@ class SQLRenderer:
             rec_sql.append(
                 f"      CONCAT(p.path, ARRAY(e.{target_id_col})) AS path,"
             )
+            if op.collect_edges:
+                # Append new edge struct to path_edges array
+                rec_sql.append(
+                    f"      ARRAY_APPEND(p.path_edges, {build_edge_struct()}) AS path_edges,"
+                )
             rec_sql.append(
                 f"      CONCAT(p.visited, ARRAY(e.{source_id_col})) AS visited"
             )
@@ -530,6 +565,10 @@ class SQLRenderer:
                 rec_sql.append(
                     f"      CONCAT(p.path, ARRAY(e.{target_id_col})) AS path,"
                 )
+                if op.collect_edges:
+                    rec_sql.append(
+                        f"      ARRAY_APPEND(p.path_edges, {build_edge_struct()}) AS path_edges,"
+                    )
                 rec_sql.append(
                     f"      CONCAT(p.visited, ARRAY(e.{source_id_col})) AS visited"
                 )
@@ -592,7 +631,11 @@ class SQLRenderer:
         lines.append(f"{indent}   start_node,")
         lines.append(f"{indent}   end_node,")
         lines.append(f"{indent}   depth,")
-        lines.append(f"{indent}   path")
+        if op.collect_edges:
+            lines.append(f"{indent}   path,")
+            lines.append(f"{indent}   path_edges")
+        else:
+            lines.append(f"{indent}   path")
         lines.append(f"{indent}FROM {cte_name}")
 
         # Add WHERE clause for depth bounds
@@ -664,6 +707,9 @@ class SQLRenderer:
         field_lines.append("p.end_node")
         field_lines.append("p.depth")
         field_lines.append("p.path")
+        # Include path_edges if edge collection is enabled (for relationships(path))
+        if recursive_op.collect_edges:
+            field_lines.append("p.path_edges")
 
         for i, field in enumerate(field_lines):
             prefix = " " if i == 0 else ","
@@ -910,10 +956,22 @@ class SQLRenderer:
                         field_alias = self._get_field_name(
                             field.field_alias, encap_field.field_alias
                         )
-                        fields.append(f"{var_name}.{field_alias} AS {field_alias}")
+                        # Column pruning: only include if required or pruning disabled
+                        if (
+                            not self._enable_column_pruning
+                            or not self._required_columns
+                            or field_alias in self._required_columns
+                        ):
+                            fields.append(f"{var_name}.{field_alias} AS {field_alias}")
 
             elif isinstance(field, ValueField):
-                fields.append(f"{var_name}.{field.field_alias} AS {field.field_alias}")
+                # Column pruning for value fields
+                if (
+                    not self._enable_column_pruning
+                    or not self._required_columns
+                    or field.field_alias in self._required_columns
+                ):
+                    fields.append(f"{var_name}.{field.field_alias} AS {field.field_alias}")
 
         return fields
 
@@ -1305,6 +1363,14 @@ class SQLRenderer:
         elif func == Function.SIZE:
             # SIZE works for both strings (LENGTH) and arrays (SIZE) in Databricks
             return f"SIZE({params[0]})" if params else "0"
+        elif func == Function.NODES:
+            # nodes(path) -> path (array of node IDs from recursive CTE)
+            # The parameter should be a path variable reference
+            return "path" if params else "ARRAY()"
+        elif func == Function.RELATIONSHIPS:
+            # relationships(path) -> path_edges (array of edge structs from CTE)
+            # The parameter should be a path variable reference
+            return "path_edges" if params else "ARRAY()"
         # Math functions - direct mapping to Databricks SQL
         elif func == Function.ABS:
             return f"ABS({params[0]})" if params else "NULL"
@@ -1811,6 +1877,13 @@ class SQLRenderer:
                     return acc_name
                 elif expr.variable_name == var_name:
                     return var_name
+            elif expr.variable_name == var_name:
+                # Property access on the lambda variable (e.g., rel.amount)
+                # For edge structs in path_edges, use struct field access
+                return f"{var_name}.{expr.property_name}"
+            elif expr.variable_name == acc_name:
+                # Property access on accumulator (if it's a struct)
+                return f"{acc_name}.{expr.property_name}"
             return self._render_expression(expr, context_op)
         elif isinstance(expr, QueryExpressionBinary):
             if not expr.left_expression or not expr.right_expression or not expr.operator:

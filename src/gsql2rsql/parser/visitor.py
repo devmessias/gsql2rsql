@@ -309,13 +309,31 @@ class CypherVisitor:
             and not hasattr(child, "getRuleIndex")
         )
 
-        pattern = self.visit(ctx.oC_Pattern()) if ctx.oC_Pattern() else []
+        # Extract pattern and path variable
+        entities: list[Entity] = []
+        path_variable = ""
+
+        if ctx.oC_Pattern():
+            for part_ctx in ctx.oC_Pattern().oC_PatternPart() or []:
+                # Check for path variable assignment: path = (a)-[]->(b)
+                if part_ctx.oC_Variable():
+                    path_variable = part_ctx.oC_Variable().getText()
+
+                # Get the pattern elements
+                if part_ctx.oC_AnonymousPatternPart():
+                    part = self.visit(part_ctx.oC_AnonymousPatternPart())
+                    if isinstance(part, list):
+                        entities.extend(part)
+                    elif isinstance(part, Entity):
+                        entities.append(part)
+
         where_expr = self.visit(ctx.oC_Where()) if ctx.oC_Where() else None
 
         return MatchClause(
-            pattern_parts=pattern if isinstance(pattern, list) else [pattern],
+            pattern_parts=entities,
             is_optional=is_optional,
             where_expression=where_expr,
+            path_variable=path_variable,
         )
 
     def visit_oC_Pattern(self, ctx: Any) -> list[Entity]:
@@ -330,8 +348,14 @@ class CypherVisitor:
         return entities
 
     def visit_oC_PatternPart(self, ctx: Any) -> list[Entity]:
-        """Visit a pattern part context."""
-        return self.visit(ctx.oC_AnonymousPatternPart())
+        """Visit a pattern part context.
+
+        Note: Path variable extraction is handled in visit_oC_Match for MatchClause.
+        This method is used for other contexts that don't need path variables.
+        """
+        if ctx.oC_AnonymousPatternPart():
+            return self.visit(ctx.oC_AnonymousPatternPart())
+        return []
 
     def visit_oC_AnonymousPatternPart(self, ctx: Any) -> list[Entity]:
         """Visit an anonymous pattern part context."""
