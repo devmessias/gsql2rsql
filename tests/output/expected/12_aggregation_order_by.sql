@@ -1,6 +1,6 @@
 select
  __c_name as city
- ,count(p) as population
+ ,count(__p_id) as population
 from (
  select
  _left.__p_id as __p_id

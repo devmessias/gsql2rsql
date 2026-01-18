@@ -1,8 +1,7 @@
---- expected+++ actual@@ -7,7 +7,7 @@  id as __p_id
-  ,name as __p_name
-  from
-- dbo.Person
-+ Person
-  ) as _filter
-  where (__p_name) = ('Alice')
- ) as _proj
+--- expected+++ actual@@ -1,5 +1,7 @@ select
+  __p_id as p
++ ,__p_id as __p_id
++ ,__p_name as __p_name
+ from (
+  select *
+  from (

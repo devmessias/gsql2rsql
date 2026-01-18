@@ -1,11 +1,11 @@
 select
- __a_id as id
+ a as id
  ,transferCount as transferCount
  ,totalAmount as totalAmount
 from (
  select
- a as a
- ,count(b) as transferCount
+ __a_id as a
+ ,count(__b_id) as transferCount
  ,sum(__t_amount) as totalAmount
  from (
  select
@@ -44,6 +44,6 @@ from (
  ) as _right on
  _right.__b_id = _left.__t_target_id
  ) as _proj
- group by a
+ group by __a_id
  having ((transferCount) > (100)) and ((totalAmount) > (1000000))
 ) as _proj

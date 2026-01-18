@@ -1,5 +1,7 @@
 select
- p as p
+ __p_id as p
+ ,__p_id as __p_id
+ ,__p_name as __p_name
 from (
  select *
  from (

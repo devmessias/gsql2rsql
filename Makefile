@@ -1,4 +1,5 @@
-.PHONY: help install install-dev test test-cov lint format typecheck grammar clean build publish
+.PHONY: help install install-dev test test-cov lint format typecheck grammar clean build publish \
+       test-pyspark test-pyspark-basic test-pyspark-examples test-pyspark-quick test-pyspark-verbose
 
 PYTHON := .venv/bin/python3
 UV := uv
@@ -36,6 +37,43 @@ test-bfs:  ## Run BFS/recursive tests only
 
 test-verbose:  ## Run tests with verbose output
 	$(UV) run pytest tests/ -v --tb=long
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PySpark Testing
+# ─────────────────────────────────────────────────────────────────────────────
+
+test-pyspark:  ## Run all PySpark tests
+	$(UV) run pytest tests/test_pyspark_basic.py tests/test_examples_with_pyspark.py -v
+
+test-pyspark-timeout:  ## Run PySpark tests with timeout (60s per test)
+	$(UV) run pytest tests/test_pyspark_basic.py tests/test_examples_with_pyspark.py -v --timeout=60 --timeout-method=thread
+
+test-pyspark-quick:  ## Run a quick subset of PySpark tests (first 5 examples)
+	$(UV) run pytest tests/test_examples_with_pyspark.py::TestExampleExecution::test_example -k "credit_queries.yaml and (00 or 01 or 02 or 03 or 04)" -v --timeout=30
+
+test-pyspark-basic:  ## Run basic PySpark infrastructure tests
+	$(UV) run pytest tests/test_pyspark_basic.py -v
+
+test-pyspark-examples:  ## Run PySpark tests on curated examples
+	$(UV) run pytest tests/test_examples_with_pyspark.py -v
+
+test-pyspark-quick:  ## Run quick PySpark validation (direct script execution)
+	$(UV) run python tests/test_examples_with_pyspark.py
+
+test-pyspark-verbose:  ## Run PySpark tests with detailed output
+	$(UV) run pytest tests/test_pyspark_basic.py tests/test_examples_with_pyspark.py -v --tb=long -s
+
+test-pyspark-features:  ## Run PySpark tests only for features_queries.yaml
+	$(UV) run pytest tests/test_examples_with_pyspark.py -v -k "features_queries"
+
+test-pyspark-fraud:  ## Run PySpark tests only for fraud_queries.yaml
+	$(UV) run pytest tests/test_examples_with_pyspark.py -v -k "fraud_queries"
+
+test-pyspark-credit:  ## Run PySpark tests only for credit_queries.yaml
+	$(UV) run pytest tests/test_examples_with_pyspark.py -v -k "credit_queries"
+
+test-pyspark-summary:  ## Generate PySpark test summary report
+	$(UV) run pytest tests/test_examples_with_pyspark.py::TestExamplesSummary -v -s
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Testing & Validation

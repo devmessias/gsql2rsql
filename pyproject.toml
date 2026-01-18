@@ -34,8 +34,10 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
+    "pytest-timeout>=2.1.0",
     "mypy>=1.8.0",
     "ruff>=0.2.0",
+    "pyspark>=3.5.0",
 ]
 
 [project.scripts]

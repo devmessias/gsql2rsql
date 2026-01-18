@@ -1,8 +1,8 @@
 select
- __a_id as id
+ a as id
 from (
  select
- a as a
+ __a_id as a
  ,COLLECT_LIST(__t_amount) as amounts
  from (
  select
@@ -41,6 +41,6 @@ from (
  ) as _right on
  _right.__b_id = _left.__t_target_id
  ) as _proj
- group by a
+ group by __a_id
  having FORALL(amounts, x -> (x) > (1000))
 ) as _proj
