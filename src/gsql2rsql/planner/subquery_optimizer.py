@@ -297,13 +297,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from gsql2rsql.parser.ast import QueryExpressionBinary
+from gsql2rsql.parser.ast import QueryExpression, QueryExpressionBinary
 from gsql2rsql.parser.operators import (
     BinaryOperator,
     BinaryOperatorInfo,
     BinaryOperatorType,
 )
 from gsql2rsql.planner.operators import (
+    DataSourceOperator,
     LogicalOperator,
     ProjectionOperator,
     SelectionOperator,
@@ -613,16 +614,344 @@ class SubqueryFlatteningOptimizer:
         self.stats.selection_into_selection += 1
 
 
-def optimize_plan(plan: LogicalPlan, enabled: bool = True) -> FlatteningStats:
+# =============================================================================
+# Selection Pushdown Optimizer
+# =============================================================================
+
+
+@dataclass
+class PushdownStats:
+    """Statistics about selection pushdown operations performed."""
+
+    predicates_pushed: int = 0
+    predicates_remaining: int = 0
+    selections_removed: int = 0
+
+    def __str__(self) -> str:
+        return (
+            f"PushdownStats("
+            f"pushed={self.predicates_pushed}, "
+            f"remaining={self.predicates_remaining}, "
+            f"selections_removed={self.selections_removed})"
+        )
+
+
+class SelectionPushdownOptimizer:
+    """Pushes predicates from Selection operators into DataSource operators.
+
+    This optimizer analyzes Selection operators and pushes predicates that
+    reference only a single entity (node or relationship) down to the
+    corresponding DataSourceOperator. This is especially important for
+    undirected relationships where filters should be applied before joins.
+
+    Example:
+        BEFORE (without pushdown):
+            MATCH (p:Person)-[:KNOWS]-(f:Person)
+            WHERE p.name = 'Alice'
+            RETURN f.name
+
+            Plan: DataSource(p) → Join(KNOWS) → Join(f) → Selection(p.name='Alice')
+
+        AFTER (with pushdown):
+            Plan: DataSource(p, filter=name='Alice') → Join(KNOWS) → Join(f)
+
+    This significantly reduces the number of rows processed in joins.
+
+    Algorithm:
+        1. Find all SelectionOperators in the plan
+        2. For each Selection, analyze which variables its predicate references
+        3. If predicate references only one variable (entity):
+           - Find the DataSourceOperator for that entity
+           - Push the predicate to that DataSource's filter_expression
+           - Remove or simplify the Selection
+        4. If predicate references multiple variables:
+           - Keep the Selection in place (cannot push)
+    """
+
+    def __init__(self, enabled: bool = True) -> None:
+        """Initialize the optimizer.
+
+        Args:
+            enabled: If False, optimize() becomes a no-op.
+        """
+        self.enabled = enabled
+        self.stats = PushdownStats()
+
+    def optimize(self, plan: LogicalPlan) -> None:
+        """Apply selection pushdown optimization to the logical plan.
+
+        Modifies the plan IN-PLACE.
+
+        Args:
+            plan: The logical plan to optimize.
+        """
+        if not self.enabled:
+            return
+
+        self.stats = PushdownStats()
+
+        # Collect all operators
+        all_operators: list[LogicalOperator] = []
+        for start_op in plan.starting_operators:
+            for op in start_op.get_all_downstream_operators(LogicalOperator):
+                if op not in all_operators:
+                    all_operators.append(op)
+
+        # Find all Selection operators
+        selections = [op for op in all_operators if isinstance(op, SelectionOperator)]
+
+        # Process each Selection
+        for selection in selections:
+            self._try_push_selection(selection, plan)
+
+    def _try_push_selection(
+        self, selection: SelectionOperator, plan: LogicalPlan
+    ) -> None:
+        """Try to push a Selection's predicate into a DataSource.
+
+        Args:
+            selection: The Selection operator to analyze.
+            plan: The full logical plan (for finding DataSources).
+        """
+        if not selection.filter_expression:
+            return
+
+        # Collect all property references in the predicate
+        properties = self._collect_property_references(selection.filter_expression)
+        if not properties:
+            return
+
+        # Get unique variable names referenced
+        var_names = {p.variable_name for p in properties}
+
+        # Can only push if predicate references exactly one variable
+        if len(var_names) != 1:
+            self.stats.predicates_remaining += 1
+            return
+
+        target_variable = next(iter(var_names))
+
+        # Find the DataSourceOperator for this variable
+        target_ds = self._find_datasource_for_variable(target_variable, plan)
+        if not target_ds:
+            self.stats.predicates_remaining += 1
+            return
+
+        # Push the predicate to the DataSource
+        if target_ds.filter_expression is None:
+            target_ds.filter_expression = selection.filter_expression
+        else:
+            # Combine with existing filter using AND
+            from gsql2rsql.parser.operators import (
+                BinaryOperator,
+                BinaryOperatorInfo,
+                BinaryOperatorType,
+            )
+            and_op = BinaryOperatorInfo(BinaryOperator.AND, BinaryOperatorType.LOGICAL)
+            target_ds.filter_expression = QueryExpressionBinary(
+                left_expression=target_ds.filter_expression,
+                operator=and_op,
+                right_expression=selection.filter_expression,
+            )
+
+        self.stats.predicates_pushed += 1
+
+        # Remove the Selection operator from the plan
+        self._remove_selection(selection)
+        self.stats.selections_removed += 1
+
+    def _collect_property_references(
+        self,
+        expr: QueryExpression,
+    ) -> list:
+        """Collect all property references from an expression tree.
+
+        Args:
+            expr: The expression to analyze.
+
+        Returns:
+            List of QueryExpressionProperty objects found in the expression.
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionProperty,
+            QueryExpressionBinary,
+            QueryExpressionFunction,
+            QueryExpressionAggregationFunction,
+            QueryExpressionCaseExpression,
+            QueryExpressionList,
+            QueryExpressionListPredicate,
+            QueryExpressionWithAlias,
+        )
+
+        properties: list = []
+
+        if isinstance(expr, QueryExpressionProperty):
+            properties.append(expr)
+        elif isinstance(expr, QueryExpressionBinary):
+            if expr.left_expression:
+                properties.extend(self._collect_property_references(expr.left_expression))
+            if expr.right_expression:
+                properties.extend(self._collect_property_references(expr.right_expression))
+        elif isinstance(expr, QueryExpressionFunction):
+            for arg in expr.parameters or []:
+                properties.extend(self._collect_property_references(arg))
+        elif isinstance(expr, QueryExpressionAggregationFunction):
+            if expr.inner_expression:
+                properties.extend(self._collect_property_references(expr.inner_expression))
+        elif isinstance(expr, QueryExpressionCaseExpression):
+            if expr.test_expression:
+                properties.extend(self._collect_property_references(expr.test_expression))
+            for when_expr, then_expr in expr.alternatives or []:
+                properties.extend(self._collect_property_references(when_expr))
+                properties.extend(self._collect_property_references(then_expr))
+            if expr.else_expression:
+                properties.extend(self._collect_property_references(expr.else_expression))
+        elif isinstance(expr, QueryExpressionList):
+            for item in expr.items or []:
+                properties.extend(self._collect_property_references(item))
+        elif isinstance(expr, QueryExpressionListPredicate):
+            if expr.list_expression:
+                properties.extend(self._collect_property_references(expr.list_expression))
+            if expr.predicate_expression:
+                properties.extend(self._collect_property_references(expr.predicate_expression))
+        elif isinstance(expr, QueryExpressionWithAlias):
+            if expr.inner_expression:
+                properties.extend(self._collect_property_references(expr.inner_expression))
+        elif hasattr(expr, 'children'):
+            for child in expr.children:
+                if isinstance(child, QueryExpression):
+                    properties.extend(self._collect_property_references(child))
+
+        return properties
+
+    def _find_datasource_for_variable(
+        self, variable: str, plan: LogicalPlan
+    ) -> DataSourceOperator | None:
+        """Find the DataSourceOperator that provides a given variable.
+
+        Only returns DataSources that can have filters pushed to them.
+        Excludes DataSources involved in recursive path patterns, as those
+        are rendered differently and don't support filter_expression.
+
+        Args:
+            variable: The variable name (e.g., 'p' from 'p:Person').
+            plan: The logical plan to search.
+
+        Returns:
+            The DataSourceOperator for the variable, or None if not found
+            or if the DataSource can't have filters pushed to it.
+        """
+        for start_op in plan.starting_operators:
+            if isinstance(start_op, DataSourceOperator):
+                if start_op.entity and start_op.entity.alias == variable:
+                    # Check if this DataSource is involved in a recursive path
+                    # If so, don't push (the renderer doesn't support it)
+                    if self._is_in_recursive_path(start_op):
+                        return None
+                    return start_op
+        return None
+
+    def _is_in_recursive_path(self, ds: DataSourceOperator) -> bool:
+        """Check if a DataSource is involved in a recursive path pattern.
+
+        DataSources that feed into or are joined with RecursiveTraversalOperators
+        are rendered differently and don't support filter_expression pushdown.
+
+        Args:
+            ds: The DataSourceOperator to check.
+
+        Returns:
+            True if the DataSource is part of a recursive path pattern.
+        """
+        # Check all downstream operators
+        for out_op in ds._out_operators:
+            if isinstance(out_op, RecursiveTraversalOperator):
+                return True
+            if isinstance(out_op, JoinOperator):
+                # Check if the join's other input is a RecursiveTraversalOperator
+                for in_op in out_op._in_operators:
+                    if isinstance(in_op, RecursiveTraversalOperator):
+                        return True
+                    # Also check for joins that have recursive as ancestor
+                    if self._has_recursive_ancestor(in_op):
+                        return True
+        return False
+
+    def _has_recursive_ancestor(self, op: LogicalOperator) -> bool:
+        """Check if an operator has a RecursiveTraversalOperator as ancestor.
+
+        Args:
+            op: The operator to check.
+
+        Returns:
+            True if there's a RecursiveTraversalOperator upstream.
+        """
+        if isinstance(op, RecursiveTraversalOperator):
+            return True
+        for in_op in op._in_operators:
+            if self._has_recursive_ancestor(in_op):
+                return True
+        return False
+
+    def _remove_selection(self, selection: SelectionOperator) -> None:
+        """Remove a Selection operator from the plan by bypassing it.
+
+        Connects the Selection's input directly to its outputs.
+
+        Args:
+            selection: The Selection operator to remove.
+        """
+        in_op = selection.in_operator
+        if not in_op:
+            return
+
+        # Connect in_op directly to all of selection's out_operators
+        for out_op in selection._out_operators:
+            # Update out_op's in_operators to point to in_op
+            if selection in out_op._in_operators:
+                idx = out_op._in_operators.index(selection)
+                out_op._in_operators[idx] = in_op
+
+            # Add out_op to in_op's out_operators
+            if out_op not in in_op._out_operators:
+                in_op._out_operators.append(out_op)
+
+        # Remove selection from in_op's out_operators
+        if selection in in_op._out_operators:
+            in_op._out_operators.remove(selection)
+
+        # Orphan the selection
+        selection._in_operators = []
+        selection._out_operators = []
+
+
+def optimize_plan(
+    plan: LogicalPlan,
+    enabled: bool = True,
+    pushdown_enabled: bool = True,
+) -> FlatteningStats:
     """Convenience function to optimize a logical plan.
+
+    Runs two optimization passes:
+    1. SelectionPushdownOptimizer: Pushes predicates into DataSource operators
+    2. SubqueryFlatteningOptimizer: Merges Selection → Projection patterns
 
     Args:
         plan: The logical plan to optimize.
-        enabled: Whether to actually perform optimization.
+        enabled: Whether to run subquery flattening optimization.
+        pushdown_enabled: Whether to run selection pushdown optimization.
 
     Returns:
-        Statistics about the optimization performed.
+        Statistics about the flattening optimization performed.
     """
-    optimizer = SubqueryFlatteningOptimizer(enabled=enabled)
-    optimizer.optimize(plan)
-    return optimizer.stats
+    # Run selection pushdown first (before flattening)
+    # This pushes WHERE predicates into DataSource operators
+    if pushdown_enabled:
+        pushdown_optimizer = SelectionPushdownOptimizer(enabled=True)
+        pushdown_optimizer.optimize(plan)
+
+    # Then run subquery flattening
+    flattening_optimizer = SubqueryFlatteningOptimizer(enabled=enabled)
+    flattening_optimizer.optimize(plan)
+
+    return flattening_optimizer.stats

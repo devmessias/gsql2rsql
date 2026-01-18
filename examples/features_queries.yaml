@@ -280,6 +280,129 @@ examples:
       COST: Higher. Translates to UNION of forward and reverse joins.
       May produce duplicates - use DISTINCT if needed.
 
+      OPTIMIZATION: Predicate pushdown moves WHERE p.name = 'Alice' into
+      the Person table subquery BEFORE the join, dramatically reducing rows.
+
+  # =============================================================================
+  # PREDICATE PUSHDOWN FOR UNDIRECTED RELATIONSHIPS
+  # =============================================================================
+  # These examples demonstrate the SelectionPushdownOptimizer which moves
+  # WHERE predicates into DataSource operators for early filtering.
+
+  - description: "Undirected with source filter pushdown"
+    application: "Features: Predicate Pushdown"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Alice' AND p.age > 25
+      RETURN f.name AS friend, f.age AS friendAge
+    notes: |
+      Compound source-only filter is pushed into the Person subquery.
+
+      OPTIMIZATION APPLIED:
+        BEFORE: Full Person scan → Full KNOWS scan → Full Person scan → Filter
+        AFTER:  Filtered Person (name='Alice' AND age>25) → KNOWS → Person
+
+      WHY IT MATTERS: If Person table has 1M rows but only 1 Alice over 25,
+      we process 1 row instead of 1M in the initial joins.
+
+      SQL Pattern (optimized):
+        FROM (SELECT ... FROM Person WHERE name='Alice' AND age>25) AS p
+        JOIN Knows ON (p.id = source_id OR p.id = target_id)
+        JOIN Person AS f ON ...
+
+  - description: "Undirected with target filter (not pushed)"
+    application: "Features: Filter Semantics"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE f.age > 30
+      RETURN p.name AS person, f.name AS olderFriend
+    notes: |
+      Target node filter cannot be pushed to source - stays after join.
+
+      WHY NOT PUSHED: The filter references 'f' (target), which is only
+      known after traversing the relationship. The filter must remain
+      after the join to correctly filter matching targets.
+
+      SQL Pattern:
+        FROM Person AS p
+        JOIN Knows ON ...
+        JOIN Person AS f ON ...
+        WHERE f.age > 30  -- Applied after all joins
+
+      COST: Higher than source pushdown - full initial scans required.
+
+  - description: "Undirected with mixed filters (partial pushdown)"
+    application: "Features: Filter Splitting"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Alice' AND f.age > 30 AND p.active = true
+      RETURN f.name AS friend, f.age AS friendAge
+    notes: |
+      Source filters are pushed, target filter remains after join.
+
+      FILTER ANALYSIS:
+        p.name = 'Alice'  → PUSHED (references only 'p')
+        p.active = true   → PUSHED (references only 'p')
+        f.age > 30        → NOT PUSHED (references 'f')
+
+      SQL Pattern (optimized):
+        FROM (SELECT ... FROM Person WHERE name='Alice' AND active=true) AS p
+        JOIN Knows ON ...
+        JOIN Person AS f ON ...
+        WHERE f.age > 30  -- Target filter stays here
+
+      BENEFIT: Source node filtering happens early, reducing join size.
+      Target filtering still required but on smaller intermediate result.
+
+  - description: "Undirected multi-hop with predicate pushdown"
+    application: "Features: Complex Traversal"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(m:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Alice'
+      RETURN DISTINCT f.name AS friendOfFriend
+    notes: |
+      Multi-hop undirected traversal with source filter pushdown.
+
+      PATTERN: Alice's friends' friends (2-hop undirected)
+
+      OPTIMIZATION: Filter p.name='Alice' is pushed into first Person scan.
+      Each hop doubles potential paths, so early filtering is critical.
+
+      SQL Pattern:
+        FROM (SELECT ... FROM Person WHERE name='Alice') AS p
+        JOIN Knows k1 ON (p.id = k1.person_id OR p.id = k1.friend_id)
+        JOIN Person m ON (m.id = k1.person_id OR m.id = k1.friend_id)
+        JOIN Knows k2 ON (m.id = k2.person_id OR m.id = k2.friend_id)
+        JOIN Person f ON (f.id = k2.person_id OR f.id = k2.friend_id)
+
+      DATABRICKS COMPLEXITY: O(k^2) where k = avg degree
+      COST: High, but pushdown prevents O(n * k^2) explosion.
+
+  - description: "Undirected relationship with aggregation"
+    application: "Features: Aggregation + Pushdown"
+    query: |
+      MATCH (p:Person)-[r:KNOWS]-(f:Person)
+      WHERE p.salary > 100000
+      RETURN p.name AS highEarner,
+             COUNT(f) AS friendCount,
+             AVG(f.age) AS avgFriendAge
+    notes: |
+      Aggregation over undirected relationships with source filter.
+
+      USE CASE: "High earners and their social network metrics"
+
+      OPTIMIZATION: p.salary > 100000 pushed to Person scan.
+      Only high earners participate in the aggregation joins.
+
+      SQL Pattern:
+        SELECT p.name, COUNT(f.id), AVG(f.age)
+        FROM (SELECT ... FROM Person WHERE salary > 100000) AS p
+        JOIN Knows ON ...
+        JOIN Person AS f ON ...
+        GROUP BY p.id, p.name
+
+      COST: Filter before aggregation = fewer GROUP BY operations.
+
   - description: "OPTIONAL MATCH (left join semantics)"
     application: "Features: OPTIONAL MATCH"
     query: |

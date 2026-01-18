@@ -156,9 +156,18 @@ class StartLogicalOperator(LogicalOperator):
 
 @dataclass
 class DataSourceOperator(StartLogicalOperator, IBindable):
-    """Operator representing a data source (node or edge table)."""
+    """Operator representing a data source (node or edge table).
+
+    Attributes:
+        entity: The graph entity (NodeEntity or RelationshipEntity) this source represents.
+        filter_expression: Optional filter expression to apply to this data source.
+            When set, the renderer should generate a WHERE clause for this source.
+            This is populated by SelectionPushdownOptimizer when a predicate
+            references only this entity's variable.
+    """
 
     entity: Entity | None = None
+    filter_expression: QueryExpression | None = None
 
     def __post_init__(self) -> None:
         if self.entity:
@@ -300,7 +309,8 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
 
     def __str__(self) -> str:
         base = super().__str__()
-        return f"{base}\n  DataSource: {self.entity}"
+        filter_str = f"\n  Filter: {self.filter_expression}" if self.filter_expression else ""
+        return f"{base}\n  DataSource: {self.entity}{filter_str}"
 
 
 class JoinType(Enum):

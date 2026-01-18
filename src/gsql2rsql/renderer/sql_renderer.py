@@ -1039,11 +1039,93 @@ class SQLRenderer:
         lines.append(f"{indent}FROM")
         lines.append(f"{indent}  {table_desc.full_table_name}")
 
+        # Collect all filters to apply
+        filters: list[str] = []
+
         # Add implicit filter if defined (e.g., edge_type = 'KNOWS')
         if table_desc.filter:
-            lines.append(f"{indent}WHERE {table_desc.filter}")
+            filters.append(table_desc.filter)
+
+        # Add pushed-down filter from optimizer (e.g., p.name = 'Alice')
+        if op.filter_expression:
+            # Render the filter expression using raw column names
+            # (not aliased names like __p_name)
+            rendered_filter = self._render_datasource_filter(
+                op.filter_expression, entity_field.field_alias
+            )
+            filters.append(rendered_filter)
+
+        # Render WHERE clause with all filters
+        if filters:
+            combined_filter = " AND ".join(f"({f})" for f in filters)
+            lines.append(f"{indent}WHERE {combined_filter}")
 
         return "\n".join(lines)
+
+    def _render_datasource_filter(
+        self,
+        expr: QueryExpression,
+        entity_alias: str,
+    ) -> str:
+        """Render a filter expression for a DataSource using raw column names.
+
+        Unlike _render_expression which uses aliased names like __p_name,
+        this method renders expressions using raw column names from the table.
+
+        Args:
+            expr: The filter expression to render.
+            entity_alias: The entity alias (e.g., 'p') to match against.
+
+        Returns:
+            SQL string with raw column names.
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionProperty,
+            QueryExpressionBinary,
+            QueryExpressionValue,
+            QueryExpressionFunction,
+            QueryExpressionParameter,
+        )
+
+        if isinstance(expr, QueryExpressionProperty):
+            # Use raw column name, not aliased
+            if expr.variable_name == entity_alias and expr.property_name:
+                return expr.property_name
+            # Fallback to aliased name for other variables
+            return self._get_field_name(expr.variable_name, expr.property_name or "")
+
+        elif isinstance(expr, QueryExpressionValue):
+            return self._render_value(expr)
+
+        elif isinstance(expr, QueryExpressionParameter):
+            return self._render_parameter(expr)
+
+        elif isinstance(expr, QueryExpressionBinary):
+            if not expr.operator or not expr.left_expression or not expr.right_expression:
+                return "NULL"
+            left = self._render_datasource_filter(expr.left_expression, entity_alias)
+            right = self._render_datasource_filter(expr.right_expression, entity_alias)
+            pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
+            return pattern.format(left, right)
+
+        elif isinstance(expr, QueryExpressionFunction):
+            # Render function arguments with raw column names
+            params = [
+                self._render_datasource_filter(p, entity_alias)
+                for p in expr.parameters
+            ]
+            # Use the standard function rendering logic
+            func = expr.function
+            if func == Function.NOT:
+                return f"NOT ({params[0]})" if params else "NOT (NULL)"
+            elif func == Function.NEGATIVE:
+                return f"-({params[0]})" if params else "-(NULL)"
+            # Add more function handlers as needed
+            return f"{func.value}({', '.join(params)})"
+
+        # For other expression types, fall back to standard rendering
+        # This shouldn't happen for simple property filters
+        return str(expr)
 
     def _render_join(self, op: JoinOperator, depth: int) -> str:
         """Render a join operator."""
