@@ -152,13 +152,8 @@ def transpile_query(query: str, schema_provider: Any, description: str, query_id
     # Step 2: Generate Logical Plan
     try:
         plan = LogicalPlan.process_query_tree(ast, schema_provider)
-        # Try to get a string representation of the plan
-        if hasattr(plan, '__str__'):
-            result.logical_plan = str(plan)
-        elif hasattr(plan, 'dump'):
-            result.logical_plan = plan.dump()
-        else:
-            result.logical_plan = repr(plan)
+        # Use dump_graph() for structured plan output
+        result.logical_plan = plan.dump_graph()
     except Exception as e:
         result.error = f"PLANNER ERROR:\n{e}\n\n{traceback.format_exc()}"
         result.ast = result.ast  # Keep AST even on planner failure

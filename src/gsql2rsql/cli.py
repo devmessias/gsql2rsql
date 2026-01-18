@@ -49,11 +49,17 @@ def main() -> None:
     default=True,
     help="Pretty-print the output SQL.",
 )
+@click.option(
+    "--optimize/--no-optimize",
+    default=True,
+    help="Enable subquery flattening optimization (default: enabled).",
+)
 def transpile(
     input_file: Path | None,
     output_file: Path | None,
     schema_file: Path,
     pretty: bool,  # noqa: ARG001
+    optimize: bool,
 ) -> None:
     """Transpile an openCypher query to Databricks SQL."""
     # Read the query
@@ -80,10 +86,16 @@ def transpile(
     # Transpile
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
+        from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, graph_def)
+
+        # Apply subquery flattening optimization
+        optimizer = SubqueryFlatteningOptimizer(enabled=optimize)
+        optimizer.optimize(plan)
+
         renderer = SQLRenderer(graph_def)
         sql = renderer.render_plan(plan)
     except Exception as e:
@@ -430,12 +442,23 @@ def _load_schema_from_yaml(schema_data: dict) -> Any:
     return provider
 
 
-def _transpile_query(query: str, graph_def: Any) -> dict[str, Any]:
-    """Transpile a query and return detailed results."""
+def _transpile_query(query: str, graph_def: Any, optimize: bool = True) -> dict[str, Any]:
+    """Transpile a query and return detailed results.
+
+    Args:
+        query: The openCypher query to transpile.
+        graph_def: The graph schema definition.
+        optimize: Whether to apply subquery flattening optimization.
+
+    Returns:
+        A dictionary with transpilation results including success status,
+        AST, logical plan, SQL output, and any error messages.
+    """
     result: dict[str, Any] = {
         "success": False,
         "parse_success": False,
         "ast": None,
+        "logical_plan": None,
         "sql": None,
         "parse_error": None,
         "transpile_error": None,
@@ -447,6 +470,7 @@ def _transpile_query(query: str, graph_def: Any) -> dict[str, Any]:
 
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
+        from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -456,6 +480,14 @@ def _transpile_query(query: str, graph_def: Any) -> dict[str, Any]:
         if graph_def:
             try:
                 plan = LogicalPlan.process_query_tree(ast, graph_def)
+
+                # Capture logical plan using dump_graph()
+                result["logical_plan"] = plan.dump_graph()
+
+                # Apply subquery flattening optimization
+                optimizer = SubqueryFlatteningOptimizer(enabled=optimize)
+                optimizer.optimize(plan)
+
                 renderer = SQLRenderer(graph_def)
                 sql = renderer.render_plan(plan)
                 result["sql"] = sql
@@ -1140,7 +1172,15 @@ def _run_tui(schema_file: Path | None) -> None:
             margin: 0 1 1 1;
         }
 
-        /* Section 4: AST Parse */
+        /* Section 4: Logical Plan */
+        #section-plan {
+            height: auto;
+            padding: 1;
+            border: solid cyan;
+            margin: 0 1 1 1;
+        }
+
+        /* Section 5: AST Parse */
         #section-ast {
             height: auto;
             padding: 1;
@@ -1160,6 +1200,10 @@ def _run_tui(schema_file: Path | None) -> None:
 
         #btn-copy-ast {
             background: $warning;
+        }
+
+        #btn-copy-plan {
+            background: $secondary;
         }
 
         .btn-row {
@@ -1245,6 +1289,7 @@ def _run_tui(schema_file: Path | None) -> None:
             Binding("r", "run_all", "Run All", priority=True),
             Binding("s", "copy_sql", "Copy SQL"),
             Binding("g", "copy_cypher", "Copy Cypher"),
+            Binding("l", "copy_plan", "Copy Plan"),
             Binding("t", "copy_ast", "Copy AST"),
             Binding("a", "copy_all", "Copy All"),
         ]
@@ -1267,6 +1312,7 @@ def _run_tui(schema_file: Path | None) -> None:
             self.search_text = ""
             self.last_sql: str = ""
             self.last_query: str = ""
+            self.last_plan: str = ""
             self.last_ast: str = ""
             self.current_category: str = ""
             self.last_example_idx: int | None = None
@@ -1343,7 +1389,20 @@ def _run_tui(schema_file: Path | None) -> None:
                                 variant="success",
                             )
 
-                        # Section 4: AST Parse
+                        # Section 4: Logical Plan
+                        yield Static(
+                            "[bold cyan]═══ Logical Plan ═══[/bold cyan]\n"
+                            "[dim]Logical plan will appear here[/dim]",
+                            id="section-plan",
+                        )
+                        with Horizontal(classes="btn-row"):
+                            yield Button(
+                                label="📋 Copy Plan",
+                                id="btn-copy-plan",
+                                variant="default",
+                            )
+
+                        # Section 5: AST Parse
                         yield Static(
                             "[bold yellow]═══ AST Parse ═══[/bold yellow]\n"
                             "[dim]AST will appear here[/dim]",
@@ -1535,6 +1594,7 @@ def _run_tui(schema_file: Path | None) -> None:
                 schema_to_use = self.graph_def
 
             sql_section = self.query_one("#section-sql", Static)
+            plan_section = self.query_one("#section-plan", Static)
             ast_section = self.query_one("#section-ast", Static)
             result = _transpile_query(query, schema_to_use)
 
@@ -1584,7 +1644,22 @@ def _run_tui(schema_file: Path | None) -> None:
                     "[dim]No SQL output[/dim]"
                 )
 
-            # Section 4: AST Parse
+            # Section 4: Logical Plan
+            if result.get("logical_plan"):
+                self.last_plan = result["logical_plan"]
+                plan_content = (
+                    f"[bold cyan]═══ Logical Plan ═══[/bold cyan] "
+                    f"[dim](L to copy)[/dim]\n{result['logical_plan']}"
+                )
+                plan_section.update(plan_content)
+            else:
+                self.last_plan = ""
+                plan_section.update(
+                    "[bold cyan]═══ Logical Plan ═══[/bold cyan]\n"
+                    "[dim]No logical plan (schema required)[/dim]"
+                )
+
+            # Section 5: AST Parse
             if result["parse_success"] and result["ast"]:
                 self.last_ast = result["ast"]
                 ast_content = (
@@ -1630,12 +1705,17 @@ def _run_tui(schema_file: Path | None) -> None:
                 "[bold green]═══ Databricks SQL ═══[/bold green]\n"
                 "[dim]SQL output will appear here[/dim]"
             )
+            self.query_one("#section-plan", Static).update(
+                "[bold cyan]═══ Logical Plan ═══[/bold cyan]\n"
+                "[dim]Logical plan will appear here[/dim]"
+            )
             self.query_one("#section-ast", Static).update(
                 "[bold yellow]═══ AST Parse ═══[/bold yellow]\n"
                 "[dim]AST will appear here[/dim]"
             )
             self.last_query = ""
             self.last_sql = ""
+            self.last_plan = ""
             self.last_ast = ""
 
         def action_focus_filter(self) -> None:
@@ -1796,6 +1876,12 @@ def _run_tui(schema_file: Path | None) -> None:
                 return
             self._do_copy(self.last_sql, "SQL")
 
+        def action_copy_plan(self) -> None:
+            """Copy Logical Plan to clipboard."""
+            if self._is_running or self._has_text_input_focus():
+                return
+            self._do_copy(self.last_plan, "Logical Plan")
+
         def action_copy_ast(self) -> None:
             """Copy AST to clipboard."""
             if self._is_running or self._has_text_input_focus():
@@ -1868,6 +1954,8 @@ def _run_tui(schema_file: Path | None) -> None:
                 self._do_copy(self.last_query, "Cypher query")
             elif button_id == "btn-copy-sql":
                 self._do_copy(self.last_sql, "SQL")
+            elif button_id == "btn-copy-plan":
+                self._do_copy(self.last_plan, "Logical Plan")
             elif button_id == "btn-copy-ast":
                 self._do_copy(self.last_ast, "AST")
             elif button_id in ("btn-copy-all", "btn-copy-all-top"):
@@ -1889,12 +1977,14 @@ def _run_tui(schema_file: Path | None) -> None:
                 self.notify(f"Copy failed: {msg}", severity="error")
 
         def _copy_all(self) -> None:
-            """Copy query + AST + SQL to clipboard."""
+            """Copy query + SQL + logical plan + AST to clipboard."""
             parts = []
             if self.last_query:
                 parts.append(f"=== OpenCypher Query ===\n{self.last_query}")
             if self.last_sql:
                 parts.append(f"\n=== Databricks SQL ===\n{self.last_sql}")
+            if self.last_plan:
+                parts.append(f"\n=== Logical Plan ===\n{self.last_plan}")
             if self.last_ast:
                 parts.append(f"\n=== AST ===\n{self.last_ast}")
 
