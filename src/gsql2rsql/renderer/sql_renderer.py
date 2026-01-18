@@ -1398,9 +1398,20 @@ class SQLRenderer:
             return f"DATE_FORMAT(TO_TIMESTAMP({params[0]}), 'HH:mm:ss')"
         elif func == Function.DURATION:
             # duration({days: d, hours: h, ...}) -> INTERVAL 'd' DAY + INTERVAL 'h' HOUR + ...
+            # duration('P7D') -> INTERVAL 7 DAY (ISO 8601 format)
             first_param = expr.parameters[0] if expr.parameters else None
             if isinstance(first_param, QueryExpressionMapLiteral):
                 return self._render_duration_from_map(first_param, context_op)
+            if isinstance(first_param, QueryExpressionValue) and isinstance(
+                first_param.value, str
+            ):
+                return self._parse_iso8601_duration(first_param.value)
+            # Fallback for other expression types (render and hope it's a duration string)
+            if params:
+                # Try to extract string from rendered param (remove quotes if present)
+                rendered = params[0]
+                if rendered.startswith("'") and rendered.endswith("'"):
+                    return self._parse_iso8601_duration(rendered[1:-1])
             return "INTERVAL '0' DAY"
         elif func == Function.DURATION_BETWEEN:
             # duration.between(d1, d2) -> DATEDIFF(d2, d1)
@@ -2155,6 +2166,68 @@ class SQLRenderer:
             if cypher_unit in entries_dict:
                 val = entries_dict[cypher_unit]
                 interval_parts.append(f"INTERVAL {val} {sql_unit}")
+
+        if not interval_parts:
+            return "INTERVAL '0' DAY"
+
+        return " + ".join(interval_parts)
+
+    def _parse_iso8601_duration(self, duration_str: str) -> str:
+        """Parse an ISO 8601 duration string to Databricks INTERVAL expression.
+
+        ISO 8601 duration format: P[n]Y[n]M[n]DT[n]H[n]M[n]S
+        Examples:
+        - P7D -> INTERVAL 7 DAY
+        - PT1H -> INTERVAL 1 HOUR
+        - P30D -> INTERVAL 30 DAY
+        - PT5M -> INTERVAL 5 MINUTE
+        - P1Y2M3D -> INTERVAL 1 YEAR + INTERVAL 2 MONTH + INTERVAL 3 DAY
+        - PT1H30M -> INTERVAL 1 HOUR + INTERVAL 30 MINUTE
+        - P1DT12H -> INTERVAL 1 DAY + INTERVAL 12 HOUR
+
+        Args:
+            duration_str: ISO 8601 duration string (e.g., 'P7D', 'PT1H')
+
+        Returns:
+            Databricks SQL INTERVAL expression
+        """
+        import re
+
+        if not duration_str:
+            return "INTERVAL '0' DAY"
+
+        # Remove leading 'P'
+        s = duration_str.strip().upper()
+        if not s.startswith("P"):
+            return "INTERVAL '0' DAY"
+        s = s[1:]
+
+        interval_parts = []
+
+        # Split by 'T' to separate date and time parts
+        if "T" in s:
+            date_part, time_part = s.split("T", 1)
+        else:
+            date_part = s
+            time_part = ""
+
+        # Parse date part: [n]Y[n]M[n]W[n]D
+        date_pattern = re.compile(r"(\d+)([YMWD])")
+        for match in date_pattern.finditer(date_part):
+            value = match.group(1)
+            unit = match.group(2)
+            unit_map = {"Y": "YEAR", "M": "MONTH", "W": "WEEK", "D": "DAY"}
+            if unit in unit_map:
+                interval_parts.append(f"INTERVAL {value} {unit_map[unit]}")
+
+        # Parse time part: [n]H[n]M[n]S
+        time_pattern = re.compile(r"(\d+(?:\.\d+)?)([HMS])")
+        for match in time_pattern.finditer(time_part):
+            value = match.group(1)
+            unit = match.group(2)
+            unit_map = {"H": "HOUR", "M": "MINUTE", "S": "SECOND"}
+            if unit in unit_map:
+                interval_parts.append(f"INTERVAL {value} {unit_map[unit]}")
 
         if not interval_parts:
             return "INTERVAL '0' DAY"

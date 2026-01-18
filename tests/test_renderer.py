@@ -156,20 +156,40 @@ class TestSQLTableDescriptor:
     """Tests for SQL table descriptor (Databricks format)."""
 
     def test_full_table_name_with_schema(self) -> None:
-        """Test full table name with schema uses backticks."""
+        """Test full table name with schema - only quotes identifiers with special chars."""
         descriptor = SQLTableDescriptor(
             table_or_view_name="users",
             schema_name="catalog.schema",
         )
-        assert descriptor.full_table_name == "`catalog.schema`.`users`"
+        # Schema contains dot so it's quoted, but 'users' is a simple identifier
+        assert descriptor.full_table_name == "`catalog.schema`.users"
 
     def test_full_table_name_without_schema(self) -> None:
-        """Test full table name without schema."""
+        """Test full table name without schema - simple identifiers are not quoted."""
         descriptor = SQLTableDescriptor(
             table_or_view_name="users",
             schema_name="",
         )
-        assert descriptor.full_table_name == "`users`"
+        # 'users' is a simple identifier, no quoting needed
+        assert descriptor.full_table_name == "users"
+
+    def test_full_table_name_dbo_schema_skipped(self) -> None:
+        """Test that 'dbo' schema is skipped (SQL Server convention, not Databricks)."""
+        descriptor = SQLTableDescriptor(
+            table_or_view_name="users",
+            schema_name="dbo",
+        )
+        # dbo is skipped for Databricks compatibility
+        assert descriptor.full_table_name == "users"
+
+    def test_full_table_name_with_special_chars(self) -> None:
+        """Test that identifiers with special characters are quoted."""
+        descriptor = SQLTableDescriptor(
+            table_or_view_name="user table",
+            schema_name="",
+        )
+        # Contains space, must be quoted
+        assert descriptor.full_table_name == "`user table`"
 
     def test_parse_table_name_with_schema(self) -> None:
         """Test parsing table name with schema."""

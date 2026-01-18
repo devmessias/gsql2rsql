@@ -296,6 +296,7 @@ FUNCTIONS: dict[str, FunctionInfo] = {
     # Date/Time functions
     "date": FunctionInfo(Function.DATE, 0, 1),  # date() or date({...})
     "datetime": FunctionInfo(Function.DATETIME, 0, 1),  # datetime() or datetime({...})
+    "timestamp": FunctionInfo(Function.DATETIME, 0, 1),  # timestamp() -> same as datetime()
     "localdatetime": FunctionInfo(Function.LOCALDATETIME, 0, 1),
     "time": FunctionInfo(Function.TIME, 0, 1),  # time() or time({...})
     "localtime": FunctionInfo(Function.LOCALTIME, 0, 1),
