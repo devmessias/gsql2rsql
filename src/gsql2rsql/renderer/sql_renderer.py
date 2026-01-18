@@ -1954,9 +1954,36 @@ class SQLRenderer:
         - [x IN arr WHERE x > 0] -> FILTER(arr, x -> x > 0)
         - [x IN arr | x * 2] -> TRANSFORM(arr, x -> x * 2)
         - [x IN arr WHERE x > 0 | x * 2] -> TRANSFORM(FILTER(arr, x -> x > 0), x -> x * 2)
+
+        OPTIMIZATION: Path Node ID Extraction
+        -------------------------------------
+        [node IN nodes(path) | node.id] is a common pattern that should NOT
+        generate TRANSFORM because:
+        - nodes(path) returns `path` which is already an array of node IDs
+        - Applying `node.id` to an integer ID doesn't make sense
+
+        This optimization detects this pattern and returns `path` directly:
+        - [node IN nodes(path) | node.id] -> path (not TRANSFORM(path, node -> node.id))
         """
         var = expr.variable_name
         list_sql = self._render_expression(expr.list_expression, context_op)
+
+        # =====================================================================
+        # OPTIMIZATION: Detect [node IN nodes(path) | node.id] pattern
+        # =====================================================================
+        # When iterating over nodes(path) and extracting .id, the TRANSFORM
+        # is redundant because `path` already contains node IDs.
+        #
+        # Pattern to detect:
+        # - list_expression is Function.NODES(path_var)
+        # - map_expression is var.id (where var matches the comprehension variable)
+        # - no filter_expression
+        #
+        # Result: Return path directly instead of TRANSFORM(path, node -> node.id)
+        # =====================================================================
+        if self._is_nodes_id_extraction_pattern(expr):
+            # Return the path array directly - it already contains node IDs
+            return list_sql
 
         # Start with the list
         result = list_sql
@@ -1976,6 +2003,40 @@ class SQLRenderer:
             result = f"TRANSFORM({result}, {var} -> {map_sql})"
 
         return result
+
+    def _is_nodes_id_extraction_pattern(
+        self, expr: QueryExpressionListComprehension
+    ) -> bool:
+        """Check if this is a [node IN nodes(path) | node.id] pattern.
+
+        This pattern should NOT generate TRANSFORM because:
+        - nodes(path) returns `path` which already contains node IDs
+        - Applying `node.id` to integers doesn't make sense
+
+        Returns:
+            True if this is the nodes ID extraction pattern that should
+            be optimized to just return `path` directly.
+        """
+        # Must have a map expression and no filter
+        if not expr.map_expression or expr.filter_expression:
+            return False
+
+        # Check if list_expression is nodes(path_var)
+        if not isinstance(expr.list_expression, QueryExpressionFunction):
+            return False
+        if expr.list_expression.function != Function.NODES:
+            return False
+
+        # Check if map_expression is var.id (extracting id from the variable)
+        if not isinstance(expr.map_expression, QueryExpressionProperty):
+            return False
+        map_expr = expr.map_expression
+        if map_expr.variable_name != expr.variable_name:
+            return False
+        if map_expr.property_name != "id":
+            return False
+
+        return True
 
     def _render_reduce(
         self, expr: QueryExpressionReduce, context_op: LogicalOperator
