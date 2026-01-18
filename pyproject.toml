@@ -23,6 +23,11 @@ classifiers = [
 dependencies = [
     "antlr4-python3-runtime>=4.13.0",
     "click>=8.1.0",
+    "prompt-toolkit>=3.0.0",
+    "colorama>=0.4.6",
+    "pyyaml>=6.0",
+    "rich>=13.0.0",
+    "textual>=0.47.0",
 ]
 
 [project.optional-dependencies]
