@@ -3,163 +3,293 @@
 This module optimizes the logical plan by merging consecutive operators that would
 otherwise generate unnecessary nested subqueries in the rendered SQL.
 
-TRADE-OFFS AND DESIGN DECISIONS
-===============================
+================================================================================
+CONSERVATIVE FLATTENING APPROACH - READ THIS CAREFULLY
+================================================================================
 
-1. PLANNER-SIDE vs RENDERER-SIDE FLATTENING
--------------------------------------------
+This optimizer uses a CONSERVATIVE approach. We ONLY flatten patterns that are
+100% GUARANTEED to produce semantically equivalent SQL. When in doubt, we do NOT
+flatten.
 
-We chose PLANNER-SIDE implementation for these reasons:
+WHY CONSERVATIVE?
+-----------------
+1. Databricks SQL optimizer already flattens simple cases internally
+2. Incorrect flattening causes SILENT bugs - wrong results, not errors
+3. Users must be able to trust that generated SQL is semantically correct
+4. Readability improvement is secondary to correctness
 
-Advantages:
-- Testability: Logical plan can be inspected before rendering
-- Separation of concerns: Optimization logic separate from SQL generation
-- Composability: Multiple optimization passes can be chained
-- Debugging: dump_graph() shows the optimized plan
+================================================================================
+WHAT WE DO FLATTEN (100% SAFE)
+================================================================================
 
-Disadvantages:
-- Requires modifying operator dataclasses (e.g., adding filter_expression to Projection)
-- More complex operator rewiring logic
+✅ RULE 1: Selection → Projection
+---------------------------------
+Cypher:
+    MATCH (p:Person)
+    WHERE p.age > 30        <-- SelectionOperator
+    RETURN p.name           <-- ProjectionOperator
 
-Alternative (Renderer-side):
-- Would detect patterns during _render_projection() and inline WHERE
-- Simpler to implement but harder to test and debug
-- Logic scattered across render methods
+SQL BEFORE (not flattened):
+    SELECT __p_name AS name
+    FROM (
+        SELECT * FROM (SELECT ...) AS _filter
+        WHERE __p_age > 30
+    ) AS _proj
 
-2. CONSERVATIVE vs EAGER FLATTENING
------------------------------------
+SQL AFTER (flattened):
+    SELECT __p_name AS name
+    FROM (SELECT ...) AS _proj
+    WHERE __p_age > 30
 
-We chose CONSERVATIVE approach for these reasons:
+WHY SAFE: WHERE clause position doesn't change semantics when there's no
+aggregation boundary. The filter applies to the same rows either way.
 
-What we DO flatten (100% semantically equivalent):
-- Selection → Projection: WHERE + SELECT always safe to combine
-- Selection → Selection: Multiple WHEREs can be ANDed
 
-What we DO NOT flatten (semantic risks):
-- Projection → Projection: Column alias conflicts possible
-- Anything with LIMIT/OFFSET: Row ordering semantics change
-- Window functions: Scope boundaries matter
-- DISTINCT in inner query: Affects aggregation counts
+✅ RULE 2: Selection → Selection
+---------------------------------
+Cypher (hypothetical - created by complex patterns):
+    -- Two consecutive WHERE clauses (rare in practice)
 
-Why Conservative?
-- Databricks SQL optimizer already flattens simple cases internally
-- Our flattening is primarily for SQL readability/debugging
-- Incorrect flattening causes subtle bugs that are hard to diagnose
-- User can inspect generated SQL and trust it's semantically correct
+SQL BEFORE (not flattened):
+    SELECT * FROM (SELECT * FROM T WHERE A) AS _filter WHERE B
 
-Trade-off: We may generate SQL with unnecessary subqueries that Databricks
-will optimize anyway. This is acceptable because:
-1. Correctness > Performance (Databricks optimizer handles it)
-2. Generated SQL is more predictable/debuggable
-3. No silent semantic changes to query results
+SQL AFTER (flattened):
+    SELECT * FROM T WHERE (A) AND (B)
 
-3. OPERATOR MUTATION vs COPY
-----------------------------
+WHY SAFE: WHERE A followed by WHERE B is mathematically equivalent to
+WHERE (A AND B). Pure boolean logic - no semantic edge cases.
 
-We MUTATE operators in-place rather than creating copies:
 
-Advantages:
-- Memory efficient for large plans
-- Simpler operator graph management
-- operator_debug_id preserved for debugging
+================================================================================
+WHAT WE DO NOT FLATTEN (POTENTIAL SEMANTIC CHANGES)
+================================================================================
 
-Disadvantages:
-- Original plan is modified (can't compare before/after easily)
-- Must be careful with operator reference management
+❌ Projection → Projection
+--------------------------
+Cypher:
+    MATCH (p:Person)
+    WITH p.age * 2 AS double_age    <-- ProjectionOperator (alias defined)
+    RETURN double_age + 1           <-- ProjectionOperator (references alias)
 
-Alternative: Deep-copy plan before optimization
-- Would allow before/after comparison
-- Higher memory usage
-- More complex implementation
+SQL (NOT flattened - correct):
+    SELECT double_age + 1
+    FROM (
+        SELECT __p_age * 2 AS double_age
+        FROM ...
+    ) AS _proj
 
-4. SINGLE-PASS vs MULTI-PASS
-----------------------------
+HYPOTHETICAL flattened (WRONG):
+    SELECT (__p_age * 2) + 1 AS result  -- Would need to inline the expression
+    FROM ...
 
-We use SINGLE-PASS bottom-up traversal:
+RISKS IF WE FLATTENED:
+1. Column alias conflicts - outer query references alias defined in inner
+2. Expression duplication - same expression computed multiple times
+3. Side effects - if expressions had side effects (unlikely in SQL)
 
-Advantages:
-- O(n) complexity where n = number of operators
-- Simple termination guarantee
-- Each operator visited once
+TODO: Could implement Projection → Projection flattening with these checks:
+- Verify outer projections don't reference aliases defined in inner
+- Verify no DISTINCT, LIMIT, OFFSET in inner projection
+- Inline expressions only when they're simple column references
 
-Disadvantages:
-- May miss some optimizations that require multiple passes
-- Cannot handle patterns that emerge after other optimizations
 
-Example of missed optimization:
-    Selection → Selection → Projection
-    First pass: Merges first two Selections
-    Result: Selection → Projection (could be flattened further)
+❌ Anything with LIMIT/OFFSET in inner query
+--------------------------------------------
+Cypher:
+    MATCH (p:Person)
+    WITH p ORDER BY p.age LIMIT 10  <-- ProjectionOperator with LIMIT
+    WHERE p.active = true           <-- SelectionOperator
+    RETURN p.name
 
-We accept this because:
-- Multi-pass would complicate termination logic
-- Most real queries don't have deeply nested patterns
-- Can always run optimizer twice if needed
+SQL (NOT flattened - correct):
+    SELECT __p_name AS name
+    FROM (
+        SELECT * FROM (
+            SELECT ... ORDER BY __p_age LIMIT 10
+        ) AS _proj
+        WHERE __p_active = true
+    ) AS _filter
 
+HYPOTHETICAL flattened (WRONG):
+    SELECT __p_name AS name
+    FROM (SELECT ...) AS _proj
+    WHERE __p_active = true
+    ORDER BY __p_age LIMIT 10  -- WRONG! WHERE applies BEFORE LIMIT now!
+
+SEMANTIC DIFFERENCE:
+- Correct: Take top 10 by age, THEN filter by active
+- Wrong: Filter by active, THEN take top 10 by age
+- Result: Completely different rows returned!
+
+
+❌ DISTINCT in inner query
+--------------------------
+Cypher:
+    MATCH (p:Person)-[:KNOWS]->(f:Person)
+    WITH DISTINCT p                  <-- ProjectionOperator with DISTINCT
+    RETURN COUNT(*)                  <-- Aggregation
+
+SQL (NOT flattened - correct):
+    SELECT COUNT(*)
+    FROM (
+        SELECT DISTINCT __p_id, __p_name, ...
+        FROM ...
+    ) AS _proj
+
+HYPOTHETICAL flattened (WRONG):
+    SELECT COUNT(DISTINCT __p_id)  -- Different semantics!
+    FROM ...
+
+SEMANTIC DIFFERENCE:
+- Correct: Count unique persons (after deduplication)
+- Wrong: COUNT DISTINCT on one column only
+- If Person has multiple fields, results differ!
+
+
+❌ Window functions
+-------------------
+Cypher (hypothetical):
+    MATCH (p:Person)
+    WITH p, ROW_NUMBER() OVER (ORDER BY p.age) AS rn
+    WHERE rn <= 10
+    RETURN p.name
+
+RISKS IF FLATTENED:
+- Window function scope changes
+- Partitioning boundaries affected
+- Results could be completely different
+
+
+================================================================================
+EXAMPLES OF BUGS FROM EAGER (NON-CONSERVATIVE) FLATTENING
+================================================================================
+
+BUG EXAMPLE 1: Lost rows due to LIMIT reordering
+------------------------------------------------
+Query: "Get names of top 10 oldest active people"
+
+Cypher:
+    MATCH (p:Person)
+    WITH p ORDER BY p.age DESC LIMIT 10
+    WHERE p.active = true
+    RETURN p.name
+
+Expected result (correct): Filter AFTER limit
+    1. Sort all people by age DESC
+    2. Take top 10
+    3. Filter those 10 for active=true
+    4. Return names (could be 0-10 rows)
+
+Buggy result (if flattened wrong): Filter BEFORE limit
+    1. Filter all people for active=true
+    2. Sort by age DESC
+    3. Take top 10
+    4. Return names (always 10 rows if enough active people)
+
+Impact: User gets WRONG DATA with no error message!
+
+
+BUG EXAMPLE 2: Wrong count due to DISTINCT flattening
+-----------------------------------------------------
+Query: "Count unique customers who made purchases"
+
+Cypher:
+    MATCH (c:Customer)-[:PURCHASED]->(p:Product)
+    WITH DISTINCT c
+    RETURN COUNT(*) AS unique_customers
+
+If customer C1 bought 5 products:
+- Correct (with DISTINCT subquery): COUNT = 1
+- Wrong (if flattened): Could count 5 times!
+
+
+BUG EXAMPLE 3: Alias resolution failure
+---------------------------------------
+Query: "Calculate derived value and use it"
+
+Cypher:
+    MATCH (p:Person)
+    WITH p.salary * 0.3 AS tax
+    RETURN tax * 12 AS annual_tax
+
+If flattened incorrectly:
+- Outer query references 'tax' but it's not defined at that level
+- Could cause runtime SQL error or wrong column reference
+
+
+================================================================================
+TODO: FUTURE OPTIMIZATIONS (NON-CONSERVATIVE, REQUIRES CAREFUL ANALYSIS)
+================================================================================
+
+TODO: Projection → Projection flattening
+    - Safe ONLY if outer projections are simple column references
+    - Must verify no alias conflicts
+    - Must verify no DISTINCT, LIMIT, OFFSET in inner
+    - Implementation complexity: HIGH
+    - Benefit: Moderate (reduces 1 subquery level)
+
+TODO: Selection → Join flattening
+    - Push WHERE conditions into JOIN ON clauses
+    - Safe for INNER JOIN, risky for OUTER JOIN
+    - Could improve query performance
+    - Implementation complexity: MEDIUM
+    - Benefit: Moderate (better join optimization)
+
+TODO: Recursive CTE flattening
+    - Merge post-CTE filters into CTE itself
+    - Already partially done with predicate pushdown
+    - Full implementation is complex
+    - Implementation complexity: HIGH
+    - Benefit: High (reduces data processed in recursion)
+
+
+================================================================================
+IMPLEMENTATION NOTES
+================================================================================
+
+SINGLE-PASS BOTTOM-UP TRAVERSAL
+-------------------------------
+We visit operators from leaves to root. This ensures that when we try to
+flatten an operator, its children are already in their final form.
+
+Example:
+    DataSource → Selection → Selection → Projection
+    Visit order: DataSource, Selection1, Selection2, Projection
+
+    At Selection2: Can merge with Selection1 → Selection(A AND B)
+    At Projection: Can merge with Selection(A AND B) → Projection with filter
+
+This handles chained patterns in a single pass.
+
+
+MULTI-PASS NOT NEEDED
+---------------------
+With bottom-up traversal, we handle chains like Selection → Selection → Projection
+correctly in one pass. Multi-pass would only help for patterns we don't support
+(like Projection → Projection).
+
+
+================================================================================
 USAGE
-=====
+================================================================================
 
     from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
 
     # After creating logical plan
     plan = LogicalPlan.process_query_tree(ast, graph_def)
 
-    # Apply optimization
+    # Apply optimization (enabled by default)
     optimizer = SubqueryFlatteningOptimizer(enabled=True)
     optimizer.optimize(plan)
+
+    # Check what was flattened
+    print(optimizer.stats)  # FlatteningStats(sel→proj=1, sel→sel=0, ...)
 
     # Render optimized plan
     sql = renderer.render_plan(plan)
 
-FLATTENING RULES
-================
-
-Rule 1: Selection → Projection
-------------------------------
-BEFORE:
-    ProjectionOperator(projections=[...])
-        ↑
-    SelectionOperator(filter=condition)
-        ↑
-    SomeOperator
-
-AFTER:
-    ProjectionOperator(projections=[...], filter_expression=condition)
-        ↑
-    SomeOperator
-
-SQL BEFORE:
-    SELECT cols FROM (SELECT * FROM T WHERE cond) AS _proj
-
-SQL AFTER:
-    SELECT cols FROM T WHERE cond
-
-Rule 2: Selection → Selection
-------------------------------
-Multiple consecutive WHERE clauses can be ANDed together.
-
-BEFORE:
-    SelectionOperator(filter=B)
-        ↑
-    SelectionOperator(filter=A)
-        ↑
-    SomeOperator
-
-AFTER:
-    SelectionOperator(filter=A AND B)
-        ↑
-    SomeOperator
-
-SQL BEFORE:
-    SELECT * FROM (SELECT * FROM T WHERE A) AS _filter WHERE B
-
-SQL AFTER:
-    SELECT * FROM T WHERE A AND B
-
-WHY THIS IS 100% SAFE:
-- WHERE A followed by WHERE B is mathematically equivalent to WHERE (A AND B)
-- No semantic edge cases - this is pure boolean logic
-- No interaction with GROUP BY, DISTINCT, LIMIT, etc.
+    # To disable optimization (for debugging):
+    optimizer = SubqueryFlatteningOptimizer(enabled=False)
 """
 
 from __future__ import annotations
