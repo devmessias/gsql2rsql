@@ -933,6 +933,20 @@ class SQLRenderer:
         # Circular path check: require start_node = end_node for patterns like (a)-[*]->(a)
         if recursive_op.is_circular:
             where_parts.append("p.start_node = p.end_node")
+
+        # SINK NODE FILTER PUSHDOWN: Apply filter on target node here
+        # This filters rows DURING the join rather than AFTER all joins complete
+        if recursive_op.sink_node_filter:
+            from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
+            # Rewrite filter: b.risk_score -> sink.risk_score
+            rewritten_filter = rewrite_predicate_for_edge_alias(
+                recursive_op.sink_node_filter,
+                recursive_op.target_alias,  # e.g., "b"
+                edge_alias="sink",  # Rewrite to "sink"
+            )
+            sink_filter_sql = self._render_edge_filter_expression(rewritten_filter)
+            where_parts.append(sink_filter_sql)
+
         lines.append(f"{indent}WHERE {' AND '.join(where_parts)}")
 
         return "\n".join(lines)

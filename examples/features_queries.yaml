@@ -576,3 +576,93 @@ examples:
       COST: Medium. Each WITH creates a logical stage.
       Variables from previous WITH are available in next stage.
       Useful for aggregation → filtering → transformation pipelines.
+
+  # =============================================================================
+  # RECURSIVE SINK FILTER PUSHDOWN (P2 Optimization)
+  # =============================================================================
+
+  - description: "Simplest sink filter pushdown"
+    application: "Features: Sink Filter Pushdown"
+    query: |
+      MATCH (a:Person)-[:KNOWS*1..2]->(b:Person)
+      WHERE b.age > 30
+      RETURN a.name, b.name
+    notes: |
+      Minimal example: filter on sink node b is pushed into recursive join.
+
+      SQL: WHERE p.depth >= 1 AND p.depth <= 2 AND (sink.age) > (30)
+
+  - description: "Variable-length path with sink filter pushdown"
+    application: "Features: Recursive Sink Filter Pushdown"
+    query: |
+      MATCH path = (a:Person)-[:KNOWS*2..4]->(b:Person)
+      WHERE b.age > 50
+      RETURN a.id, b.id, LENGTH(path) AS chain_length
+    notes: |
+      Filter on sink node (b.age > 50) is pushed into the recursive join.
+
+      OPTIMIZATION APPLIED:
+        BEFORE: CTE → JOIN sink → JOIN source → depth filter → OUTER sink filter
+        AFTER:  CTE → JOIN sink → JOIN source → WHERE depth AND sink.age > 50
+
+      WHY IT MATTERS: Instead of filtering 1000 paths after all joins complete,
+      we filter during the join and only keep paths ending at older people.
+
+      SQL Pattern (optimized):
+        FROM paths_1 p
+        JOIN Person sink ON sink.id = p.end_node
+        JOIN Person source ON source.id = p.start_node
+        WHERE p.depth >= 2 AND p.depth <= 4 AND (sink.age) > (50)
+
+  - description: "Variable-length with source AND sink filter pushdown"
+    application: "Features: Dual Filter Pushdown"
+    query: |
+      MATCH path = (a:Person)-[:KNOWS*2..4]->(b:Person)
+      WHERE a.age > 30 AND b.age > 50
+      RETURN a.id, b.id
+    notes: |
+      Both source and sink filters are optimized:
+        - Source filter (a.age > 30) → pushed into CTE base case
+        - Sink filter (b.age > 50) → pushed into recursive join
+
+      BENEFIT: Maximum optimization for path queries between filtered nodes.
+      We only explore paths starting from people over 30 (source filter)
+      and only keep paths ending at people over 50 (sink filter).
+
+      SQL Pattern:
+        Base case: ... JOIN Person src ON ... WHERE (src.age) > (30)
+        Join: ... WHERE depth_bounds AND (sink.age) > (50)
+
+  - description: "Variable-length with compound sink filter"
+    application: "Features: Compound Sink Filter Pushdown"
+    query: |
+      MATCH path = (a:Person)-[:KNOWS*1..3]->(b:Person)
+      WHERE b.age > 40 AND b.active = true
+      RETURN a.id, b.id, [n IN nodes(path) | n.id] AS path_nodes
+    notes: |
+      Compound sink filter (AND of two conditions) is pushed together.
+
+      OPTIMIZATION: Both conditions are applied in the recursive join WHERE:
+        WHERE p.depth >= 1 AND ((sink.age) > (40) AND sink.active = true)
+
+      USE CASE: Find chains of connections ending at active people over 40.
+
+  - description: "Variable-length with sink filter and edge predicate"
+    application: "Features: Combined Optimizations"
+    query: |
+      MATCH path = (a:Person)-[:KNOWS*2..5]->(b:Person)
+      WHERE b.age > 60
+        AND ALL(k IN relationships(path) WHERE k.since > 2010)
+      RETURN a.id, b.id, LENGTH(path) AS hops
+    notes: |
+      Combines multiple optimizations:
+        1. Edge predicate (since > 2010) pushed into CTE base and recursive cases
+        2. Sink filter (age > 60) pushed into recursive join
+
+      USE CASE: Find chains of recent connections ending at seniors.
+      Only explores paths where EVERY connection was made after 2010.
+
+      SQL Pattern:
+        Base case: WHERE (e.since) > (2010)
+        Recursive: WHERE depth < 5 AND (e.since) > (2010)
+        Join: WHERE depth_bounds AND (sink.age) > (60)

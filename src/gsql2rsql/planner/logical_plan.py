@@ -431,7 +431,14 @@ class LogicalPlan:
             source_node.alias,
         )
 
-        # Update match_clause with remaining WHERE (without source filter)
+        # Extract sink (target) node filter for optimization
+        # This filter will be applied in the recursive join WHERE clause
+        sink_node_filter, remaining_where = self._extract_source_node_filter(
+            remaining_where,
+            target_node.alias,
+        )
+
+        # Update match_clause with remaining WHERE (without source/sink filters)
         match_clause.where_expression = remaining_where
 
         # =====================================================================
@@ -522,6 +529,7 @@ class LogicalPlan:
             source_id_column="id",  # Default, could be from schema
             target_id_column="id",  # Default, could be from schema
             start_node_filter=start_node_filter,
+            sink_node_filter=sink_node_filter,
             cte_name=f"paths_{rel.alias or 'r'}",
             source_alias=source_node.alias,
             target_alias=target_node.alias,
