@@ -302,14 +302,16 @@ from gsql2rsql.parser.operators import (
     BinaryOperator,
     BinaryOperatorInfo,
     BinaryOperatorType,
+    Function,
 )
 from gsql2rsql.planner.operators import (
     DataSourceOperator,
+    JoinOperator,
+    JoinType,
     LogicalOperator,
     ProjectionOperator,
-    SelectionOperator,
-    JoinOperator,
     RecursiveTraversalOperator,
+    SelectionOperator,
 )
 
 if TYPE_CHECKING:
@@ -644,28 +646,141 @@ class SelectionPushdownOptimizer:
     corresponding DataSourceOperator. This is especially important for
     undirected relationships where filters should be applied before joins.
 
-    Example:
+    ==========================================================================
+    SAFETY CHECKLIST - WHEN PUSHDOWN IS BLOCKED
+    ==========================================================================
+
+    This optimizer implements CONSERVATIVE pushdown. We block pushdown in
+    several cases to preserve query semantics. Here's the complete checklist:
+
+    ┌──────────────────────────────────────────────────────────────────────────┐
+    │  CHECK                │ WHY BLOCKED                   │ IMPLEMENTED?    │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  refs.size() != 1     │ Multi-var predicates need     │ ✅ YES          │
+    │                       │ both sides of join            │ _group_preds    │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  OR predicate         │ σ_{p∨q}(A⋈B) ≢ σ_p(A)⋈σ_q(B) │ ✅ YES          │
+    │                       │ Splitting OR is semantically  │ _split_and only │
+    │                       │ wrong                         │                 │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  NOT INNER JOIN       │ LEFT JOIN: pushing to right   │ ✅ YES          │
+    │                       │ side changes OPTIONAL MATCH   │ _has_non_inner  │
+    │                       │ semantics (NULL rows lost)    │ _join_in_path   │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  Recursive path       │ RecursiveTraversalOperator    │ ✅ YES          │
+    │                       │ renderer doesn't support      │ _is_in_recursive│
+    │                       │ filter_expression             │ _path           │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  Volatile functions   │ rand(), datetime() change on  │ ✅ YES          │
+    │  (rand, datetime,     │ each call - pushing changes   │ _contains_      │
+    │   now, etc.)          │ how often they're evaluated   │ volatile_func   │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  Aggregation funcs    │ COUNT, SUM, etc. cannot be    │ ✅ YES          │
+    │                       │ pushed before grouping        │ _contains_      │
+    │                       │                               │ aggregation     │
+    ├──────────────────────────────────────────────────────────────────────────┤
+    │  Correlated subquery  │ EXISTS/NOT EXISTS with outer  │ ❌ N/A          │
+    │                       │ reference                     │ Not in parser   │
+    └──────────────────────────────────────────────────────────────────────────┘
+
+    TODO: Future safety checks to consider:
+    - Window functions (if added to parser)
+    - Non-deterministic UDFs (if UDF support is added)
+
+    ==========================================================================
+    CONJUNCTION SPLITTING FOR UNDIRECTED EDGES
+    ==========================================================================
+
+    For undirected edge patterns like:
+
+        MATCH (p:Person)-[:KNOWS]-(f:Person)
+        WHERE p.name = 'Alice' AND f.age > 25
+
+    The WHERE clause references TWO variables (p and f). Without conjunction
+    splitting, the entire predicate stays in the SelectionOperator after joins.
+
+    With conjunction splitting:
+        1. Split "p.name = 'Alice' AND f.age > 25" into:
+           - {p} → p.name = 'Alice'
+           - {f} → f.age > 25
+        2. Push p.name = 'Alice' to DataSource(p)
+        3. Push f.age > 25 to DataSource(f)
+        4. Remove the SelectionOperator entirely
+
+    ==========================================================================
+    WHAT WE PUSH (SAFE)
+    ==========================================================================
+
+    ✅ Single-variable predicates:
+        WHERE p.name = 'Alice'              → Push to DataSource(p)
+        WHERE p.age > 30 AND p.active       → Push combined to DataSource(p)
+
+    ✅ Multi-variable AND conjunctions (after splitting):
+        WHERE p.name = 'Alice' AND f.age > 25
+            → Push p.name = 'Alice' to DataSource(p)
+            → Push f.age > 25 to DataSource(f)
+
+    ==========================================================================
+    WHAT WE DON'T PUSH (KEEP IN SELECTION)
+    ==========================================================================
+
+    ❌ Cross-variable predicates:
+        WHERE p.name = f.name               → Cannot push (references both p and f)
+
+    ❌ OR predicates (even if single-variable inside):
+        WHERE p.name = 'Alice' OR f.age > 25  → Cannot split OR safely
+
+    ❌ Predicates for recursive path sources:
+        MATCH (a)-[:KNOWS*1..3]->(b)
+        WHERE a.name = 'Alice'              → Cannot push (recursive rendering)
+
+    ❌ Predicates through LEFT JOINs (OPTIONAL MATCH):
+        MATCH (p:Person)
+        OPTIONAL MATCH (p)-[:KNOWS]-(f:Person)
+        WHERE f.age > 30                    → Cannot push to f (through LEFT JOIN)
+
+    ❌ Volatile functions:
+        WHERE rand() > 0.5                  → Cannot push (changes eval count)
+        WHERE datetime() < p.created_at     → Cannot push (non-deterministic)
+
+    ==========================================================================
+    ALGEBRAIC FOUNDATION
+    ==========================================================================
+
+    The optimization is based on the relational algebra equivalence:
+
+        σ_{p(A)}(A ⋈ B) ≡ σ_{p(A)}(A) ⋈ B
+
+    Where:
+        - σ_{p(A)} is a selection predicate referencing only attributes of A
+        - A ⋈ B is a join between relations A and B
+
+    For AND conjunctions:
+        σ_{p(A) ∧ q(B)}(A ⋈ B) ≡ σ_{p(A)}(A) ⋈ σ_{q(B)}(B)
+
+    This is NOT valid for OR:
+        σ_{p(A) ∨ q(B)}(A ⋈ B) ≢ σ_{p(A)}(A) ⋈ σ_{q(B)}(B)  ← WRONG!
+
+    ==========================================================================
+    EXAMPLE
+    ==========================================================================
+
         BEFORE (without pushdown):
             MATCH (p:Person)-[:KNOWS]-(f:Person)
-            WHERE p.name = 'Alice'
+            WHERE p.name = 'Alice' AND f.age > 25
             RETURN f.name
 
-            Plan: DataSource(p) → Join(KNOWS) → Join(f) → Selection(p.name='Alice')
+            Plan: DataSource(p) → Join(KNOWS) → Join(f) → Selection(p.name='Alice' AND f.age>25)
+
+            SQL: SELECT ... FROM Person p JOIN Knows ... JOIN Person f WHERE p.name='Alice' AND f.age>25
 
         AFTER (with pushdown):
-            Plan: DataSource(p, filter=name='Alice') → Join(KNOWS) → Join(f)
+            Plan: DataSource(p, filter=name='Alice') → Join(KNOWS) → DataSource(f, filter=age>25)
+
+            SQL: SELECT ... FROM (SELECT * FROM Person WHERE name='Alice') p
+                 JOIN Knows ... JOIN (SELECT * FROM Person WHERE age>25) f
 
     This significantly reduces the number of rows processed in joins.
-
-    Algorithm:
-        1. Find all SelectionOperators in the plan
-        2. For each Selection, analyze which variables its predicate references
-        3. If predicate references only one variable (entity):
-           - Find the DataSourceOperator for that entity
-           - Push the predicate to that DataSource's filter_expression
-           - Remove or simplify the Selection
-        4. If predicate references multiple variables:
-           - Keep the Selection in place (cannot push)
     """
 
     def __init__(self, enabled: bool = True) -> None:
@@ -707,7 +822,18 @@ class SelectionPushdownOptimizer:
     def _try_push_selection(
         self, selection: SelectionOperator, plan: LogicalPlan
     ) -> None:
-        """Try to push a Selection's predicate into a DataSource.
+        """Try to push a Selection's predicates into DataSource operators.
+
+        This method implements conjunction splitting for undirected edge patterns.
+
+        Algorithm:
+            1. Split the filter expression into individual AND conjuncts
+            2. Group conjuncts by the variable(s) they reference
+            3. For each single-variable group:
+               - Find the target DataSource
+               - Push the combined predicates to that DataSource
+            4. Reconstruct the Selection with remaining predicates (if any)
+               or remove it entirely
 
         Args:
             selection: The Selection operator to analyze.
@@ -716,49 +842,241 @@ class SelectionPushdownOptimizer:
         if not selection.filter_expression:
             return
 
-        # Collect all property references in the predicate
-        properties = self._collect_property_references(selection.filter_expression)
-        if not properties:
-            return
+        # =======================================================================
+        # Step 1: Split AND conjunctions
+        # =======================================================================
+        # "p.name = 'Alice' AND f.age > 25 AND p.active = true"
+        # becomes: [p.name = 'Alice', f.age > 25, p.active = true]
+        conjuncts = self._split_and_conjunctions(selection.filter_expression)
 
-        # Get unique variable names referenced
-        var_names = {p.variable_name for p in properties}
+        # =======================================================================
+        # Step 2: Group predicates by variable
+        # =======================================================================
+        # Groups:
+        #   "p" → [p.name = 'Alice', p.active = true]
+        #   "f" → [f.age > 25]
+        #   None → [predicates referencing multiple variables]
+        groups = self._group_predicates_by_variable(conjuncts)
 
-        # Can only push if predicate references exactly one variable
-        if len(var_names) != 1:
-            self.stats.predicates_remaining += 1
-            return
+        # =======================================================================
+        # Step 3: Push each single-variable group to its DataSource
+        # =======================================================================
+        pushed_any = False
+        remaining_predicates: list[QueryExpression] = []
 
-        target_variable = next(iter(var_names))
+        for var_name, predicates in groups.items():
+            if var_name is None:
+                # Multi-variable predicates cannot be pushed
+                # TODO: Future optimization - analyze if we can push part of complex
+                # predicates (e.g., COALESCE with fallback values)
+                remaining_predicates.extend(predicates)
+                self.stats.predicates_remaining += len(predicates)
+                continue
 
-        # Find the DataSourceOperator for this variable
-        target_ds = self._find_datasource_for_variable(target_variable, plan)
-        if not target_ds:
-            self.stats.predicates_remaining += 1
-            return
+            # Find the DataSourceOperator for this variable
+            # Pass selection to check for LEFT/OUTER joins in path
+            target_ds = self._find_datasource_for_variable(var_name, plan, selection)
+            if not target_ds:
+                # Cannot find target or target is in recursive path
+                remaining_predicates.extend(predicates)
+                self.stats.predicates_remaining += len(predicates)
+                continue
 
-        # Push the predicate to the DataSource
+            # Combine all predicates for this variable with AND
+            combined = self._combine_predicates_with_and(predicates)
+            if combined is None:
+                continue
+
+            # Push to the DataSource
+            self._push_predicate_to_datasource(combined, target_ds)
+            self.stats.predicates_pushed += len(predicates)
+            pushed_any = True
+
+        # =======================================================================
+        # Step 4: Handle remaining predicates or remove Selection
+        # =======================================================================
+        if not remaining_predicates:
+            # All predicates were pushed - remove the Selection entirely
+            if pushed_any:
+                self._remove_selection(selection)
+                self.stats.selections_removed += 1
+        else:
+            # Some predicates couldn't be pushed - update the Selection
+            if pushed_any:
+                # Reconstruct filter with only the remaining predicates
+                new_filter = self._combine_predicates_with_and(remaining_predicates)
+                selection.filter_expression = new_filter
+                # NOTE: We keep the Selection operator in place with the reduced filter
+
+    # =========================================================================
+    # Conjunction Splitting Helpers
+    # =========================================================================
+
+    def _split_and_conjunctions(
+        self, expr: QueryExpression
+    ) -> list[QueryExpression]:
+        """Split an expression into individual AND conjuncts.
+
+        Recursively splits AND expressions into a flat list of predicates.
+        Does NOT split OR expressions (they must be kept together).
+
+        Examples:
+            "A AND B AND C" → [A, B, C]
+            "A AND (B OR C)" → [A, (B OR C)]
+            "A OR B" → [A OR B]  (not split)
+            "(A AND B) AND (C AND D)" → [A, B, C, D]
+
+        Args:
+            expr: The expression to split.
+
+        Returns:
+            List of individual predicates (conjuncts).
+        """
+        if isinstance(expr, QueryExpressionBinary):
+            # Check if this is an AND expression
+            # BinaryOperatorInfo has 'name' attribute (not 'binary_operator')
+            if (
+                expr.operator is not None
+                and expr.operator.name == BinaryOperator.AND
+                and expr.left_expression is not None
+                and expr.right_expression is not None
+            ):
+                # Recursively split both sides
+                left_conjuncts = self._split_and_conjunctions(expr.left_expression)
+                right_conjuncts = self._split_and_conjunctions(expr.right_expression)
+                return left_conjuncts + right_conjuncts
+
+        # Not an AND expression - return as single predicate
+        return [expr]
+
+    def _group_predicates_by_variable(
+        self, predicates: list[QueryExpression]
+    ) -> dict[str | None, list[QueryExpression]]:
+        """Group predicates by the variable they reference.
+
+        Predicates referencing a single variable are grouped under that variable.
+        Predicates referencing multiple variables are grouped under None.
+        Predicates containing volatile or aggregation functions are also grouped
+        under None (cannot be pushed).
+
+        Examples:
+            [p.name='Alice', f.age>25, p.active=true, p.name=f.name, rand()>0.5]
+            →
+            {
+                'p': [p.name='Alice', p.active=true],
+                'f': [f.age>25],
+                None: [p.name=f.name, rand()>0.5]  # multi-variable or volatile
+            }
+
+        Args:
+            predicates: List of predicate expressions.
+
+        Returns:
+            Dictionary mapping variable name (or None) to predicates.
+        """
+        groups: dict[str | None, list[QueryExpression]] = {}
+
+        for pred in predicates:
+            # =================================================================
+            # Safety Check 1: Volatile functions (rand, datetime, etc.)
+            # =================================================================
+            # Predicates with volatile functions CANNOT be pushed because
+            # pushing changes when/how often they're evaluated.
+            # Example: WHERE rand() > 0.5 - evaluated once per final row vs
+            #          once per source row if pushed (different result!)
+            if self._contains_volatile_function(pred):
+                groups.setdefault(None, []).append(pred)
+                continue
+
+            # =================================================================
+            # Safety Check 2: Aggregation functions (COUNT, SUM, etc.)
+            # =================================================================
+            # Predicates with aggregation CANNOT be pushed because they must
+            # be evaluated after grouping. (Rare in WHERE, but check anyway)
+            if self._contains_aggregation_function(pred):
+                groups.setdefault(None, []).append(pred)
+                continue
+
+            # =================================================================
+            # Safety Check 3: Variable count
+            # =================================================================
+            # Collect all property references in this predicate
+            properties = self._collect_property_references(pred)
+
+            # Get unique variable names
+            var_names = {p.variable_name for p in properties}
+
+            if len(var_names) == 1:
+                # Single-variable predicate - can be pushed
+                var_name = next(iter(var_names))
+                groups.setdefault(var_name, []).append(pred)
+            elif len(var_names) == 0:
+                # No variables (constant expression like "1 = 1")
+                # Keep in Selection for safety
+                # TODO: Could potentially push to any DataSource or eliminate
+                # FIX: If it's "1 = 1", could simplify. If "1 = 0", short-circuit.
+                groups.setdefault(None, []).append(pred)
+            else:
+                # Multi-variable predicate - cannot push
+                groups.setdefault(None, []).append(pred)
+
+        return groups
+
+    def _combine_predicates_with_and(
+        self, predicates: list[QueryExpression]
+    ) -> QueryExpression | None:
+        """Combine a list of predicates using AND.
+
+        Args:
+            predicates: List of predicates to combine.
+
+        Returns:
+            Combined expression, or None if list is empty.
+        """
+        if not predicates:
+            return None
+
+        if len(predicates) == 1:
+            return predicates[0]
+
+        # Build AND chain: ((A AND B) AND C) AND D
+        and_op = BinaryOperatorInfo(BinaryOperator.AND, BinaryOperatorType.LOGICAL)
+
+        result = predicates[0]
+        for pred in predicates[1:]:
+            result = QueryExpressionBinary(
+                left_expression=result,
+                operator=and_op,
+                right_expression=pred,
+            )
+
+        return result
+
+    def _push_predicate_to_datasource(
+        self, predicate: QueryExpression, target_ds: DataSourceOperator
+    ) -> None:
+        """Push a predicate to a DataSource's filter_expression.
+
+        Combines with existing filter if present.
+
+        Args:
+            predicate: The predicate to push.
+            target_ds: The target DataSource operator.
+        """
         if target_ds.filter_expression is None:
-            target_ds.filter_expression = selection.filter_expression
+            target_ds.filter_expression = predicate
         else:
             # Combine with existing filter using AND
-            from gsql2rsql.parser.operators import (
-                BinaryOperator,
-                BinaryOperatorInfo,
-                BinaryOperatorType,
-            )
             and_op = BinaryOperatorInfo(BinaryOperator.AND, BinaryOperatorType.LOGICAL)
             target_ds.filter_expression = QueryExpressionBinary(
                 left_expression=target_ds.filter_expression,
                 operator=and_op,
-                right_expression=selection.filter_expression,
+                right_expression=predicate,
             )
 
-        self.stats.predicates_pushed += 1
-
-        # Remove the Selection operator from the plan
-        self._remove_selection(selection)
-        self.stats.selections_removed += 1
+    # =========================================================================
+    # Original Helper Methods
+    # =========================================================================
 
     def _collect_property_references(
         self,
@@ -824,18 +1142,194 @@ class SelectionPushdownOptimizer:
 
         return properties
 
+    # =========================================================================
+    # Volatile Function and Aggregation Detection
+    # =========================================================================
+
+    # Volatile functions: result changes on each call even with same arguments
+    # These CANNOT be pushed because:
+    #   - Before pushdown: evaluated once per row AFTER join
+    #   - After pushdown: evaluated once per row BEFORE join (different row count!)
+    #
+    # Example of semantic change:
+    #   WHERE rand() > 0.5 AND p.name = 'Alice'
+    #   Correct (not pushed): filter 50% of joined rows randomly
+    #   Wrong (pushed): filter 50% of Person rows, THEN join (more rows filtered!)
+    VOLATILE_FUNCTIONS: set["Function"] = {
+        Function.RAND,           # Random number generation
+        Function.DATE,           # When called without args: current date
+        Function.DATETIME,       # When called without args: current datetime
+        Function.LOCALDATETIME,  # When called without args: current local datetime
+        Function.TIME,           # When called without args: current time
+        Function.LOCALTIME,      # When called without args: current local time
+    }
+
+    def _contains_volatile_function(self, expr: QueryExpression) -> bool:
+        """Check if expression contains any volatile (non-deterministic) function.
+
+        Volatile functions like rand(), datetime() etc. produce different results
+        on each call. Pushing predicates with volatile functions changes when/how
+        often they're evaluated, altering query semantics.
+
+        Example:
+            WHERE rand() > 0.5
+            - Not pushed: evaluated once per FINAL row (after joins)
+            - If pushed: evaluated once per SOURCE row (before joins, different count!)
+
+        Note: Date/time functions are volatile when called without arguments
+        (they return current time). When called with arguments like
+        datetime({year:2020, month:1, day:1}), they're deterministic.
+        However, we conservatively block all calls since analyzing arguments
+        is complex and the performance gain is minimal.
+
+        Args:
+            expr: The expression to analyze.
+
+        Returns:
+            True if the expression contains any volatile function.
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionBinary,
+            QueryExpressionFunction,
+            QueryExpressionCaseExpression,
+            QueryExpressionList,
+            QueryExpressionListPredicate,
+            QueryExpressionWithAlias,
+        )
+
+        if isinstance(expr, QueryExpressionFunction):
+            if expr.function in self.VOLATILE_FUNCTIONS:
+                return True
+            # Check function arguments recursively
+            for arg in expr.parameters or []:
+                if self._contains_volatile_function(arg):
+                    return True
+
+        elif isinstance(expr, QueryExpressionBinary):
+            if expr.left_expression and self._contains_volatile_function(expr.left_expression):
+                return True
+            if expr.right_expression and self._contains_volatile_function(expr.right_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionCaseExpression):
+            if expr.test_expression and self._contains_volatile_function(expr.test_expression):
+                return True
+            for when_expr, then_expr in expr.alternatives or []:
+                if self._contains_volatile_function(when_expr):
+                    return True
+                if self._contains_volatile_function(then_expr):
+                    return True
+            if expr.else_expression and self._contains_volatile_function(expr.else_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionList):
+            for item in expr.items or []:
+                if self._contains_volatile_function(item):
+                    return True
+
+        elif isinstance(expr, QueryExpressionListPredicate):
+            if expr.list_expression and self._contains_volatile_function(expr.list_expression):
+                return True
+            if expr.filter_expression and self._contains_volatile_function(expr.filter_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionWithAlias):
+            if expr.inner_expression and self._contains_volatile_function(expr.inner_expression):
+                return True
+
+        elif hasattr(expr, 'children'):
+            for child in expr.children:
+                if isinstance(child, QueryExpression) and self._contains_volatile_function(child):
+                    return True
+
+        return False
+
+    def _contains_aggregation_function(self, expr: QueryExpression) -> bool:
+        """Check if expression contains any aggregation function.
+
+        Aggregation functions (COUNT, SUM, AVG, etc.) cannot be pushed because
+        they must be evaluated AFTER grouping, not before.
+
+        Note: In practice, aggregation functions in WHERE clauses are rare
+        and typically a semantic error. But we check defensively.
+
+        Args:
+            expr: The expression to analyze.
+
+        Returns:
+            True if the expression contains any aggregation function.
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionBinary,
+            QueryExpressionFunction,
+            QueryExpressionAggregationFunction,
+            QueryExpressionCaseExpression,
+            QueryExpressionList,
+            QueryExpressionListPredicate,
+            QueryExpressionWithAlias,
+        )
+
+        if isinstance(expr, QueryExpressionAggregationFunction):
+            return True
+
+        elif isinstance(expr, QueryExpressionFunction):
+            for arg in expr.parameters or []:
+                if self._contains_aggregation_function(arg):
+                    return True
+
+        elif isinstance(expr, QueryExpressionBinary):
+            if expr.left_expression and self._contains_aggregation_function(expr.left_expression):
+                return True
+            if expr.right_expression and self._contains_aggregation_function(expr.right_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionCaseExpression):
+            if expr.test_expression and self._contains_aggregation_function(expr.test_expression):
+                return True
+            for when_expr, then_expr in expr.alternatives or []:
+                if self._contains_aggregation_function(when_expr):
+                    return True
+                if self._contains_aggregation_function(then_expr):
+                    return True
+            if expr.else_expression and self._contains_aggregation_function(expr.else_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionList):
+            for item in expr.items or []:
+                if self._contains_aggregation_function(item):
+                    return True
+
+        elif isinstance(expr, QueryExpressionListPredicate):
+            if expr.list_expression and self._contains_aggregation_function(expr.list_expression):
+                return True
+            if expr.filter_expression and self._contains_aggregation_function(expr.filter_expression):
+                return True
+
+        elif isinstance(expr, QueryExpressionWithAlias):
+            if expr.inner_expression and self._contains_aggregation_function(expr.inner_expression):
+                return True
+
+        elif hasattr(expr, 'children'):
+            for child in expr.children:
+                if isinstance(child, QueryExpression) and self._contains_aggregation_function(child):
+                    return True
+
+        return False
+
     def _find_datasource_for_variable(
-        self, variable: str, plan: LogicalPlan
+        self, variable: str, plan: LogicalPlan, selection: SelectionOperator | None = None
     ) -> DataSourceOperator | None:
         """Find the DataSourceOperator that provides a given variable.
 
         Only returns DataSources that can have filters pushed to them.
-        Excludes DataSources involved in recursive path patterns, as those
-        are rendered differently and don't support filter_expression.
+        Excludes DataSources involved in:
+        - Recursive path patterns (renderer doesn't support filter_expression)
+        - LEFT/OUTER join paths (pushdown would change semantics)
 
         Args:
             variable: The variable name (e.g., 'p' from 'p:Person').
             plan: The logical plan to search.
+            selection: The Selection operator we're pushing from (for join path check).
 
         Returns:
             The DataSourceOperator for the variable, or None if not found
@@ -848,8 +1342,176 @@ class SelectionPushdownOptimizer:
                     # If so, don't push (the renderer doesn't support it)
                     if self._is_in_recursive_path(start_op):
                         return None
+
+                    # Check if path to Selection contains non-INNER joins
+                    # Pushing through LEFT/OUTER joins changes semantics!
+                    # Example: OPTIONAL MATCH creates LEFT JOIN - pushing filter
+                    # to the optional side would incorrectly filter before the join.
+                    if selection and self._has_non_inner_join_in_path(start_op, selection):
+                        return None
+
                     return start_op
         return None
+
+    def _has_non_inner_join_in_path(
+        self, ds: DataSourceOperator, selection: SelectionOperator
+    ) -> bool:
+        """Check if DataSource is on the RIGHT (optional) side of a LEFT JOIN.
+
+        Pushing predicates through LEFT JOINs is only unsafe when the variable
+        is on the RIGHT (optional) side of the join. The LEFT side is preserved.
+
+        Example:
+            MATCH (p:Person)
+            OPTIONAL MATCH (p)-[:KNOWS]-(f:Person)
+            WHERE f.age > 30
+
+        Here f is on the RIGHT side of a LEFT JOIN:
+            JOIN(type=LEFT, left=p, right=pattern_with_f)
+
+        If we push f.age > 30 to DataSource(f), we filter BEFORE the LEFT JOIN,
+        which gives different results than filtering AFTER.
+
+        But p.age > 30 CAN be pushed because p is on the LEFT side (preserved).
+
+        Args:
+            ds: The DataSourceOperator we want to push to.
+            selection: The Selection operator we're pushing from.
+
+        Returns:
+            True if ds is on the optional (RIGHT) side of a LEFT JOIN (unsafe).
+        """
+        # BFS/DFS from ds to selection, tracking if we're on the optional side
+        visited: set[int] = set()
+        return self._is_on_optional_side_of_left_join(ds, selection, visited)
+
+    def _is_on_optional_side_of_left_join(
+        self,
+        current: LogicalOperator,
+        target: SelectionOperator,
+        visited: set[int],
+    ) -> bool:
+        """Check if current operator is on the optional side of a LEFT JOIN.
+
+        For LEFT JOINs:
+        - Left input (in_operator_left) is the PRESERVED side → safe to push
+        - Right input (in_operator_right) is the OPTIONAL side → NOT safe to push
+
+        Args:
+            current: Current operator in traversal.
+            target: Target Selection operator.
+            visited: Set of visited operator IDs.
+
+        Returns:
+            True if current is on the optional (right) side of a LEFT JOIN.
+        """
+        op_id = id(current)
+        if op_id in visited:
+            return False
+        visited.add(op_id)
+
+        # If we reached the target, we didn't find problematic LEFT joins
+        if current is target:
+            return False
+
+        # Check all downstream operators
+        for out_op in current._out_operators:
+            if isinstance(out_op, JoinOperator):
+                if out_op.join_type == JoinType.LEFT:
+                    # Check if we're coming from the RIGHT (optional) side
+                    # JoinOperator has in_operator_left and in_operator_right
+                    is_right_input = self._is_input_of_join(current, out_op, is_right=True)
+                    if is_right_input:
+                        # We're on the optional side of a LEFT JOIN
+                        # Check if the target is reachable (to confirm this join is in path)
+                        if self._can_reach_operator(out_op, target, set()):
+                            return True
+
+                # For CROSS joins, any side is potentially problematic
+                if out_op.join_type == JoinType.CROSS:
+                    if self._can_reach_operator(out_op, target, set()):
+                        # CROSS joins are rare in Cypher, but be conservative
+                        return True
+
+            # Continue searching downstream
+            if self._is_on_optional_side_of_left_join(out_op, target, visited):
+                return True
+
+        return False
+
+    def _is_input_of_join(
+        self, op: LogicalOperator, join_op: JoinOperator, is_right: bool
+    ) -> bool:
+        """Check if operator is a specific input (left or right) of a join.
+
+        Args:
+            op: The operator to check.
+            join_op: The JoinOperator.
+            is_right: If True, check if op is right input. If False, check left.
+
+        Returns:
+            True if op is the specified input of the join.
+        """
+        # JoinOperator inherits from BinaryLogicalOperator
+        # which has in_operator_left and in_operator_right properties
+        if is_right:
+            target_input = join_op.in_operator_right
+        else:
+            target_input = join_op.in_operator_left
+
+        if target_input is None:
+            return False
+
+        # Check if op is the target input or an ancestor of it
+        return op is target_input or self._is_ancestor_of(op, target_input)
+
+    def _is_ancestor_of(self, ancestor: LogicalOperator, descendant: LogicalOperator) -> bool:
+        """Check if ancestor is an upstream operator of descendant.
+
+        Args:
+            ancestor: Potential ancestor operator.
+            descendant: Potential descendant operator.
+
+        Returns:
+            True if ancestor is upstream of descendant.
+        """
+        # Check all inputs of descendant
+        for in_op in descendant._in_operators:
+            if in_op is ancestor:
+                return True
+            if self._is_ancestor_of(ancestor, in_op):
+                return True
+        return False
+
+    def _can_reach_operator(
+        self,
+        start: LogicalOperator,
+        target: LogicalOperator,
+        visited: set[int],
+    ) -> bool:
+        """Check if target is reachable from start.
+
+        Args:
+            start: Starting operator.
+            target: Target operator to find.
+            visited: Set of visited operator IDs.
+
+        Returns:
+            True if target is reachable from start.
+        """
+        op_id = id(start)
+        if op_id in visited:
+            return False
+        visited.add(op_id)
+
+        if start is target:
+            return True
+
+        for out_op in start._out_operators:
+            if self._can_reach_operator(out_op, target, visited):
+                return True
+
+        return False
 
     def _is_in_recursive_path(self, ds: DataSourceOperator) -> bool:
         """Check if a DataSource is involved in a recursive path pattern.

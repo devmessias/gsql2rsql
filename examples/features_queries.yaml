@@ -666,3 +666,113 @@ examples:
         Base case: WHERE (e.since) > (2010)
         Recursive: WHERE depth < 5 AND (e.since) > (2010)
         Join: WHERE depth_bounds AND (sink.age) > (60)
+
+  # =============================================================================
+  # CONJUNCTION SPLITTING FOR UNDIRECTED EDGES
+  # =============================================================================
+  # These examples demonstrate how the optimizer splits AND conjunctions
+  # and pushes predicates to their respective DataSources before joins.
+  # This is critical for performance in undirected relationship patterns.
+
+  - description: "Undirected both filters pushdown - split AND to both sources"
+    application: "Features: Conjunction Splitting Pushdown"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Alice' AND f.age > 30
+      RETURN p.name, f.name, f.age
+    notes: |
+      BEFORE optimization (suboptimal):
+        Selection(p.name='Alice' AND f.age>30) sits AFTER the join
+        → Joins ALL Person rows, then filters.
+
+      AFTER optimization (with conjunction splitting):
+        - p.name = 'Alice' → pushed to DataSource(p)
+        - f.age > 30 → pushed to DataSource(f)
+        → Both filters applied BEFORE the join!
+
+      SQL Pattern (optimized):
+        FROM (SELECT ... FROM Person WHERE name = 'Alice') AS _left
+        JOIN ...
+        JOIN (SELECT ... FROM Person WHERE age > 30) AS _right
+
+      PERFORMANCE: Dramatically reduces join cardinality.
+
+  - description: "Undirected partial pushdown - one pushed, one cross-variable"
+    application: "Features: Partial Conjunction Pushdown"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.age > 25 AND p.name = f.name
+      RETURN p.name, f.name
+    notes: |
+      The optimizer splits the AND conjunction:
+        - p.age > 25 → PUSHED to DataSource(p) (single-variable)
+        - p.name = f.name → KEPT in Selection (cross-variable, cannot push!)
+
+      BENEFIT: Even partial pushdown reduces join input size.
+      The cross-variable predicate (p.name = f.name) must be evaluated
+      after the join because it compares values from both sides.
+
+      SQL Pattern:
+        FROM (SELECT ... FROM Person WHERE age > 25) AS _left  -- PUSHED
+        JOIN ...
+        WHERE p.name = f.name  -- KEPT (cross-variable)
+
+  - description: "Undirected multiple same-variable predicates combined"
+    application: "Features: Predicate Combination"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Bob' AND p.age > 18 AND p.active = true AND f.salary > 50000
+      RETURN p.id, f.id
+    notes: |
+      Multiple predicates for the same variable are combined with AND:
+        - p: (name='Bob' AND age>18 AND active=true) → pushed to DataSource(p)
+        - f: (salary>50000) → pushed to DataSource(f)
+
+      OPTIMIZATION: All predicates pushed, SelectionOperator removed entirely!
+
+      SQL Pattern:
+        FROM (SELECT ... FROM Person WHERE name='Bob' AND age>18 AND active=true) AS _left
+        JOIN ...
+        JOIN (SELECT ... FROM Person WHERE salary > 50000) AS _right
+
+  - description: "Undirected with OR predicate - cannot split"
+    application: "Features: OR Predicate Handling"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)
+      WHERE p.name = 'Alice' OR f.age > 30
+      RETURN p.name, f.name
+    notes: |
+      OR predicates CANNOT be split! This is algebraically unsafe:
+        σ_{p(A) ∨ q(B)}(A ⋈ B) ≢ σ_{p(A)}(A) ⋈ σ_{q(B)}(B)
+
+      If we pushed, we'd miss rows where:
+        - p.name != 'Alice' but f.age > 30
+
+      RESULT: Entire predicate stays in Selection (no pushdown).
+
+      TODO: Future optimization could rewrite as UNION:
+        (MATCH ... WHERE p.name='Alice')
+        UNION
+        (MATCH ... WHERE f.age > 30)
+
+  - description: "Undirected three-way mixed filters"
+    application: "Features: Complex Conjunction Splitting"
+    query: |
+      MATCH (p:Person)-[:KNOWS]-(f:Person)-[:WORKS_AT]->(c:Company)
+      WHERE p.age > 25 AND f.salary > 50000 AND c.industry = 'Tech'
+      RETURN p.name, f.name, c.name
+    notes: |
+      Three-way join with filters on all three entities:
+        - p.age > 25 → pushed to DataSource(p)
+        - f.salary > 50000 → pushed to DataSource(f)
+        - c.industry = 'Tech' → pushed to DataSource(c)
+
+      BENEFIT: All three table scans are filtered before any joins!
+      The SelectionOperator is completely removed.
+
+      SQL Pattern:
+        FROM (SELECT ... FROM Person WHERE age > 25) AS p
+        JOIN ...
+        JOIN (SELECT ... FROM Person WHERE salary > 50000) AS f
+        JOIN ...
+        JOIN (SELECT ... FROM Company WHERE industry = 'Tech') AS c

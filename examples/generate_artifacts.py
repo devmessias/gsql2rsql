@@ -151,7 +151,11 @@ def transpile_query(query: str, schema_provider: Any, description: str, query_id
 
     # Step 2: Generate Logical Plan
     try:
+        from gsql2rsql.planner.subquery_optimizer import optimize_plan
+
         plan = LogicalPlan.process_query_tree(ast, schema_provider)
+        # Apply optimizations (predicate pushdown, subquery flattening)
+        optimize_plan(plan)
         # Use dump_graph() for structured plan output
         result.logical_plan = plan.dump_graph()
     except Exception as e:
