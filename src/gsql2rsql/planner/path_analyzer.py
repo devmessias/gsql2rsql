@@ -127,6 +127,14 @@ class PathUsageInfo:
     needs_node_collection: bool = False
     edge_predicates: list[QueryExpression] = field(default_factory=list)
     edge_lambda_variable: str = ""
+    # Track the original ALL expressions that were pushed down.
+    # These should be REMOVED from the WHERE clause since they're now
+    # handled by the CTE's WHERE clause (predicate pushdown).
+    #
+    # Example: If we push down ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+    # into the CTE, we should NOT also apply FORALL(path_edges, rel -> rel.amount > 1000)
+    # at the end - that would be redundant.
+    pushed_all_expressions: list[QueryExpression] = field(default_factory=list)
 
     @property
     def has_pushable_predicates(self) -> bool:
@@ -339,6 +347,10 @@ class PathExpressionAnalyzer:
                     info.edge_predicates.append(expr.filter_expression)
                     if not info.edge_lambda_variable:
                         info.edge_lambda_variable = expr.variable_name
+                    # Also store the ORIGINAL ALL expression so it can be
+                    # removed from the WHERE clause after pushdown
+                    # (it becomes redundant - the CTE already filters)
+                    info.pushed_all_expressions.append(expr)
 
         # -----------------------------------------------------------------
         # Case 3: REDUCE expressions - REDUCE(acc = init, var IN list | expr)
@@ -518,3 +530,81 @@ def rewrite_predicate_for_edge_alias(
     # For other expression types, return as-is
     # (values, literals, etc. don't need rewriting)
     return predicate
+
+
+def remove_pushed_predicates(
+    where_expr: QueryExpression | None,
+    pushed_expressions: list[QueryExpression],
+) -> QueryExpression | None:
+    """Remove pushed-down predicates from the WHERE clause.
+
+    When we push ALL() predicates into the CTE, they become redundant in the
+    final WHERE clause. This function removes them to avoid unnecessary
+    FORALL evaluations.
+
+    BEFORE (redundant):
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  WITH RECURSIVE paths AS (                                      │
+    │    ...WHERE e.amount > 1000...      ← Predicate in CTE          │
+    │  )                                                              │
+    │  SELECT ... WHERE FORALL(path_edges, r -> r.amount > 1000)      │
+    │                   ↑ REDUNDANT! CTE already filtered this        │
+    └─────────────────────────────────────────────────────────────────┘
+
+    AFTER (optimized):
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  WITH RECURSIVE paths AS (                                      │
+    │    ...WHERE e.amount > 1000...      ← Predicate in CTE          │
+    │  )                                                              │
+    │  SELECT ... WHERE (other conditions only)                       │
+    │             ↑ No redundant FORALL - paths already filtered!     │
+    └─────────────────────────────────────────────────────────────────┘
+
+    Args:
+        where_expr: The original WHERE clause expression
+        pushed_expressions: List of QueryExpressionListPredicate that were pushed
+
+    Returns:
+        Modified WHERE expression with pushed predicates removed,
+        or None if all predicates were removed.
+
+    Example:
+        Input:  a.x > 1 AND ALL(r IN relationships(path) WHERE r.amount > 1000)
+        Pushed: [ALL(r IN relationships(path) WHERE r.amount > 1000)]
+        Output: a.x > 1
+    """
+    if where_expr is None or not pushed_expressions:
+        return where_expr
+
+    # Check if the entire expression is a pushed predicate
+    for pushed in pushed_expressions:
+        if where_expr is pushed:
+            return None  # Entire WHERE was just the pushed predicate
+
+    # Handle binary expressions (AND/OR)
+    if isinstance(where_expr, QueryExpressionBinary):
+        if where_expr.operator and where_expr.operator.name == BinaryOperator.AND:
+            # Recursively remove from both sides
+            left = remove_pushed_predicates(where_expr.left_expression, pushed_expressions)
+            right = remove_pushed_predicates(where_expr.right_expression, pushed_expressions)
+
+            # If both sides were removed, return None
+            if left is None and right is None:
+                return None
+            # If only left was removed, return right
+            if left is None:
+                return right
+            # If only right was removed, return left
+            if right is None:
+                return left
+            # If nothing was removed, return as-is
+            if left is where_expr.left_expression and right is where_expr.right_expression:
+                return where_expr
+            # Otherwise, create a new AND with the remaining parts
+            from copy import copy
+            new_and = copy(where_expr)
+            new_and.left_expression = left
+            new_and.right_expression = right
+            return new_and
+
+    return where_expr

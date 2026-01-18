@@ -45,7 +45,10 @@ from gsql2rsql.planner.operators import (
     StartLogicalOperator,
     UnwindOperator,
 )
-from gsql2rsql.planner.path_analyzer import PathExpressionAnalyzer
+from gsql2rsql.planner.path_analyzer import (
+    PathExpressionAnalyzer,
+    remove_pushed_predicates,
+)
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema
 
 
@@ -444,8 +447,52 @@ class LogicalPlan:
                 f"has_pushable_predicates={path_info.has_pushable_predicates}"
             )
 
+        # =====================================================================
+        # REMOVE REDUNDANT PREDICATES
+        # =====================================================================
+        # If we pushed predicates into the CTE, remove them from the WHERE
+        # clause to avoid redundant FORALL evaluations.
+        #
+        # Example transformation:
+        #   BEFORE: WHERE a.x > 1 AND ALL(r IN relationships(path) WHERE r.amt > 1000)
+        #   AFTER:  WHERE a.x > 1
+        #
+        # The ALL predicate is now handled by the CTE's WHERE clause, so the
+        # FORALL in the final query is redundant.
+        # =====================================================================
+        if path_info.pushed_all_expressions:
+            match_clause.where_expression = remove_pushed_predicates(
+                match_clause.where_expression,
+                path_info.pushed_all_expressions,
+            )
+            if self._logger:
+                self._logger.log(
+                    f"Removed {len(path_info.pushed_all_expressions)} pushed predicates "
+                    f"from WHERE clause"
+                )
+
         # Create recursive traversal operator with optimized settings
         # collect_edges is now data-driven based on actual path usage
+        #
+        # ═══════════════════════════════════════════════════════════════════
+        # PREDICATE PUSHDOWN INTEGRATION
+        # ═══════════════════════════════════════════════════════════════════
+        #
+        # The PathExpressionAnalyzer extracts predicates from ALL() expressions
+        # that can be pushed into the recursive CTE. For example:
+        #
+        #   WHERE ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+        #
+        # Becomes:
+        #   edge_filter: rel.amount > 1000
+        #   edge_filter_lambda_var: "rel" (needed for rewriting to "e.amount")
+        #
+        # The renderer uses these to add WHERE clauses inside the CTE,
+        # preventing invalid paths from being explored in the first place.
+        #
+        # See RecursiveTraversalOperator docstring for detailed optimization
+        # diagrams showing the performance impact.
+        # ═══════════════════════════════════════════════════════════════════
         recursive_op = RecursiveTraversalOperator(
             edge_types=edge_types,
             source_node_type=source_node.entity_name,
@@ -462,8 +509,9 @@ class LogicalPlan:
             # Optimization: Only collect edges when relationships(path) is used
             collect_edges=path_info.needs_edge_collection,
             collect_nodes=path_info.needs_node_collection,
-            # TODO: Use path_info.edge_predicates for predicate pushdown
-            # edge_filter=path_info.combined_edge_predicate,
+            # Predicate pushdown: Filter edges DURING CTE recursion
+            edge_filter=path_info.combined_edge_predicate,
+            edge_filter_lambda_var=path_info.edge_lambda_variable,
         )
         recursive_op.add_in_operator(source_ds)
         source_ds.add_out_operator(recursive_op)

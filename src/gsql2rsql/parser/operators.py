@@ -187,6 +187,7 @@ class Function(Enum):
     # Path functions
     NODES = auto()  # nodes(path) -> returns array of node IDs
     RELATIONSHIPS = auto()  # relationships(path) -> returns array of edge structs
+    LENGTH = auto()  # length(path) -> number of relationships (edges) in path
 
     # Math functions
     ABS = auto()
@@ -271,7 +272,7 @@ FUNCTIONS: dict[str, FunctionInfo] = {
     # List/Array functions
     "range": FunctionInfo(Function.RANGE, 2, 1),  # RANGE(start, end[, step])
     "size": FunctionInfo(Function.SIZE, 1),  # SIZE works for both strings and arrays
-    "length": FunctionInfo(Function.SIZE, 1),  # LENGTH is alias for SIZE in Cypher
+    "length": FunctionInfo(Function.LENGTH, 1),  # LENGTH(path) = number of edges (hops)
     # Path functions
     "nodes": FunctionInfo(Function.NODES, 1),  # nodes(path) -> array of node IDs
     "relationships": FunctionInfo(Function.RELATIONSHIPS, 1),  # rels(path) -> array of edges

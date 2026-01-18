@@ -452,7 +452,7 @@ class SetOperator(BinaryLogicalOperator):
 
 
 class RecursiveTraversalOperator(LogicalOperator):
-    """Operator for recursive traversal (BFS/DFS with variable-length paths).
+    r"""Operator for recursive traversal (BFS/DFS with variable-length paths).
 
     Supports path accumulation for nodes(path) and relationships(path) functions.
     When path_variable is set, the CTE accumulates:
@@ -462,6 +462,82 @@ class RecursiveTraversalOperator(LogicalOperator):
     This enables HoF predicates like:
     - ALL(rel IN relationships(path) WHERE rel.amount > 1000)
     - [n IN nodes(path) | n.id]
+
+    PREDICATE PUSHDOWN OPTIMIZATION
+    ================================
+
+    The `edge_filter` field enables a critical optimization called "Predicate Pushdown"
+    that can dramatically reduce memory usage and execution time for path queries.
+
+    Problem: Exponential Path Growth
+    --------------------------------
+
+    Without pushdown, recursive CTEs explore ALL possible paths first, then filter:
+
+                                        A
+                                       /|\
+                   depth=1 →  $100    $50    $2000
+                               /|\     |       |
+                  depth=2 →  $20 $30  $15    $5000
+                              ...     ...     ...
+                               ↓       ↓       ↓
+                        ═══════════════════════════
+                        AFTER CTE: 10,000+ paths
+                        ═══════════════════════════
+                               ↓
+                        FORALL(edges, e -> e.amount > 1000)
+                               ↓
+                        ═══════════════════════════
+                        FINAL: Only 2 paths survive!
+                        ═══════════════════════════
+
+    This is wasteful: we explored 10,000 paths but kept only 2.
+
+    Solution: Push Filter INTO the CTE
+    -----------------------------------
+
+    With predicate pushdown, we filter DURING recursion:
+
+                                        A
+                                        |
+                   depth=1 →         $2000  ← Only edges with amount > 1000
+                                        |
+                  depth=2 →          $5000
+                                        |
+                        ═══════════════════════════
+                        AFTER CTE: Only 2 paths (already filtered!)
+                        ═══════════════════════════
+
+    SQL Comparison:
+
+    BEFORE (no pushdown):
+        WITH RECURSIVE paths AS (
+          SELECT ... FROM Transfer e          -- ALL edges
+          UNION ALL
+          SELECT ... FROM paths p JOIN Transfer e ...  -- ALL paths
+        )
+        SELECT ... WHERE FORALL(path_edges, r -> r.amount > 1000)
+
+    AFTER (with pushdown):
+        WITH RECURSIVE paths AS (
+          SELECT ... FROM Transfer e
+            WHERE e.amount > 1000             ← PREDICATE IN BASE CASE
+          UNION ALL
+          SELECT ... FROM paths p JOIN Transfer e ...
+            WHERE e.amount > 1000             ← PREDICATE IN RECURSIVE CASE
+        )
+        SELECT ...  -- No FORALL needed!
+
+    When is Pushdown Safe?
+    ----------------------
+
+    Only ALL() predicates can be pushed down:
+    - ALL(r IN relationships(path) WHERE r.amount > 1000)
+      → "Every edge must satisfy" = filter each edge individually ✓
+
+    ANY() predicates CANNOT be pushed:
+    - ANY(r IN relationships(path) WHERE r.flagged)
+      → "At least one edge must satisfy" = need complete path first ✗
     """
 
     def __init__(
@@ -481,6 +557,8 @@ class RecursiveTraversalOperator(LogicalOperator):
         collect_nodes: bool = False,
         collect_edges: bool = False,
         edge_properties: list[str] | None = None,
+        edge_filter: QueryExpression | None = None,
+        edge_filter_lambda_var: str = "",
     ) -> None:
         super().__init__()
         self.edge_types = edge_types
@@ -499,6 +577,11 @@ class RecursiveTraversalOperator(LogicalOperator):
         self.collect_nodes = collect_nodes or bool(path_variable)
         self.collect_edges = collect_edges or bool(path_variable)
         self.edge_properties = edge_properties or []
+
+        # Predicate pushdown for early path filtering
+        # See class docstring for detailed explanation of this optimization
+        self.edge_filter = edge_filter
+        self.edge_filter_lambda_var = edge_filter_lambda_var
 
     @property
     def depth(self) -> int:

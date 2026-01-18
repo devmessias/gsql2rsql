@@ -50,6 +50,7 @@ from gsql2rsql.planner.operators import (
     SetOperator,
     UnwindOperator,
 )
+from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
 from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, ValueField
 from gsql2rsql.renderer.schema_provider import (
@@ -320,6 +321,43 @@ class SQLRenderer:
 
         When path accumulation is enabled (collect_edges=True), the CTE also
         accumulates an array of edge STRUCTs for relationships(path) access.
+
+        PREDICATE PUSHDOWN OPTIMIZATION
+        ================================
+
+        When `op.edge_filter` is set, we apply it INSIDE the CTE to enable
+        early path elimination. This is a critical optimization for queries like:
+
+            MATCH path = (a)-[:TRANSFER*1..5]->(b)
+            WHERE ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+
+        WITHOUT PUSHDOWN (exponential blowup):
+        ┌─────────────────────────────────────────────────────────────────┐
+        │  WITH RECURSIVE paths AS (                                      │
+        │    SELECT ... FROM Transfer e           ← Collects ALL edges    │
+        │    UNION ALL                                                    │
+        │    SELECT ... FROM paths JOIN Transfer  ← Explores ALL paths    │
+        │  )                                                              │
+        │  SELECT ... WHERE FORALL(edges, x -> x.amount > 1000)           │
+        │                          ↑                                      │
+        │                   Filter applied AFTER collecting 10K+ paths!   │
+        └─────────────────────────────────────────────────────────────────┘
+
+        WITH PUSHDOWN (controlled growth):
+        ┌─────────────────────────────────────────────────────────────────┐
+        │  WITH RECURSIVE paths AS (                                      │
+        │    SELECT ... FROM Transfer e                                   │
+        │      WHERE e.amount > 1000              ← Filter in BASE case   │
+        │    UNION ALL                                                    │
+        │    SELECT ... FROM paths JOIN Transfer e                        │
+        │      WHERE e.amount > 1000              ← Filter in RECURSIVE   │
+        │  )                                                              │
+        │  SELECT ...  ← Only valid paths reach here!                     │
+        └─────────────────────────────────────────────────────────────────┘
+
+        The edge_filter predicate comes from PathExpressionAnalyzer which
+        extracts it from ALL() expressions and rewrites variable names
+        (e.g., "rel.amount" → "e.amount") for use inside the CTE.
         """
         from gsql2rsql.common.schema import EdgeSchema
 
@@ -421,6 +459,34 @@ class SQLRenderer:
                 struct_parts.append(f"'{prop}', {alias}.{prop}")
             return f"NAMED_STRUCT({', '.join(struct_parts)})"
 
+        # ═══════════════════════════════════════════════════════════════════
+        # PREDICATE PUSHDOWN: Render edge filter for use in WHERE clauses
+        # ═══════════════════════════════════════════════════════════════════
+        #
+        # If we have an edge_filter from PathExpressionAnalyzer, we need to:
+        # 1. Rewrite the lambda variable (e.g., "rel") to edge alias ("e")
+        # 2. Render it to SQL with DIRECT column references (e.g., e.amount)
+        # 3. Add it to BOTH base case AND recursive case WHERE clauses
+        #
+        # Example transformation:
+        #   Input:  ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+        #   edge_filter: rel.amount > 1000
+        #   Rewritten: e.amount > 1000
+        #   Output SQL: WHERE ... AND e.amount > 1000
+        #
+        # IMPORTANT: We use _render_edge_filter_expression instead of
+        # _render_expression because the CTE uses direct column references
+        # (e.g., "e.amount") not entity-prefixed aliases (e.g., "__e_amount").
+        edge_filter_sql: str | None = None
+        if op.edge_filter and op.edge_filter_lambda_var:
+            # Rewrite variable names: rel.amount -> e.amount
+            rewritten_filter = rewrite_predicate_for_edge_alias(
+                op.edge_filter,
+                op.edge_filter_lambda_var,
+                edge_alias="e",
+            )
+            edge_filter_sql = self._render_edge_filter_expression(rewritten_filter)
+
         # Build the recursive CTE
         lines: list[str] = []
         lines.append(f"  {cte_name} AS (")
@@ -479,6 +545,13 @@ class SQLRenderer:
                 where_parts.append(f"({combined_filter})")
             if op.start_node_filter:
                 where_parts.append(f"e.{source_id_col} = {op.start_node_filter}")
+            # ═══════════════════════════════════════════════════════════════
+            # PREDICATE PUSHDOWN: Apply edge filter in base case
+            # ═══════════════════════════════════════════════════════════════
+            # This filters edges BEFORE they enter the CTE, preventing
+            # invalid paths from being explored in the first place.
+            if edge_filter_sql:
+                where_parts.append(edge_filter_sql)
             if where_parts:
                 base_sql.append(f"    WHERE {' AND '.join(where_parts)}")
 
@@ -505,6 +578,9 @@ class SQLRenderer:
                     filters.append(edge_table.filter)
                 if op.start_node_filter:
                     filters.append(f"e.{source_id_col} = {op.start_node_filter}")
+                # PREDICATE PUSHDOWN: Apply edge filter in multi-table base case
+                if edge_filter_sql:
+                    filters.append(edge_filter_sql)
                 if filters:
                     base_sql.append(f"    WHERE {' AND '.join(filters)}")
 
@@ -548,6 +624,17 @@ class SQLRenderer:
             )
             if combined_filter:
                 where_parts.append(f"({combined_filter})")
+            # ═══════════════════════════════════════════════════════════════
+            # PREDICATE PUSHDOWN: Apply edge filter in recursive case
+            # ═══════════════════════════════════════════════════════════════
+            # This is the key optimization: by filtering edges DURING
+            # recursion, we prune entire subtrees of invalid paths.
+            #
+            # Example: For rel.amount > 1000
+            # - Without pushdown: explore 10,000 paths, filter to 2
+            # - With pushdown: only explore the 2 valid paths from start
+            if edge_filter_sql:
+                where_parts.append(edge_filter_sql)
             rec_sql.append(f"    WHERE {where_parts[0]}")
             for wp in where_parts[1:]:
                 rec_sql.append(f"      AND {wp}")
@@ -582,6 +669,9 @@ class SQLRenderer:
                 )
                 if edge_table.filter:
                     where_parts.append(edge_table.filter)
+                # PREDICATE PUSHDOWN: Apply edge filter in multi-table recursive case
+                if edge_filter_sql:
+                    where_parts.append(edge_filter_sql)
                 rec_sql.append(f"    WHERE {where_parts[0]}")
                 for wp in where_parts[1:]:
                     rec_sql.append(f"      AND {wp}")
@@ -654,9 +744,28 @@ class SQLRenderer:
         depth: int,
     ) -> str:
         """
-        Render a JOIN between recursive CTE and target node table.
+        Render a JOIN between recursive CTE and BOTH source and target node tables.
 
-        Generates proper JOIN condition connecting end_node to target id.
+        This method generates a query that:
+        1. JOINs the recursive CTE with the TARGET node (end_node)
+        2. JOINs the recursive CTE with the SOURCE node (start_node)
+
+        Both JOINs are necessary because:
+        - Target node properties are needed for filtering/projection on the end node
+        - Source node properties are needed for filtering/projection on the start node
+
+        Example output:
+            SELECT
+               sink.id AS __b_id,
+               sink.name AS __b_name,
+               source.id AS __a_id,
+               source.name AS __a_name,
+               p.path,
+               p.path_edges
+            FROM paths_1 p
+            JOIN Account sink ON sink.id = p.end_node
+            JOIN Account source ON source.id = p.start_node
+            WHERE p.depth >= 2 AND p.depth <= 4
         """
         indent = self._indent(depth)
         cte_name = getattr(recursive_op, "cte_name", "paths")
@@ -672,37 +781,56 @@ class SQLRenderer:
                 f"No table descriptor for {target_entity.entity_name}"
             )
 
-        # Get target node's ID column
-        node_schema = self._graph_def.get_node_definition(target_entity.entity_name)
-        if node_schema and node_schema.node_id_property:
-            target_id_col = node_schema.node_id_property.property_name
+        # Get target node's ID column and schema
+        target_node_schema = self._graph_def.get_node_definition(target_entity.entity_name)
+        if target_node_schema and target_node_schema.node_id_property:
+            target_id_col = target_node_schema.node_id_property.property_name
         else:
             target_id_col = "id"
 
-        # Get alias for target node
+        # Get alias for target node (sink) and source node
         target_alias = target_entity.alias or "n"
-        # Get alias for source node from recursive op
         source_alias = recursive_op.source_alias or "src"
+
+        # Get source node's table info (may be same type as target)
+        source_node_type = recursive_op.source_node_type
+        source_table = self._graph_def.get_sql_table_descriptors(source_node_type)
+        if not source_table:
+            # Fallback to target table if source not found
+            source_table = target_table
+
+        # Get source node's ID column and schema
+        source_node_schema = self._graph_def.get_node_definition(source_node_type)
+        if source_node_schema and source_node_schema.node_id_property:
+            source_id_col = source_node_schema.node_id_property.property_name
+        else:
+            source_id_col = "id"
 
         lines: list[str] = []
         lines.append(f"{indent}SELECT")
 
-        # Project fields from target node
-        # Get all properties from the node schema
+        # Project fields from TARGET node (sink)
         field_lines: list[str] = []
-        if node_schema:
-            field_lines.append(f"n.{target_id_col} AS __{target_alias}_{target_id_col}")
-            for prop in node_schema.properties:
+        if target_node_schema:
+            field_lines.append(f"sink.{target_id_col} AS __{target_alias}_{target_id_col}")
+            for prop in target_node_schema.properties:
                 prop_name = prop.property_name
                 if prop_name != target_id_col:
-                    field_lines.append(f"n.{prop_name} AS __{target_alias}_{prop_name}")
+                    field_lines.append(f"sink.{prop_name} AS __{target_alias}_{prop_name}")
         else:
-            field_lines.append(f"n.{target_id_col} AS __{target_alias}_id")
+            field_lines.append(f"sink.{target_id_col} AS __{target_alias}_id")
 
-        # Project source node's id (start_node) with proper alias for WHERE
-        field_lines.append(f"p.start_node AS __{source_alias}_id")
+        # Project fields from SOURCE node
+        if source_node_schema:
+            field_lines.append(f"source.{source_id_col} AS __{source_alias}_{source_id_col}")
+            for prop in source_node_schema.properties:
+                prop_name = prop.property_name
+                if prop_name != source_id_col:
+                    field_lines.append(f"source.{prop_name} AS __{source_alias}_{prop_name}")
+        else:
+            field_lines.append(f"source.{source_id_col} AS __{source_alias}_id")
 
-        # Also include path info from CTE
+        # Include path info from CTE
         field_lines.append("p.start_node")
         field_lines.append("p.end_node")
         field_lines.append("p.depth")
@@ -718,9 +846,13 @@ class SQLRenderer:
         # FROM recursive CTE
         lines.append(f"{indent}FROM {cte_name} p")
 
-        # JOIN with target node table
-        lines.append(f"{indent}JOIN {target_table.full_table_name} n")
-        lines.append(f"{indent}  ON n.{target_id_col} = p.end_node")
+        # JOIN with TARGET node table (end_node = sink)
+        lines.append(f"{indent}JOIN {target_table.full_table_name} sink")
+        lines.append(f"{indent}  ON sink.{target_id_col} = p.end_node")
+
+        # JOIN with SOURCE node table (start_node = source)
+        lines.append(f"{indent}JOIN {source_table.full_table_name} source")
+        lines.append(f"{indent}  ON source.{source_id_col} = p.start_node")
 
         # WHERE clause for depth bounds
         where_parts = [f"p.depth >= {min_depth}"]
@@ -1363,6 +1495,13 @@ class SQLRenderer:
         elif func == Function.SIZE:
             # SIZE works for both strings (LENGTH) and arrays (SIZE) in Databricks
             return f"SIZE({params[0]})" if params else "0"
+        elif func == Function.LENGTH:
+            # LENGTH(path) returns number of relationships (edges) in the path
+            # In our CTE, path is an array of node IDs, so:
+            #   - SIZE(path) = number of nodes
+            #   - SIZE(path) - 1 = number of edges (hops)
+            # Example: path A→B→C has nodes [A,B,C], SIZE=3, edges=2
+            return f"(SIZE({params[0]}) - 1)" if params else "0"
         elif func == Function.NODES:
             # nodes(path) -> path (array of node IDs from recursive CTE)
             # The parameter should be a path variable reference
@@ -2126,6 +2265,112 @@ class SQLRenderer:
             c if c.isalnum() or c == "_" else "" for c in prefix
         )
         return f"__{clean_prefix}_{field_name}"
+
+    def _render_edge_filter_expression(self, expr: QueryExpression) -> str:
+        """Render an edge filter expression using DIRECT column references.
+
+        This method is specifically for rendering predicates that have been
+        pushed down into the recursive CTE. Unlike _render_expression, this
+        renders property accesses as direct SQL column references (e.g., e.amount)
+        rather than entity-prefixed aliases (e.g., __e_amount).
+
+        This is necessary because inside the CTE, we reference edge columns
+        directly from the edge table (aliased as 'e'), not through the
+        entity field aliasing system used for JOINs.
+
+        Example:
+            Input: QueryExpressionProperty(variable_name="e", property_name="amount")
+            _render_expression output: "__e_amount" (wrong for CTE)
+            This method output: "e.amount" (correct for CTE)
+
+        Args:
+            expr: The expression to render (already rewritten with 'e' prefix)
+
+        Returns:
+            SQL string with direct column references
+        """
+        if isinstance(expr, QueryExpressionProperty):
+            # Render as direct column reference: e.amount, e.timestamp
+            if expr.property_name:
+                return f"{expr.variable_name}.{expr.property_name}"
+            return expr.variable_name
+
+        elif isinstance(expr, QueryExpressionBinary):
+            # Recursively render binary expressions
+            if not expr.operator or not expr.left_expression or not expr.right_expression:
+                return "NULL"
+            left = self._render_edge_filter_expression(expr.left_expression)
+            right = self._render_edge_filter_expression(expr.right_expression)
+            pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
+            return pattern.format(left, right)
+
+        elif isinstance(expr, QueryExpressionFunction):
+            # Render function calls with recursive parameter rendering
+            params = [self._render_edge_filter_expression(p) for p in expr.parameters]
+            func = expr.function
+
+            # Handle common functions
+            if func == Function.DATETIME:
+                return "CURRENT_TIMESTAMP()"
+            elif func == Function.DATE:
+                if params:
+                    return f"DATE({params[0]})"
+                return "CURRENT_DATE()"
+            elif func == Function.DURATION:
+                # Convert ISO 8601 duration to INTERVAL
+                if params:
+                    duration_str = params[0].strip("'\"")
+                    return self._convert_duration_to_interval(duration_str)
+                return "INTERVAL 0 DAY"
+            elif func == Function.NOT:
+                return f"NOT ({params[0]})" if params else "NOT (NULL)"
+            else:
+                # Default function rendering
+                func_name = func.name if func else "UNKNOWN"
+                return f"{func_name}({', '.join(params)})"
+
+        elif isinstance(expr, QueryExpressionValue):
+            # Render literal values
+            if expr.value is None:
+                return "NULL"
+            elif isinstance(expr.value, str):
+                escaped = expr.value.replace("'", "''")
+                return f"'{escaped}'"
+            elif isinstance(expr.value, bool):
+                return "TRUE" if expr.value else "FALSE"
+            else:
+                return str(expr.value)
+
+        # Fallback: try the regular renderer (shouldn't normally reach here)
+        # This is a safety net for expression types we haven't handled
+        return str(expr)
+
+    def _convert_duration_to_interval(self, duration_str: str) -> str:
+        """Convert ISO 8601 duration string to Databricks INTERVAL.
+
+        Examples:
+            P7D -> INTERVAL 7 DAY
+            P1M -> INTERVAL 1 MONTH
+            PT1H -> INTERVAL 1 HOUR
+        """
+        import re
+
+        # Simple patterns for common durations
+        if match := re.match(r"P(\d+)D", duration_str):
+            return f"INTERVAL {match.group(1)} DAY"
+        elif match := re.match(r"P(\d+)M", duration_str):
+            return f"INTERVAL {match.group(1)} MONTH"
+        elif match := re.match(r"P(\d+)Y", duration_str):
+            return f"INTERVAL {match.group(1)} YEAR"
+        elif match := re.match(r"PT(\d+)H", duration_str):
+            return f"INTERVAL {match.group(1)} HOUR"
+        elif match := re.match(r"PT(\d+)M", duration_str):
+            return f"INTERVAL {match.group(1)} MINUTE"
+        elif match := re.match(r"PT(\d+)S", duration_str):
+            return f"INTERVAL {match.group(1)} SECOND"
+        else:
+            # Default to days if format not recognized
+            return f"INTERVAL 1 DAY"
 
     def _render_map_literal(
         self, expr: QueryExpressionMapLiteral, context_op: LogicalOperator
