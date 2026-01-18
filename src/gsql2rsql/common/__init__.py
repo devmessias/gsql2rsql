@@ -6,6 +6,7 @@ from gsql2rsql.common.exceptions import (
     TranspilerInternalErrorException,
     TranspilerNotSupportedException,
     TranspilerSyntaxErrorException,
+    UnsupportedQueryPatternError,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "TranspilerBindingException",
     "TranspilerNotSupportedException",
     "TranspilerInternalErrorException",
+    "UnsupportedQueryPatternError",
 ]

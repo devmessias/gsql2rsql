@@ -38,6 +38,7 @@ from gsql2rsql.parser.operators import (
 )
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
+    AggregationBoundaryOperator,
     DataSourceOperator,
     JoinKeyPairType,
     JoinOperator,
@@ -52,7 +53,7 @@ from gsql2rsql.planner.operators import (
 )
 from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
 from gsql2rsql.common.schema import EdgeSchema
-from gsql2rsql.planner.schema import EntityField, EntityType, ValueField
+from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 from gsql2rsql.renderer.schema_provider import (
     ISQLDBSchemaProvider,
     SQLTableDescriptor,
@@ -159,6 +160,7 @@ class SQLRenderer:
         *,
         graph_schema_provider: ISQLDBSchemaProvider | None = None,
         db_schema_provider: ISQLDBSchemaProvider | None = None,
+        enable_column_pruning: bool = True,
     ) -> None:
         """
         Initialize the SQL renderer.
@@ -181,8 +183,10 @@ class SQLRenderer:
         self._cte_counter = 0
         # Column pruning: set of required column aliases (e.g., "__p_name")
         self._required_columns: set[str] = set()
+        # Bare variable references (e.g., "shared_cards") - used for ValueFields
+        self._required_value_fields: set[str] = set()
         # Enable column pruning by default
-        self._enable_column_pruning = True
+        self._enable_column_pruning = enable_column_pruning
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
@@ -202,14 +206,19 @@ class SQLRenderer:
 
         # Column pruning: collect required columns before rendering
         self._required_columns = set()
+        self._required_value_fields = set()
         if self._enable_column_pruning:
             for terminal_op in plan.terminal_operators:
                 self._collect_required_columns(terminal_op)
 
-        # Collect any recursive operators that need CTEs
+        # Collect any operators that need CTEs
+        # Use a shared visited set to avoid duplicates across starting operators
         ctes: list[str] = []
+        visited: set[int] = set()
+        has_recursive_cte = False
         for start_op in plan.starting_operators:
-            self._collect_recursive_ctes(start_op, ctes)
+            has_recursive = self._collect_ctes(start_op, ctes, visited)
+            has_recursive_cte = has_recursive_cte or has_recursive
 
         # Render from the terminal operator
         terminal_op = plan.terminal_operators[0]
@@ -217,19 +226,50 @@ class SQLRenderer:
 
         # Combine CTEs with main query
         if ctes:
-            cte_block = "WITH RECURSIVE\n" + ",\n".join(ctes)
+            # Use WITH RECURSIVE only if there are recursive traversal CTEs
+            cte_keyword = "WITH RECURSIVE" if has_recursive_cte else "WITH"
+            cte_block = f"{cte_keyword}\n" + ",\n".join(ctes)
             return f"{cte_block}\n{main_query}"
 
         return main_query
 
-    def _collect_recursive_ctes(self, op: LogicalOperator, ctes: list[str]) -> None:
-        """Collect recursive CTE definitions from the plan."""
+    def _collect_ctes(
+        self,
+        op: LogicalOperator,
+        ctes: list[str],
+        visited: set[int],
+    ) -> bool:
+        """Collect CTE definitions from the plan.
+
+        Args:
+            op: The operator to start traversal from
+            ctes: List to collect CTE definitions into
+            visited: Set of already-visited operator IDs to avoid duplicates
+
+        Returns:
+            True if any RecursiveTraversalOperator CTEs were found
+        """
+        # Avoid visiting the same operator twice
+        op_id = id(op)
+        if op_id in visited:
+            return False
+        visited.add(op_id)
+
+        has_recursive = False
+
         if isinstance(op, RecursiveTraversalOperator):
             cte = self._render_recursive_cte(op)
             ctes.append(cte)
+            has_recursive = True
+        elif isinstance(op, AggregationBoundaryOperator):
+            cte = self._render_aggregation_boundary_cte(op)
+            ctes.append(cte)
 
         for out_op in op.out_operators:
-            self._collect_recursive_ctes(out_op, ctes)
+            child_has_recursive = self._collect_ctes(out_op, ctes, visited)
+            has_recursive = has_recursive or child_has_recursive
+
+        return has_recursive
 
     def _collect_required_columns(self, op: LogicalOperator) -> None:
         """
@@ -248,6 +288,12 @@ class SQLRenderer:
             if op.order_by:
                 for expr, _ in op.order_by:
                     self._collect_columns_from_expression(expr)
+            # Collect from flattened WHERE clause (filter_expression)
+            if op.filter_expression:
+                self._collect_columns_from_expression(op.filter_expression)
+            # Collect from HAVING clause
+            if op.having_expression:
+                self._collect_columns_from_expression(op.having_expression)
 
         elif isinstance(op, SelectionOperator):
             # Collect columns from filter expression
@@ -256,8 +302,63 @@ class SQLRenderer:
 
         elif isinstance(op, JoinOperator):
             # Join key columns are always required for the join condition
-            # These are handled separately in _render_data_source via join fields
-            pass
+            # We need to add them to _required_columns for column pruning to work
+            # correctly with boundary joins
+            for pair in op.join_pairs:
+                node_alias = pair.node_alias
+                rel_alias = pair.relationship_or_node_alias
+
+                # Find the fields in the input schema
+                node_field = next(
+                    (f for f in op.input_schema if f.field_alias == node_alias),
+                    None,
+                )
+                rel_field = next(
+                    (f for f in op.input_schema if f.field_alias == rel_alias),
+                    None,
+                )
+
+                # Add node's join key column
+                if node_field and isinstance(node_field, EntityField):
+                    if node_field.node_join_field:
+                        node_key = self._get_field_name(
+                            node_alias, node_field.node_join_field.field_alias
+                        )
+                        self._required_columns.add(node_key)
+
+                # Add relationship/node's join key column based on pair type
+                if rel_field and isinstance(rel_field, EntityField):
+                    if pair.pair_type == JoinKeyPairType.SOURCE:
+                        if rel_field.rel_source_join_field:
+                            rel_key = self._get_field_name(
+                                rel_alias, rel_field.rel_source_join_field.field_alias
+                            )
+                            self._required_columns.add(rel_key)
+                    elif pair.pair_type == JoinKeyPairType.SINK:
+                        if rel_field.rel_sink_join_field:
+                            rel_key = self._get_field_name(
+                                rel_alias, rel_field.rel_sink_join_field.field_alias
+                            )
+                            self._required_columns.add(rel_key)
+                    elif pair.pair_type == JoinKeyPairType.NODE_ID:
+                        # Node to node join
+                        if rel_field.node_join_field:
+                            rel_key = self._get_field_name(
+                                rel_alias, rel_field.node_join_field.field_alias
+                            )
+                            self._required_columns.add(rel_key)
+                    elif pair.pair_type in (JoinKeyPairType.EITHER, JoinKeyPairType.BOTH):
+                        # EITHER/BOTH - need both source and sink keys
+                        if rel_field.rel_source_join_field:
+                            source_key = self._get_field_name(
+                                rel_alias, rel_field.rel_source_join_field.field_alias
+                            )
+                            self._required_columns.add(source_key)
+                        if rel_field.rel_sink_join_field:
+                            sink_key = self._get_field_name(
+                                rel_alias, rel_field.rel_sink_join_field.field_alias
+                            )
+                            self._required_columns.add(sink_key)
 
         elif isinstance(op, SetOperator):
             # Recurse into both sides of set operation
@@ -283,9 +384,12 @@ class SQLRenderer:
                 col_alias = self._get_field_name(expr.variable_name, expr.property_name)
                 self._required_columns.add(col_alias)
             elif expr.variable_name:
-                # Just a variable reference (might reference all fields)
-                # We'll handle this conservatively by not pruning
-                pass
+                # Just a variable reference (bare variable like 'shared_cards' or 'p')
+                # For ValueFields, the variable name itself is the column alias
+                # For EntityFields, this represents the whole entity
+                # Mark the variable as required - used to preserve ValueFields
+                # through joins when referenced in outer projections
+                self._required_value_fields.add(expr.variable_name)
         elif isinstance(expr, QueryExpressionBinary):
             if expr.left_expression:
                 self._collect_columns_from_expression(expr.left_expression)
@@ -775,6 +879,8 @@ class SQLRenderer:
             return self._render_recursive_reference(op, depth)
         elif isinstance(op, UnwindOperator):
             return self._render_unwind(op, depth)
+        elif isinstance(op, AggregationBoundaryOperator):
+            return self._render_aggregation_boundary_reference(op, depth)
         else:
             raise TranspilerNotSupportedException(
                 f"Operator type {type(op).__name__}"
@@ -893,14 +999,17 @@ class SQLRenderer:
             field_lines.append(f"sink.{target_id_col} AS __{target_alias}_id")
 
         # Project fields from SOURCE node
-        if source_node_schema:
-            field_lines.append(f"source.{source_id_col} AS __{source_alias}_{source_id_col}")
-            for prop in source_node_schema.properties:
-                prop_name = prop.property_name
-                if prop_name != source_id_col:
-                    field_lines.append(f"source.{prop_name} AS __{source_alias}_{prop_name}")
-        else:
-            field_lines.append(f"source.{source_id_col} AS __{source_alias}_id")
+        # Skip if source_alias == target_alias (circular path like (a)-[*]->(a))
+        # In that case, sink and source are the same entity, so we don't want duplicate columns
+        if source_alias != target_alias:
+            if source_node_schema:
+                field_lines.append(f"source.{source_id_col} AS __{source_alias}_{source_id_col}")
+                for prop in source_node_schema.properties:
+                    prop_name = prop.property_name
+                    if prop_name != source_id_col:
+                        field_lines.append(f"source.{prop_name} AS __{source_alias}_{prop_name}")
+            else:
+                field_lines.append(f"source.{source_id_col} AS __{source_alias}_id")
 
         # Include path info from CTE
         field_lines.append("p.start_node")
@@ -950,6 +1059,279 @@ class SQLRenderer:
         lines.append(f"{indent}WHERE {' AND '.join(where_parts)}")
 
         return "\n".join(lines)
+
+    def _render_aggregation_boundary_cte(
+        self, op: AggregationBoundaryOperator
+    ) -> str:
+        """Render an aggregation boundary operator as a CTE definition.
+
+        This generates a CTE that materializes the aggregated result, allowing
+        subsequent MATCH clauses to join with it.
+
+        Example output for:
+            MATCH (p:Person)-[:LIVES_IN]->(c:City)
+            WITH c, COUNT(p) AS population
+            WHERE population > 100
+
+        Generates:
+            agg_boundary_1 AS (
+              SELECT
+                `c`.`id` AS `c_id`,
+                COUNT(`p`.`id`) AS `population`
+              FROM ... (rendered input)
+              GROUP BY `c`.`id`
+              HAVING COUNT(`p`.`id`) > 100
+            )
+        """
+        cte_name = op.cte_name
+        lines: list[str] = []
+
+        # Use the input operator as context for expression rendering
+        context_op = op.in_operator if op.in_operator else op
+
+        lines.append(f"{cte_name} AS (")
+
+        # Render the SELECT clause
+        lines.append("  SELECT")
+
+        # Render group keys and aggregates
+        select_items: list[str] = []
+
+        # Group keys - these become both SELECT columns and GROUP BY columns
+        for alias, expr in op.group_keys:
+            rendered_expr = self._render_expression(expr, context_op)
+            select_items.append(f"    {rendered_expr} AS `{alias}`")
+
+        # Aggregates
+        for alias, expr in op.aggregates:
+            rendered_expr = self._render_expression(expr, context_op)
+            select_items.append(f"    {rendered_expr} AS `{alias}`")
+
+        lines.append(",\n".join(select_items))
+
+        # Render FROM clause (the input operator)
+        if op.in_operator:
+            input_sql = self._render_operator(op.in_operator, depth=1)
+            lines.append("  FROM (")
+            lines.append(input_sql)
+            lines.append("  ) AS _agg_input")
+
+        # Render GROUP BY clause
+        if op.group_keys:
+            group_by_exprs = []
+            for alias, expr in op.group_keys:
+                rendered_expr = self._render_expression(expr, context_op)
+                group_by_exprs.append(rendered_expr)
+            lines.append(f"  GROUP BY {', '.join(group_by_exprs)}")
+
+        # Render HAVING clause
+        if op.having_filter:
+            having_sql = self._render_expression(op.having_filter, context_op)
+            lines.append(f"  HAVING {having_sql}")
+
+        # Render ORDER BY clause
+        if op.order_by:
+            order_parts = []
+            for expr, is_desc in op.order_by:
+                rendered_expr = self._render_expression(expr, context_op)
+                direction = "DESC" if is_desc else "ASC"
+                order_parts.append(f"{rendered_expr} {direction}")
+            lines.append(f"  ORDER BY {', '.join(order_parts)}")
+
+        # Render LIMIT clause
+        if op.limit is not None:
+            lines.append(f"  LIMIT {op.limit}")
+
+        # Render OFFSET clause
+        if op.skip is not None:
+            lines.append(f"  OFFSET {op.skip}")
+
+        lines.append(")")
+
+        return "\n".join(lines)
+
+    def _render_aggregation_boundary_reference(
+        self, op: AggregationBoundaryOperator, depth: int
+    ) -> str:
+        """Render a reference to an aggregation boundary CTE.
+
+        When the aggregation boundary is used as input to a join or other
+        operator, this generates a SELECT from the CTE.
+
+        Example output:
+            SELECT
+              `c_id`,
+              `population`
+            FROM agg_boundary_1
+        """
+        indent = self._indent(depth)
+        cte_name = op.cte_name
+        lines: list[str] = []
+
+        lines.append(f"{indent}SELECT")
+
+        # Project all columns from the CTE
+        select_items: list[str] = []
+        for alias, _ in op.all_projections:
+            # Map entity variable to its ID column for joins
+            # e.g., if 'c' was projected, we need 'c_id' for joining
+            select_items.append(f"`{alias}`")
+
+        for i, item in enumerate(select_items):
+            prefix = " " if i == 0 else ","
+            lines.append(f"{indent}  {prefix}{item}")
+
+        lines.append(f"{indent}FROM {cte_name}")
+
+        return "\n".join(lines)
+
+    def _render_boundary_join(
+        self,
+        join_op: JoinOperator,
+        boundary_op: AggregationBoundaryOperator,
+        right_op: LogicalOperator,
+        depth: int,
+    ) -> str:
+        """Render a JOIN between aggregation boundary CTE and subsequent MATCH.
+
+        This method generates a query that joins the aggregated CTE result with
+        the new MATCH pattern using the projected entity IDs.
+
+        Example: For a query like:
+            MATCH (p:Person)-[:LIVES_IN]->(c:City)
+            WITH c, COUNT(p) AS population
+            MATCH (c)<-[:LIVES_IN]-(other:Person)
+            RETURN ...
+
+        Generates:
+            SELECT
+               _left.c,
+               _left.population,
+               _right.__c_id,
+               _right.__other_id,
+               ...
+            FROM (
+               SELECT `c`, `population` FROM agg_boundary_1
+            ) AS _left
+            INNER JOIN (
+               ... right side subquery ...
+            ) AS _right ON
+               _left.c = _right.__c_id
+        """
+        indent = self._indent(depth)
+        cte_name = boundary_op.cte_name
+        lines: list[str] = []
+
+        left_var = "_left"
+        right_var = "_right"
+
+        lines.append(f"{indent}SELECT")
+
+        # Collect output fields
+        output_fields: list[str] = []
+
+        # Add fields from the boundary (CTE)
+        for alias, _ in boundary_op.all_projections:
+            output_fields.append(f"{left_var}.`{alias}` AS `{alias}`")
+
+        # Add fields from the right side (new MATCH) - apply column pruning
+        right_columns = self._collect_all_column_names(right_op.output_schema)
+
+        # Determine which columns from the right side are actually needed
+        # 1. Columns required downstream (in _required_columns)
+        # 2. Join key columns (entity ID columns needed for the join condition)
+        right_join_keys: set[str] = set()
+        for pair in join_op.join_pairs:
+            if pair.pair_type == JoinKeyPairType.NODE_ID and pair.node_alias:
+                # Get the ID column from the right side's schema
+                node_id_col = self._get_entity_id_column_from_schema(
+                    right_op.output_schema, pair.node_alias
+                )
+                if node_id_col:
+                    right_join_keys.add(node_id_col)
+
+        for col in right_columns:
+            # Apply column pruning: only include columns that are required or are join keys
+            if (
+                not self._enable_column_pruning
+                or not self._required_columns
+                or col in self._required_columns
+                or col in right_join_keys
+            ):
+                output_fields.append(f"{right_var}.{col} AS {col}")
+
+        for i, field in enumerate(output_fields):
+            prefix = " " if i == 0 else ","
+            lines.append(f"{indent}  {prefix}{field}")
+
+        # FROM boundary CTE reference
+        lines.append(f"{indent}FROM (")
+        lines.append(self._render_aggregation_boundary_reference(boundary_op, depth + 1))
+        lines.append(f"{indent}) AS {left_var}")
+
+        # JOIN with right side
+        join_keyword = (
+            "INNER JOIN" if join_op.join_type == JoinType.INNER else "LEFT JOIN"
+        )
+        lines.append(f"{indent}{join_keyword} (")
+        lines.append(self._render_operator(right_op, depth + 1))
+        lines.append(f"{indent}) AS {right_var} ON")
+
+        # Render join conditions
+        # The boundary projects entity variables (e.g., 'c') and we need to join
+        # them with the corresponding entity ID from the right side (e.g., '__c_id')
+        conditions: list[str] = []
+
+        for pair in join_op.join_pairs:
+            if pair.pair_type == JoinKeyPairType.NODE_ID:
+                node_alias = pair.node_alias
+                # The boundary projects the entity variable directly (e.g., 'c')
+                # The right side has the entity ID column (e.g., '__c_id')
+                if node_alias in boundary_op.projected_variables:
+                    # Find the ID column name from the right side's schema
+                    node_id_col = self._get_entity_id_column_from_schema(
+                        right_op.output_schema, node_alias
+                    )
+                    if node_id_col:
+                        conditions.append(
+                            f"{left_var}.`{node_alias}` = {right_var}.{node_id_col}"
+                        )
+
+        if conditions:
+            for i, cond in enumerate(conditions):
+                prefix = "  " if i == 0 else "  AND "
+                lines.append(f"{indent}{prefix}{cond}")
+        else:
+            lines.append(f"{indent}  TRUE")
+
+        return "\n".join(lines)
+
+    def _get_entity_id_column_from_schema(
+        self, schema: Schema, entity_alias: str
+    ) -> str | None:
+        """Get the ID column name for an entity from a schema.
+
+        Looks for an EntityField with the given alias and returns its ID column
+        name in the rendered format (e.g., '__c_id').
+
+        Args:
+            schema: The schema to search in
+            entity_alias: The entity alias to find (e.g., 'c')
+
+        Returns:
+            The ID column name (e.g., '__c_id') or None if not found
+        """
+        for field in schema:
+            if isinstance(field, EntityField) and field.field_alias == entity_alias:
+                if field.entity_type == EntityType.NODE and field.node_join_field:
+                    return self._get_field_name(
+                        entity_alias, field.node_join_field.field_alias
+                    )
+                elif field.rel_source_join_field:
+                    return self._get_field_name(
+                        entity_alias, field.rel_source_join_field.field_alias
+                    )
+        return None
 
     def _indent(self, depth: int) -> str:
         """Get indentation string for a given depth."""
@@ -1162,6 +1544,13 @@ class SQLRenderer:
             # Special handling for recursive CTE joins
             return self._render_recursive_join(op, left_op, right_op, depth)
 
+        # Check if left side is AggregationBoundaryOperator
+        is_boundary_join = isinstance(left_op, AggregationBoundaryOperator)
+
+        if is_boundary_join:
+            # Special handling for aggregation boundary joins
+            return self._render_boundary_join(op, left_op, right_op, depth)
+
         lines.append(f"{indent}SELECT")
 
         # Determine output fields from both sides
@@ -1213,14 +1602,20 @@ class SQLRenderer:
     ) -> list[str]:
         """Get output field expressions for a join."""
         fields: list[str] = []
+        # Track already-projected aliases to avoid duplicates
+        projected_aliases: set[str] = set()
 
-        # Collect field aliases from both sides
+        # Collect field aliases from both sides (top-level entity aliases)
         left_aliases = {f.field_alias for f in left_op.output_schema}
         right_aliases = {f.field_alias for f in right_op.output_schema}
 
+        # Also collect all column names that are actually available on each side
+        # This includes encapsulated field names like __entity_property
+        left_columns = self._collect_all_column_names(left_op.output_schema)
+        right_columns = self._collect_all_column_names(right_op.output_schema)
+
         for field in op.output_schema:
             is_from_left = field.field_alias in left_aliases
-            var_name = left_var if is_from_left else right_var
 
             if isinstance(field, EntityField):
                 # Entity field - output join keys
@@ -1229,20 +1624,41 @@ class SQLRenderer:
                         key_name = self._get_field_name(
                             field.field_alias, field.node_join_field.field_alias
                         )
-                        fields.append(f"{var_name}.{key_name} AS {key_name}")
+                        # Skip if already projected
+                        if key_name not in projected_aliases:
+                            # Verify column source using actual column availability
+                            actual_var = self._determine_column_source(
+                                key_name, left_columns, right_columns, is_from_left, left_var, right_var
+                            )
+                            fields.append(f"{actual_var}.{key_name} AS {key_name}")
+                            projected_aliases.add(key_name)
                 else:
                     if field.rel_source_join_field:
                         src_key = self._get_field_name(
                             field.field_alias,
                             field.rel_source_join_field.field_alias,
                         )
-                        fields.append(f"{var_name}.{src_key} AS {src_key}")
+                        # Skip if already projected
+                        if src_key not in projected_aliases:
+                            # Verify column source using actual column availability
+                            actual_var = self._determine_column_source(
+                                src_key, left_columns, right_columns, is_from_left, left_var, right_var
+                            )
+                            fields.append(f"{actual_var}.{src_key} AS {src_key}")
+                            projected_aliases.add(src_key)
                     if field.rel_sink_join_field:
                         sink_key = self._get_field_name(
                             field.field_alias,
                             field.rel_sink_join_field.field_alias,
                         )
-                        fields.append(f"{var_name}.{sink_key} AS {sink_key}")
+                        # Skip if already projected
+                        if sink_key not in projected_aliases:
+                            # Verify column source using actual column availability
+                            actual_var = self._determine_column_source(
+                                sink_key, left_columns, right_columns, is_from_left, left_var, right_var
+                            )
+                            fields.append(f"{actual_var}.{sink_key} AS {sink_key}")
+                            projected_aliases.add(sink_key)
 
                 # Output all encapsulated fields (properties)
                 # Skip join key fields to avoid duplicates
@@ -1259,24 +1675,155 @@ class SQLRenderer:
                         field_alias = self._get_field_name(
                             field.field_alias, encap_field.field_alias
                         )
+                        # Skip if already projected
+                        if field_alias in projected_aliases:
+                            continue
                         # Column pruning: only include if required or pruning disabled
                         if (
                             not self._enable_column_pruning
                             or not self._required_columns
                             or field_alias in self._required_columns
                         ):
-                            fields.append(f"{var_name}.{field_alias} AS {field_alias}")
+                            # Verify column source using actual column availability
+                            actual_var = self._determine_column_source(
+                                field_alias, left_columns, right_columns, is_from_left, left_var, right_var
+                            )
+                            fields.append(f"{actual_var}.{field_alias} AS {field_alias}")
+                            projected_aliases.add(field_alias)
 
             elif isinstance(field, ValueField):
+                # Skip if already projected
+                if field.field_alias in projected_aliases:
+                    continue
                 # Column pruning for value fields
+                # Check both _required_columns (for property refs like `p.name`)
+                # and _required_value_fields (for bare variable refs like `shared_cards`)
                 if (
                     not self._enable_column_pruning
                     or not self._required_columns
                     or field.field_alias in self._required_columns
+                    or field.field_alias in self._required_value_fields
                 ):
-                    fields.append(f"{var_name}.{field.field_alias} AS {field.field_alias}")
+                    # Verify column source using actual column availability
+                    actual_var = self._determine_column_source(
+                        field.field_alias, left_columns, right_columns, is_from_left, left_var, right_var
+                    )
+                    fields.append(f"{actual_var}.{field.field_alias} AS {field.field_alias}")
+                    projected_aliases.add(field.field_alias)
+
+        # IMPORTANT: Also propagate required columns from the left side that weren't
+        # already projected. This handles cases where an entity (like 'c') is in the
+        # left side of the join but not in op.output_schema, yet its properties
+        # (like __c_id, __c_name) are needed downstream.
+        #
+        # This is especially important for joins after recursive traversals, where
+        # the source node columns (e.g., __c_id from source.id) are rendered but
+        # not tracked in the logical plan's output schema.
+        if self._enable_column_pruning and self._required_columns:
+            # Collect entity aliases that we know are available on the left side
+            # This includes entities from output_schema and entities from recursive
+            # traversal sources (which aren't in output_schema but are rendered)
+            left_entity_aliases: set[str] = set()
+            for field in left_op.output_schema:
+                left_entity_aliases.add(field.field_alias)
+
+            # Also check if left_op contains a recursive traversal - if so, its
+            # source alias should be considered available
+            if isinstance(left_op, RecursiveTraversalOperator):
+                if left_op.source_alias:
+                    left_entity_aliases.add(left_op.source_alias)
+            elif hasattr(left_op, 'in_operator_left'):
+                # Check if the left operand chain contains a recursive traversal
+                def find_recursive_source(check_op: LogicalOperator) -> str | None:
+                    if isinstance(check_op, RecursiveTraversalOperator):
+                        return check_op.source_alias
+                    if hasattr(check_op, 'in_operator_left') and check_op.in_operator_left:
+                        result = find_recursive_source(check_op.in_operator_left)
+                        if result:
+                            return result
+                    if hasattr(check_op, 'in_operator') and check_op.in_operator:
+                        return find_recursive_source(check_op.in_operator)
+                    return None
+
+                recursive_source = find_recursive_source(left_op)
+                if recursive_source:
+                    left_entity_aliases.add(recursive_source)
+
+            for required_col in self._required_columns:
+                if required_col in projected_aliases:
+                    continue  # Already projected
+
+                # Check if this column belongs to a known left-side entity
+                # Column pattern: __{entity}_{property}
+                col_entity = None
+                if required_col.startswith("__"):
+                    parts = required_col[2:].split("_", 1)
+                    if len(parts) >= 1:
+                        col_entity = parts[0]
+
+                if required_col in left_columns:
+                    fields.append(f"{left_var}.{required_col} AS {required_col}")
+                    projected_aliases.add(required_col)
+                elif required_col in right_columns:
+                    fields.append(f"{right_var}.{required_col} AS {required_col}")
+                    projected_aliases.add(required_col)
+                elif col_entity and col_entity in left_entity_aliases:
+                    # Column belongs to an entity we know is on the left side
+                    # (including recursive traversal source nodes)
+                    fields.append(f"{left_var}.{required_col} AS {required_col}")
+                    projected_aliases.add(required_col)
 
         return fields
+
+    def _collect_all_column_names(self, schema: Schema) -> set[str]:
+        """Collect all column names from a schema, including encapsulated fields."""
+        columns: set[str] = set()
+        for field in schema:
+            if isinstance(field, EntityField):
+                # Add the node/relationship join key columns
+                if field.node_join_field:
+                    columns.add(
+                        self._get_field_name(field.field_alias, field.node_join_field.field_alias)
+                    )
+                if field.rel_source_join_field:
+                    columns.add(
+                        self._get_field_name(field.field_alias, field.rel_source_join_field.field_alias)
+                    )
+                if field.rel_sink_join_field:
+                    columns.add(
+                        self._get_field_name(field.field_alias, field.rel_sink_join_field.field_alias)
+                    )
+                # Add all encapsulated fields
+                for encap_field in field.encapsulated_fields:
+                    columns.add(
+                        self._get_field_name(field.field_alias, encap_field.field_alias)
+                    )
+            elif isinstance(field, ValueField):
+                columns.add(field.field_alias)
+        return columns
+
+    def _determine_column_source(
+        self,
+        column_name: str,
+        left_columns: set[str],
+        right_columns: set[str],
+        is_from_left_hint: bool,
+        left_var: str,
+        right_var: str,
+    ) -> str:
+        """Determine which side of the join a column should come from."""
+        # First, use the hint from entity alias
+        if is_from_left_hint and column_name in left_columns:
+            return left_var
+        if not is_from_left_hint and column_name in right_columns:
+            return right_var
+        # If hint doesn't match, try the other side
+        if column_name in left_columns:
+            return left_var
+        if column_name in right_columns:
+            return right_var
+        # Fallback to the hint
+        return left_var if is_from_left_hint else right_var
 
     def _render_join_conditions(
         self,
@@ -1473,6 +2020,27 @@ class SQLRenderer:
             prefix = " " if i == 0 else ","
             lines.append(f"{indent}  {prefix}{rendered} AS {alias}")
 
+        # Check for aggregations (needed for both extra column projection and GROUP BY)
+        has_aggregation = any(self._has_aggregation(expr) for _, expr in op.projections)
+
+        # Bug #1 Fix: When projecting entity variables through a WITH clause,
+        # we need to also project any entity properties that are required downstream.
+        # For example: WITH c, COUNT(p) AS pop -> if downstream needs c.name,
+        # we must project __c_name in addition to __c_id.
+        #
+        # This applies to:
+        # 1. ALL aggregating projections (GROUP BY loses columns not in SELECT/GROUP BY)
+        # 2. INTERMEDIATE non-aggregating projections (depth > 0) where entity variables
+        #    are passed through and downstream needs their properties
+        #
+        # For the ROOT projection (depth == 0) without aggregation, we don't add extra
+        # columns because the user explicitly selected what they want in RETURN.
+        extra_columns: list[str] = []
+        if self._required_columns and (has_aggregation or depth > 0):
+            extra_columns = self._get_entity_properties_for_aggregation(op)
+            for col_alias in extra_columns:
+                lines.append(f"{indent}  ,{col_alias} AS {col_alias}")
+
         lines.append(f"{indent}FROM (")
         lines.append(self._render_operator(op.in_operator, depth + 1))
         lines.append(f"{indent}) AS _proj")
@@ -1484,24 +2052,48 @@ class SQLRenderer:
             lines.append(f"{indent}WHERE {filter_sql}")
 
         # Group by for aggregations
-        has_aggregation = any(
-            self._has_aggregation(expr) for _, expr in op.projections
-        )
         if has_aggregation:
+            # First, identify which aliases are aggregates
+            aggregate_aliases: set[str] = {
+                alias for alias, expr in op.projections
+                if self._has_aggregation(expr)
+            }
+            # Non-aggregate expressions go in GROUP BY, but only if they don't
+            # reference any aggregate aliases (e.g., similarity_score = ... + shared_merchants
+            # shouldn't be in GROUP BY if shared_merchants is an aggregate)
             non_agg_exprs = [
                 self._render_expression(expr, op)
                 for alias, expr in op.projections
                 if not self._has_aggregation(expr)
+                and not self._references_aliases(expr, aggregate_aliases)
             ]
-            if non_agg_exprs:
-                group_by = ", ".join(non_agg_exprs)
+            # Also include extra entity property columns in GROUP BY
+            all_group_by_cols = non_agg_exprs + extra_columns
+            if all_group_by_cols:
+                group_by = ", ".join(all_group_by_cols)
                 lines.append(f"{indent}GROUP BY {group_by}")
 
         # HAVING clause (filter on aggregated columns)
         # Applied AFTER GROUP BY - filters groups
+        # Note: If there's no aggregation but having_expression is set,
+        # treat it as a regular WHERE clause (e.g., WITH ... WHERE on computed columns)
+        needs_subquery_wrap = False
         if op.having_expression:
             having_sql = self._render_expression(op.having_expression, op)
-            lines.append(f"{indent}HAVING {having_sql}")
+            if has_aggregation:
+                lines.append(f"{indent}HAVING {having_sql}")
+            else:
+                # No aggregation - check if the expression references aliases
+                # defined in the current projection (e.g., return_rate > 0.5 where
+                # return_rate is computed in this SELECT). SQL doesn't allow this,
+                # so we need to wrap in a subquery.
+                projection_aliases = {alias for alias, _ in op.projections}
+                if self._references_aliases(op.having_expression, projection_aliases):
+                    # Mark that we need to wrap this in a subquery
+                    needs_subquery_wrap = True
+                else:
+                    # Filter doesn't reference computed aliases, can use WHERE
+                    lines.append(f"{indent}WHERE {having_sql}")
 
         # Order by
         if op.order_by:
@@ -1518,6 +2110,21 @@ class SQLRenderer:
                 lines.append(f"{indent}LIMIT {op.limit}")
             if op.skip is not None:
                 lines.append(f"{indent}OFFSET {op.skip}")
+
+        # If we need to wrap in a subquery (because having_expression references
+        # aliases defined in this SELECT), wrap the entire query
+        if needs_subquery_wrap and op.having_expression:
+            inner_sql = "\n".join(lines)
+            having_sql = self._render_expression(op.having_expression, op)
+            # Build outer wrapper that projects all columns and applies the filter
+            outer_lines = [
+                f"{indent}SELECT *",
+                f"{indent}FROM (",
+                inner_sql,
+                f"{indent}) AS _filter",
+                f"{indent}WHERE {having_sql}",
+            ]
+            return "\n".join(outer_lines)
 
         return "\n".join(lines)
 
@@ -1601,11 +2208,148 @@ class SQLRenderer:
     def _render_property(
         self, expr: QueryExpressionProperty, context_op: LogicalOperator
     ) -> str:
-        """Render a property access."""
+        """Render a property access.
+
+        When property_name is provided, renders as __variable_property (e.g., __p_name).
+        When property_name is None (bare entity reference like 'p'), renders as the
+        entity's ID column (e.g., __p_id for nodes, __r_source_id for relationships).
+        This is necessary for aggregations like COUNT(p) which need a valid column.
+        """
         if expr.property_name:
+            # Check if this is accessing .id on a variable that was projected as bare entity
+            # in a WITH clause. In that case, the variable itself contains the ID.
+            # IMPORTANT: Check for bare entity projection FIRST, before doing entity field lookup,
+            # because recursive entity field search might find the original EntityField.
+            if expr.property_name == "id":
+                # First, check if the in_operator is a ProjectionOperator that projected
+                # this variable as a bare entity (e.g., WITH source, sink, ...)
+                in_op = getattr(context_op, "in_operator", None)
+                if in_op is not None and isinstance(in_op, ProjectionOperator):
+                    for alias, proj_expr in in_op.projections:
+                        if alias == expr.variable_name:
+                            # Found the projection - check if it's a bare entity reference
+                            if (isinstance(proj_expr, QueryExpressionProperty)
+                                and proj_expr.property_name is None):
+                                # The variable was projected as a bare entity
+                                # So source.id should just be 'source'
+                                return expr.variable_name
+
             field_alias = self._get_field_name(expr.variable_name, expr.property_name)
             return field_alias
+
+        # Bare entity reference - need to resolve to the entity's ID column
+        # Look up the entity in the context operator's input schema (what's available
+        # before the operation, e.g., for projections, the fields from the input)
+        entity_field = self._find_entity_field(expr.variable_name, context_op)
+
+        if entity_field:
+            # For nodes, use the node_join_field (ID column)
+            if (
+                entity_field.entity_type == EntityType.NODE
+                and entity_field.node_join_field
+            ):
+                return self._get_field_name(
+                    expr.variable_name, entity_field.node_join_field.field_alias
+                )
+            # For relationships, use the source join field as the identifier
+            if (
+                entity_field.entity_type == EntityType.RELATIONSHIP
+                and entity_field.rel_source_join_field
+            ):
+                return self._get_field_name(
+                    expr.variable_name, entity_field.rel_source_join_field.field_alias
+                )
+
+        # Fallback for VLP queries: check if there's a column matching __{var}_id pattern
+        # This handles cases where the schema doesn't have the EntityField but the
+        # column exists from a VLP join (e.g., __source_id, __sink_id)
+        expected_id_col = f"__{expr.variable_name}_id"
+
+        # Check context_op.input_schema first
+        if context_op.input_schema:
+            for field in context_op.input_schema:
+                if field.field_alias == expected_id_col:
+                    return expected_id_col
+            # Check for any column with prefix
+            prefix = f"__{expr.variable_name}_"
+            for field in context_op.input_schema:
+                if field.field_alias.startswith(prefix):
+                    return expected_id_col
+
+        # Check in_operator's output_schema
+        in_op = getattr(context_op, "in_operator", None)
+        if in_op and in_op.output_schema:
+            for field in in_op.output_schema:
+                if field.field_alias == expected_id_col:
+                    return expected_id_col
+            prefix = f"__{expr.variable_name}_"
+            for field in in_op.output_schema:
+                if field.field_alias.startswith(prefix):
+                    return expected_id_col
+
+        # Check if required_columns has this pattern (for column pruning context)
+        if self._required_columns:
+            for col in self._required_columns:
+                if col == expected_id_col or col.startswith(f"__{expr.variable_name}_"):
+                    return expected_id_col
+
+        # Ultimate fallback: return variable name
         return expr.variable_name
+
+    def _find_entity_field(
+        self, variable_name: str, context_op: LogicalOperator
+    ) -> EntityField | None:
+        """Find an entity field by variable name in the context operator's schemas.
+
+        Searches in this order:
+        1. input_schema (what's available to this operator)
+        2. in_operator.output_schema (for unary operators, the input from child)
+        3. output_schema (last resort)
+        4. Recursive search through nested operators (JoinOperator left/right)
+        """
+        # Check input_schema first (what's available to this operator)
+        if context_op.input_schema:
+            field = context_op.input_schema.get_field(variable_name)
+            if isinstance(field, EntityField):
+                return field
+
+        # For unary operators like ProjectionOperator, check the input operator's output schema
+        # This is where entity fields from MATCH clauses are stored
+        # Use getattr since in_operator is only on UnaryLogicalOperator
+        in_op = getattr(context_op, "in_operator", None)
+        if in_op is not None and in_op.output_schema:
+            field = in_op.output_schema.get_field(variable_name)
+            if isinstance(field, EntityField):
+                return field
+
+        # Fallback to output_schema
+        if context_op.output_schema:
+            field = context_op.output_schema.get_field(variable_name)
+            if isinstance(field, EntityField):
+                return field
+
+        # Recursive search through nested operators
+        # This handles cases where the entity is in a nested JoinOperator's input
+        if in_op is not None:
+            # Check if in_op is a JoinOperator with left/right operators
+            left_op = getattr(in_op, "left_operator", None)
+            right_op = getattr(in_op, "right_operator", None)
+            if left_op is not None:
+                result = self._find_entity_field(variable_name, left_op)
+                if result:
+                    return result
+            if right_op is not None:
+                result = self._find_entity_field(variable_name, right_op)
+                if result:
+                    return result
+            # Also recursively check in_op's in_operator chain
+            nested_in_op = getattr(in_op, "in_operator", None)
+            if nested_in_op is not None:
+                result = self._find_entity_field(variable_name, nested_in_op)
+                if result:
+                    return result
+
+        return None
 
     def _render_binary(
         self, expr: QueryExpressionBinary, context_op: LogicalOperator
@@ -1623,11 +2367,154 @@ class SQLRenderer:
             right = self._render_expression(expr.right_expression, context_op)
             return f"ARRAY_CONTAINS({right}, {left})"
 
+        # Special handling for comparisons with duration when timestamps are involved
+        # This is needed because UNIX_TIMESTAMP returns seconds (BIGINT),
+        # while DURATION returns INTERVAL which can't be compared directly
+        if expr.operator.name in (BinaryOperator.LT, BinaryOperator.GT,
+                                   BinaryOperator.LEQ, BinaryOperator.GEQ):
+            # Check if one side is a DURATION function
+            duration_expr = None
+            other_expr = None
+            if self._is_duration_expression(expr.right_expression):
+                duration_expr = expr.right_expression
+                other_expr = expr.left_expression
+            elif self._is_duration_expression(expr.left_expression):
+                duration_expr = expr.left_expression
+                other_expr = expr.right_expression
+
+            if duration_expr and self._contains_timestamp_subtraction(other_expr):
+                # Render the duration as seconds for comparison with UNIX_TIMESTAMP diff
+                left = self._render_expression(expr.left_expression, context_op)
+                right = self._render_expression(expr.right_expression, context_op)
+
+                # Convert the INTERVAL to seconds
+                if duration_expr == expr.right_expression:
+                    right = self._duration_to_seconds(duration_expr)
+                else:
+                    left = self._duration_to_seconds(duration_expr)
+
+                pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
+                return pattern.format(left, right)
+
         left = self._render_expression(expr.left_expression, context_op)
         right = self._render_expression(expr.right_expression, context_op)
 
+        # Special handling for timestamp subtraction in Spark SQL
+        # Spark doesn't support direct timestamp - timestamp, need UNIX_TIMESTAMP
+        # BUT: timestamp - DURATION should use direct subtraction (INTERVAL)
+        if expr.operator.name == BinaryOperator.MINUS:
+            # If one side is a DURATION expression, use direct subtraction
+            # because DURATION renders as INTERVAL which works with direct subtraction
+            if (self._is_duration_expression(expr.left_expression) or
+                self._is_duration_expression(expr.right_expression)):
+                # Direct subtraction: date - INTERVAL or INTERVAL - date
+                pass  # Use default pattern below
+            # Check if operands might be timestamps (heuristic: contains 'timestamp' in name)
+            elif self._might_be_timestamp_subtraction(expr.left_expression, expr.right_expression):
+                return f"(UNIX_TIMESTAMP({left}) - UNIX_TIMESTAMP({right}))"
+
         pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
         return pattern.format(left, right)
+
+    def _is_duration_expression(self, expr: QueryExpression) -> bool:
+        """Check if an expression is a DURATION function call."""
+        if isinstance(expr, QueryExpressionFunction):
+            return expr.function == Function.DURATION
+        return False
+
+    def _contains_timestamp_subtraction(self, expr: QueryExpression) -> bool:
+        """Check if expression contains timestamp subtraction (recursively)."""
+        if isinstance(expr, QueryExpressionBinary):
+            if expr.operator and expr.operator.name == BinaryOperator.MINUS:
+                if self._might_be_timestamp_subtraction(
+                    expr.left_expression, expr.right_expression
+                ):
+                    return True
+            # Check children
+            return (self._contains_timestamp_subtraction(expr.left_expression) or
+                    self._contains_timestamp_subtraction(expr.right_expression))
+        elif isinstance(expr, QueryExpressionFunction):
+            # Check if any parameter contains timestamp subtraction
+            return any(self._contains_timestamp_subtraction(p) for p in expr.parameters)
+        return False
+
+    def _duration_to_seconds(self, expr: QueryExpressionFunction) -> str:
+        """Convert a DURATION expression to seconds (as a numeric literal)."""
+        if not expr.parameters:
+            return "0"
+
+        first_param = expr.parameters[0]
+        if isinstance(first_param, QueryExpressionValue) and isinstance(first_param.value, str):
+            return str(self._parse_iso8601_to_seconds(first_param.value))
+        return "0"
+
+    def _parse_iso8601_to_seconds(self, duration_str: str) -> int:
+        """Parse ISO 8601 duration string to total seconds.
+
+        Examples:
+        - PT5M -> 300 (5 minutes = 300 seconds)
+        - PT1H -> 3600 (1 hour = 3600 seconds)
+        - P1D -> 86400 (1 day = 86400 seconds)
+        """
+        import re
+
+        if not duration_str:
+            return 0
+
+        s = duration_str.strip().upper()
+        if not s.startswith("P"):
+            return 0
+        s = s[1:]
+
+        total_seconds = 0
+
+        # Split by 'T' to separate date and time parts
+        if "T" in s:
+            date_part, time_part = s.split("T", 1)
+        else:
+            date_part = s
+            time_part = ""
+
+        # Parse date part
+        date_pattern = re.compile(r"(\d+)([YMWD])")
+        for match in date_pattern.finditer(date_part):
+            value = int(match.group(1))
+            unit = match.group(2)
+            if unit == "Y":
+                total_seconds += value * 365 * 24 * 3600
+            elif unit == "M":
+                total_seconds += value * 30 * 24 * 3600  # Approximate
+            elif unit == "W":
+                total_seconds += value * 7 * 24 * 3600
+            elif unit == "D":
+                total_seconds += value * 24 * 3600
+
+        # Parse time part
+        time_pattern = re.compile(r"(\d+(?:\.\d+)?)([HMS])")
+        for match in time_pattern.finditer(time_part):
+            value = float(match.group(1))
+            unit = match.group(2)
+            if unit == "H":
+                total_seconds += int(value * 3600)
+            elif unit == "M":
+                total_seconds += int(value * 60)
+            elif unit == "S":
+                total_seconds += int(value)
+
+        return total_seconds
+
+    def _might_be_timestamp_subtraction(
+        self, left: QueryExpression, right: QueryExpression
+    ) -> bool:
+        """Check if a subtraction might involve timestamps (heuristic-based)."""
+        # Check if either operand is a property access with 'timestamp' in the name
+        def is_timestamp_property(expr: QueryExpression) -> bool:
+            if isinstance(expr, QueryExpressionProperty):
+                prop = expr.property_name or ""
+                return "timestamp" in prop.lower() or "date" in prop.lower()
+            return False
+
+        return is_timestamp_property(left) or is_timestamp_property(right)
 
     def _render_function(
         self, expr: QueryExpressionFunction, context_op: LogicalOperator
@@ -2255,12 +3142,50 @@ class SQLRenderer:
         list_sql = self._render_expression(expr.list_expression, context_op)
         initial_sql = self._render_expression(expr.initial_value, context_op)
 
+        # Cast numeric initial value to DOUBLE if the reducer involves field access
+        # This avoids type mismatch when the reducer returns DOUBLE (e.g., amount fields)
+        if self._reducer_might_return_double(expr.reducer_expression, var_name):
+            if isinstance(expr.initial_value, QueryExpressionValue):
+                if isinstance(expr.initial_value.value, (int, float)):
+                    initial_sql = f"CAST({initial_sql} AS DOUBLE)"
+
         # Render the reducer expression, replacing accumulator and variable references
         reducer_sql = self._render_reduce_expression(
             expr.reducer_expression, acc_name, var_name, context_op
         )
 
         return f"AGGREGATE({list_sql}, {initial_sql}, ({acc_name}, {var_name}) -> {reducer_sql})"
+
+    def _reducer_might_return_double(
+        self, expr: QueryExpression, var_name: str
+    ) -> bool:
+        """Check if a reducer expression might return DOUBLE (heuristic).
+
+        Returns True if the expression accesses properties of the variable,
+        which might be numeric fields like 'amount', 'balance', etc.
+        """
+        if isinstance(expr, QueryExpressionProperty):
+            # If it's a property access on the variable, might be a numeric field
+            if expr.variable_name == var_name and expr.property_name:
+                return True
+        elif isinstance(expr, QueryExpressionBinary):
+            # Check both sides
+            left_check = (
+                expr.left_expression is not None
+                and self._reducer_might_return_double(expr.left_expression, var_name)
+            )
+            right_check = (
+                expr.right_expression is not None
+                and self._reducer_might_return_double(expr.right_expression, var_name)
+            )
+            return left_check or right_check
+        elif isinstance(expr, QueryExpressionFunction):
+            # Check parameters
+            return any(
+                self._reducer_might_return_double(p, var_name)
+                for p in expr.parameters
+            )
+        return False
 
     def _render_reduce_expression(
         self,
@@ -2520,12 +3445,129 @@ class SQLRenderer:
             return any(self._has_aggregation(p) for p in expr.parameters)
         return False
 
+    def _references_aliases(self, expr: QueryExpression, aliases: set[str]) -> bool:
+        """Check if an expression references any of the given aliases.
+
+        This is used to detect expressions like `shared_cards + shared_merchants`
+        where `shared_merchants` is an aggregate alias. Such expressions should
+        not be included in GROUP BY because they reference aggregates.
+        """
+        if isinstance(expr, QueryExpressionProperty):
+            # Bare variable reference (e.g., shared_merchants)
+            if expr.variable_name and not expr.property_name:
+                return expr.variable_name in aliases
+            return False
+        if isinstance(expr, QueryExpressionBinary):
+            left_refs = (
+                self._references_aliases(expr.left_expression, aliases)
+                if expr.left_expression
+                else False
+            )
+            right_refs = (
+                self._references_aliases(expr.right_expression, aliases)
+                if expr.right_expression
+                else False
+            )
+            return left_refs or right_refs
+        if isinstance(expr, QueryExpressionFunction):
+            return any(self._references_aliases(p, aliases) for p in expr.parameters)
+        if isinstance(expr, QueryExpressionAggregationFunction):
+            # Aggregation functions don't reference aliases in the same sense
+            return False
+        return False
+
     def _get_field_name(self, prefix: str, field_name: str) -> str:
         """Generate a field name with entity prefix."""
         clean_prefix = "".join(
             c if c.isalnum() or c == "_" else "" for c in prefix
         )
         return f"__{clean_prefix}_{field_name}"
+
+    def _get_entity_properties_for_aggregation(
+        self, op: ProjectionOperator
+    ) -> list[str]:
+        """Get required entity property columns that need to be projected through GROUP BY.
+
+        When a node variable (e.g., 'c') is projected through a GROUP BY, only its
+        ID column (__c_id) is normally included. But if downstream operators need
+        other properties (e.g., c.name -> __c_name), those must also be projected.
+
+        This method identifies entity variables in the projections and returns
+        any required property columns for those entities that aren't already projected.
+
+        Args:
+            op: The ProjectionOperator with aggregations.
+
+        Returns:
+            List of column aliases (e.g., ['__c_name']) to add to the SELECT list.
+        """
+        extra_columns: list[str] = []
+        already_projected: set[str] = set()
+
+        # Find entity variables in the projections (bare entity references)
+        # and also track which entity ID columns need to be preserved
+        entity_vars: set[str] = set()
+        entity_id_columns: dict[str, str] = {}  # entity_var -> id_column_alias
+
+        # Collect all columns that are already projected
+        for _, expr in op.projections:
+            if isinstance(expr, QueryExpressionProperty):
+                if expr.property_name:
+                    # Property access - already projected as __entity_prop
+                    col = self._get_field_name(expr.variable_name, expr.property_name)
+                    already_projected.add(col)
+                else:
+                    # Bare entity reference - the ID is projected under a different alias
+                    entity_vars.add(expr.variable_name)
+                    entity_field = self._find_entity_field(expr.variable_name, op)
+                    if entity_field and entity_field.node_join_field:
+                        id_col = self._get_field_name(
+                            expr.variable_name, entity_field.node_join_field.field_alias
+                        )
+                        entity_id_columns[expr.variable_name] = id_col
+                        # Note: We do NOT add this to already_projected because
+                        # the projection aliases it as 'p', not '__p_id'
+
+        # For bare entity references, we generally DON'T need to add their ID column
+        # because the bare entity reference already provides the ID value.
+        # For example, if we project `a` (rendering as `__a_id AS a`), downstream
+        # code accessing `a.id` should use the alias `a`, not `__a_id`.
+        #
+        # We only add the ID column separately if there are OTHER properties
+        # of that entity that need to be projected (e.g., __a_name for a.name).
+        # In that case, we need __a_id as a grouping key alongside __a_name.
+        for entity_var, id_col in entity_id_columns.items():
+            if id_col not in already_projected:
+                # Only add if we're adding OTHER properties for this entity
+                # (not just the ID column itself)
+                has_other_properties = any(
+                    req_col.startswith(f"__{entity_var}_") and req_col != id_col
+                    for req_col in self._required_columns
+                )
+                if has_other_properties:
+                    extra_columns.append(id_col)
+                    already_projected.add(id_col)
+
+        # Check required columns for properties of these entities
+        for required_col in self._required_columns:
+            if required_col in already_projected:
+                continue
+            # Check if this column belongs to one of our entity variables
+            # Pattern: __{entity}_{property}
+            for entity_var in entity_vars:
+                prefix = f"__{entity_var}_"
+                if required_col.startswith(prefix):
+                    # Skip the entity's ID column - it's already provided by the bare entity
+                    # reference (e.g., __a_id is already available via the alias 'a')
+                    id_col = entity_id_columns.get(entity_var)
+                    if required_col == id_col:
+                        break
+                    # This is a property of an entity variable we're projecting
+                    extra_columns.append(required_col)
+                    already_projected.add(required_col)
+                    break
+
+        return extra_columns
 
     def _render_edge_filter_expression(self, expr: QueryExpression) -> str:
         """Render an edge filter expression using DIRECT column references.

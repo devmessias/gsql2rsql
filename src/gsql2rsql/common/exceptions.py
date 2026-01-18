@@ -40,3 +40,21 @@ class TranspilerInternalErrorException(TranspilerException):
 
     def __init__(self, message: str) -> None:
         super().__init__(f"Internal error: {message}")
+
+
+class UnsupportedQueryPatternError(TranspilerException):
+    """Exception for query patterns that are syntactically valid but not yet supported.
+
+    This is distinct from TranspilerNotSupportedException which is for features
+    we don't plan to support. This exception is for patterns we intend to support
+    but haven't implemented yet.
+
+    Example: MATCH after aggregating WITH
+        MATCH (a)-[:R1]->(b)
+        WITH a, COUNT(b) AS cnt    -- Aggregation creates materialization boundary
+        MATCH (a)-[:R2]->(c)       -- MATCH after aggregation not yet supported
+        RETURN a, cnt, COUNT(c)
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"Unsupported query pattern: {message}")

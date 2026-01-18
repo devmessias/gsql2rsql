@@ -168,40 +168,65 @@ class CypherVisitor:
               oC_SinglePartQuery ;
 
         Multi-part queries have WITH clauses that produce intermediate results.
+        Each group of reading clauses followed by a WITH forms one PartialQueryNode.
+
+        IMPORTANT: We must iterate through children in order to correctly group
+        reading clauses with their corresponding WITH clause. The grammar structure
+        means that reading clauses belong to the NEXT WITH clause, not the previous one.
         """
         parts: list[PartialQueryNode] = []
 
-        # Process each WITH clause and its preceding reading clauses
-        reading_clauses = ctx.oC_ReadingClause() or []
-        with_clauses = ctx.oC_With() or []
+        # Collect reading clauses until we hit a WITH, then create a part
+        current_reading_clauses: list[Any] = []
 
-        # Pair reading clauses with their corresponding WITH clauses
-        for with_ctx in with_clauses:
-            part = PartialQueryNode()
+        # Iterate through children in order to properly group
+        # reading clauses with their corresponding WITH
+        for child in ctx.children or []:
+            child_class = child.__class__.__name__
 
-            # Collect match and unwind clauses preceding this WITH
-            for reading_ctx in reading_clauses:
-                reading = self.visit(reading_ctx)
-                if isinstance(reading, MatchClause):
-                    part.match_clauses.append(reading)
-                elif isinstance(reading, UnwindClause):
-                    part.unwind_clauses.append(reading)
+            if child_class == "OC_ReadingClauseContext":
+                # Accumulate reading clauses until we hit a WITH
+                current_reading_clauses.append(child)
 
-            # Process the WITH clause
-            with_result = self.visit(with_ctx)
-            if isinstance(with_result, dict):
-                self._apply_return_result(part, with_result)
+            elif child_class == "OC_WithContext":
+                # Create a PartialQueryNode with the accumulated reading clauses
+                part = PartialQueryNode()
 
-            parts.append(part)
+                # Add all accumulated reading clauses to this part
+                for reading_ctx in current_reading_clauses:
+                    reading = self.visit(reading_ctx)
+                    if isinstance(reading, MatchClause):
+                        part.match_clauses.append(reading)
+                    elif isinstance(reading, UnwindClause):
+                        part.unwind_clauses.append(reading)
 
-            # Clear reading clauses after processing (they belong to this part)
-            reading_clauses = []
+                # Process the WITH clause
+                with_result = self.visit(child)
+                if isinstance(with_result, dict):
+                    self._apply_return_result(part, with_result)
 
-        # Process the final single part query
-        if ctx.oC_SinglePartQuery():
-            final_part = self.visit(ctx.oC_SinglePartQuery())
-            if isinstance(final_part, PartialQueryNode):
-                parts.append(final_part)
+                parts.append(part)
+
+                # Clear reading clauses - they've been consumed by this WITH
+                current_reading_clauses = []
+
+            elif child_class == "OC_SinglePartQueryContext":
+                # Final single part query - should have no reading clauses before it
+                # (they should have been consumed by WITH clauses)
+                final_part = self.visit(child)
+                if isinstance(final_part, PartialQueryNode):
+                    # If there are leftover reading clauses, add them to the final part
+                    # This shouldn't normally happen with well-formed queries
+                    for reading_ctx in current_reading_clauses:
+                        reading = self.visit(reading_ctx)
+                        if isinstance(reading, MatchClause):
+                            final_part.match_clauses.insert(0, reading)
+                        elif isinstance(reading, UnwindClause):
+                            final_part.unwind_clauses.insert(0, reading)
+                    parts.append(final_part)
+                current_reading_clauses = []
+
+            # Skip other children like whitespace (SP tokens)
 
         return parts
 

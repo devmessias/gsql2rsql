@@ -127,7 +127,9 @@ def try_parse_aggregation_function(function_name: str) -> AggregationFunction | 
         "percentilecont": AggregationFunction.PERCENTILE_CONT,
         "percentiledisc": AggregationFunction.PERCENTILE_DISC,
         "stdev": AggregationFunction.STDEV,
+        "stddev": AggregationFunction.STDEV,  # Alias with double D
         "stdevp": AggregationFunction.STDEVP,
+        "stddevp": AggregationFunction.STDEVP,  # Alias with double D
         "collect": AggregationFunction.COLLECT,
     }
     return mapping.get(function_name.lower())

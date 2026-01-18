@@ -2,6 +2,7 @@
 
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
+    AggregationBoundaryOperator,
     DataSourceOperator,
     JoinOperator,
     LogicalOperator,
@@ -16,6 +17,7 @@ __all__ = [
     "LogicalPlan",
     "LogicalOperator",
     "StartLogicalOperator",
+    "AggregationBoundaryOperator",
     "DataSourceOperator",
     "JoinOperator",
     "ProjectionOperator",

@@ -7,6 +7,7 @@ from typing import Any
 from gsql2rsql.common.exceptions import (
     TranspilerBindingException,
     TranspilerInternalErrorException,
+    UnsupportedQueryPatternError,
 )
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.common.schema import IGraphSchemaProvider
@@ -19,7 +20,9 @@ from gsql2rsql.parser.ast import (
     NodeEntity,
     PartialQueryNode,
     QueryExpression,
+    QueryExpressionAggregationFunction,
     QueryExpressionBinary,
+    QueryExpressionFunction,
     QueryExpressionProperty,
     QueryExpressionValue,
     QueryExpressionWithAlias,
@@ -30,6 +33,7 @@ from gsql2rsql.parser.ast import (
     UnwindClause,
 )
 from gsql2rsql.planner.operators import (
+    AggregationBoundaryOperator,
     DataSourceOperator,
     IBindable,
     JoinKeyPair,
@@ -210,15 +214,391 @@ class LogicalPlan:
     def _create_single_query_tree(
         self, query_node: SingleQueryNode, all_ops: list[LogicalOperator]
     ) -> LogicalOperator:
-        """Create logical tree for a single query."""
+        """Create logical tree for a single query.
+
+        MATCH after aggregating WITH Support
+        ====================================
+        This method now supports queries where MATCH clauses follow a WITH clause
+        that contains aggregation. When this pattern is detected:
+
+        1. The aggregating WITH creates an AggregationBoundaryOperator
+        2. This boundary materializes the aggregated result as a CTE
+        3. Subsequent MATCHes join with the CTE using projected entity IDs
+
+        Example:
+            MATCH (a)-[:R1]->(b)
+            WITH a, COUNT(b) AS cnt    -- Creates AggregationBoundaryOperator
+            MATCH (a)-[:R2]->(c)       -- Joins with boundary on a.id
+            RETURN a, cnt, COUNT(c)
+
+        See: docs/development/TODO_MATCH_AFTER_AGGREGATING_WITH.md
+        """
         current_op: LogicalOperator | None = None
 
-        for part in query_node.parts:
-            part_op = self._create_partial_query_tree(part, all_ops, current_op)
-            current_op = part_op
+        # Track whether we're past an aggregation boundary
+        # and which variables were projected through it
+        aggregation_boundary: AggregationBoundaryOperator | None = None
+
+        for part_idx, part in enumerate(query_node.parts):
+            # Check if this part creates an aggregation boundary
+            # (has aggregation AND there's a subsequent part with MATCH)
+            creates_boundary = self._part_creates_aggregation_boundary(
+                query_node, part_idx
+            )
+
+            if aggregation_boundary is not None and part.match_clauses:
+                # This is a MATCH after an aggregation boundary
+                # Build the match tree and join it with the boundary
+                current_op = self._create_match_after_boundary_tree(
+                    part, aggregation_boundary, all_ops
+                )
+                # Reset boundary - only applies to immediately following part
+                # (for chained boundaries, a new one will be created)
+                aggregation_boundary = None
+            elif creates_boundary:
+                # This part creates an aggregation boundary
+                # First, build the match tree for this part (without projections)
+                match_op = self._create_match_tree_for_boundary(
+                    part, all_ops, current_op
+                )
+                # Then create the aggregation boundary operator
+                aggregation_boundary = self._create_aggregation_boundary(
+                    part, match_op, all_ops
+                )
+                current_op = aggregation_boundary
+            else:
+                # Normal processing
+                part_op = self._create_partial_query_tree(part, all_ops, current_op)
+                current_op = part_op
 
         if current_op is None:
             raise TranspilerInternalErrorException("Empty query")
+
+        return current_op
+
+    def _create_match_tree_for_boundary(
+        self,
+        part: PartialQueryNode,
+        all_ops: list[LogicalOperator],
+        previous_op: LogicalOperator | None,
+    ) -> LogicalOperator:
+        """Create the match tree for a part that creates an aggregation boundary.
+
+        This is similar to _create_partial_query_tree but stops before creating
+        the projection - the projection will be handled by the boundary operator.
+
+        Args:
+            part: The partial query containing MATCH clauses
+            all_ops: List to collect created operators
+            previous_op: The upstream operator (if any)
+
+        Returns:
+            The operator representing the match tree (before aggregation)
+        """
+        current_op = previous_op
+
+        # Collect return expressions for path analysis optimization
+        return_exprs = [
+            ret.inner_expression for ret in part.return_body
+        ] if part.return_body else []
+
+        # Track node aliases seen across all match clauses for correlation
+        seen_node_aliases: set[str] = set()
+
+        # Process MATCH clauses
+        for match_clause in part.match_clauses:
+            match_op = self._create_match_tree(match_clause, all_ops, return_exprs)
+
+            if current_op is not None:
+                # Join with previous result
+                join_type = (
+                    JoinType.LEFT if match_clause.is_optional else JoinType.INNER
+                )
+                join_op = JoinOperator(join_type=join_type)
+                join_op.set_in_operators(current_op, match_op)
+
+                # Add join pairs for shared node variables (correlation)
+                for entity in match_clause.pattern_parts:
+                    if (isinstance(entity, NodeEntity) and
+                            entity.alias in seen_node_aliases):
+                        join_op.add_join_pair(JoinKeyPair(
+                            node_alias=entity.alias,
+                            relationship_or_node_alias=entity.alias,
+                            pair_type=JoinKeyPairType.NODE_ID,
+                        ))
+
+                all_ops.append(join_op)
+                current_op = join_op
+            else:
+                current_op = match_op
+
+            # Track all node aliases from this match clause
+            for entity in match_clause.pattern_parts:
+                if isinstance(entity, NodeEntity) and entity.alias:
+                    seen_node_aliases.add(entity.alias)
+
+            # Process WHERE clause from MatchClause
+            if match_clause.where_expression and current_op:
+                select_op = SelectionOperator(
+                    filter_expression=match_clause.where_expression
+                )
+                select_op.set_in_operator(current_op)
+                all_ops.append(select_op)
+                current_op = select_op
+
+        # Process UNWIND clauses
+        for unwind_clause in part.unwind_clauses:
+            if current_op:
+                unwind_op = UnwindOperator(
+                    list_expression=unwind_clause.list_expression,
+                    variable_name=unwind_clause.variable_name,
+                )
+                unwind_op.set_in_operator(current_op)
+                all_ops.append(unwind_op)
+                current_op = unwind_op
+
+        # Process WHERE clause from PartialQueryNode (for compatibility)
+        if part.where_expression and current_op:
+            select_op = SelectionOperator(filter_expression=part.where_expression)
+            select_op.set_in_operator(current_op)
+            all_ops.append(select_op)
+            current_op = select_op
+
+        # NOTE: We do NOT create a ProjectionOperator here
+        # The aggregation boundary will handle the projection
+
+        if current_op is None:
+            raise TranspilerInternalErrorException("Empty match tree for boundary")
+
+        return current_op
+
+    def _part_creates_aggregation_boundary(
+        self, query_node: SingleQueryNode, part_idx: int
+    ) -> bool:
+        """Check if a partial query creates an aggregation boundary.
+
+        A boundary is created when:
+        1. The part has aggregation in its return_body (WITH clause)
+        2. There is a subsequent part with MATCH clauses
+
+        Args:
+            query_node: The full query
+            part_idx: Index of the part to check
+
+        Returns:
+            True if this part should create an aggregation boundary
+        """
+        part = query_node.parts[part_idx]
+
+        # Must have aggregation
+        if not self._has_aggregation_in_projections(part):
+            return False
+
+        # Must have a subsequent part with MATCH
+        for subsequent_part in query_node.parts[part_idx + 1:]:
+            if subsequent_part.match_clauses:
+                return True
+
+        return False
+
+    def _create_aggregation_boundary(
+        self,
+        part: PartialQueryNode,
+        input_op: LogicalOperator,
+        all_ops: list[LogicalOperator],
+    ) -> AggregationBoundaryOperator:
+        """Create an AggregationBoundaryOperator from a WITH clause.
+
+        This extracts group keys and aggregates from the WITH clause's
+        return_body and creates a boundary operator that can be rendered
+        as a CTE.
+
+        Args:
+            part: The partial query containing the aggregating WITH
+            input_op: The upstream operator (match tree)
+            all_ops: List to collect created operators
+
+        Returns:
+            The created AggregationBoundaryOperator
+        """
+        group_keys: list[tuple[str, QueryExpression]] = []
+        aggregates: list[tuple[str, QueryExpression]] = []
+        projected_variables: set[str] = set()
+
+        # Separate group keys from aggregates
+        for ret in part.return_body:
+            alias = ret.alias
+            expr = ret.inner_expression
+
+            if self._has_aggregation_in_expression(expr):
+                aggregates.append((alias, expr))
+            else:
+                group_keys.append((alias, expr))
+
+                # Track projected entity variables for later joins
+                # If the expression is just a variable reference (e.g., "a"),
+                # we need it for joining subsequent MATCHes
+                if isinstance(expr, QueryExpressionProperty):
+                    if expr.property_name is None:
+                        # Just a variable reference like "a" (not "a.name")
+                        projected_variables.add(expr.variable_name)
+
+        # Generate a unique CTE name
+        cte_name = f"agg_boundary_{len([op for op in all_ops if isinstance(op, AggregationBoundaryOperator)]) + 1}"
+
+        boundary_op = AggregationBoundaryOperator(
+            group_keys=group_keys,
+            aggregates=aggregates,
+            having_filter=part.having_expression,
+            order_by=[
+                (item.expression, item.order.name == "DESC")
+                for item in part.order_by
+            ],
+            limit=(
+                int(part.limit_clause.limit_expression.value)
+                if part.limit_clause
+                and hasattr(part.limit_clause.limit_expression, "value")
+                and part.limit_clause.limit_expression.value is not None
+                else None
+            ),
+            skip=(
+                int(part.limit_clause.skip_expression.value)
+                if part.limit_clause
+                and part.limit_clause.skip_expression
+                and hasattr(part.limit_clause.skip_expression, "value")
+                and part.limit_clause.skip_expression.value is not None
+                else None
+            ),
+            cte_name=cte_name,
+            projected_variables=projected_variables,
+        )
+        boundary_op.set_in_operator(input_op)
+        all_ops.append(boundary_op)
+
+        return boundary_op
+
+    def _create_match_after_boundary_tree(
+        self,
+        part: PartialQueryNode,
+        boundary: AggregationBoundaryOperator,
+        all_ops: list[LogicalOperator],
+    ) -> LogicalOperator:
+        """Create logical tree for MATCH clauses after an aggregation boundary.
+
+        This method:
+        1. Builds the match tree for the new MATCH clauses
+        2. Joins the match tree with the aggregation boundary
+        3. Processes any WHERE/RETURN clauses
+
+        Args:
+            part: The partial query containing the MATCH after aggregation
+            boundary: The aggregation boundary operator to join with
+            all_ops: List to collect created operators
+
+        Returns:
+            The final operator for this partial query
+        """
+        current_op: LogicalOperator = boundary
+        return_exprs = [
+            ret.inner_expression for ret in part.return_body
+        ] if part.return_body else []
+
+        # Track node aliases for correlation detection
+        seen_node_aliases: set[str] = set()
+        # Include projected variables from boundary as already seen
+        seen_node_aliases.update(boundary.projected_variables)
+
+        for match_clause in part.match_clauses:
+            match_op = self._create_match_tree(match_clause, all_ops, return_exprs)
+
+            # Join the match tree with the current operator (boundary or previous match)
+            join_type = JoinType.LEFT if match_clause.is_optional else JoinType.INNER
+            join_op = JoinOperator(join_type=join_type)
+            join_op.set_in_operators(current_op, match_op)
+
+            # Add join pairs for shared variables with the boundary
+            for entity in match_clause.pattern_parts:
+                if isinstance(entity, NodeEntity) and entity.alias in boundary.projected_variables:
+                    # This node references a variable from the boundary
+                    # Need to join on the ID column
+                    join_op.add_join_pair(JoinKeyPair(
+                        node_alias=entity.alias,
+                        relationship_or_node_alias=boundary.cte_name,
+                        pair_type=JoinKeyPairType.NODE_ID,
+                    ))
+                elif isinstance(entity, NodeEntity) and entity.alias in seen_node_aliases:
+                    # Shared variable within this part's matches
+                    join_op.add_join_pair(JoinKeyPair(
+                        node_alias=entity.alias,
+                        relationship_or_node_alias=entity.alias,
+                        pair_type=JoinKeyPairType.NODE_ID,
+                    ))
+
+            all_ops.append(join_op)
+            current_op = join_op
+
+            # Track aliases from this match
+            for entity in match_clause.pattern_parts:
+                if isinstance(entity, NodeEntity) and entity.alias:
+                    seen_node_aliases.add(entity.alias)
+
+            # Process WHERE from match clause
+            if match_clause.where_expression:
+                select_op = SelectionOperator(
+                    filter_expression=match_clause.where_expression
+                )
+                select_op.set_in_operator(current_op)
+                all_ops.append(select_op)
+                current_op = select_op
+
+        # Process UNWIND clauses
+        for unwind_clause in part.unwind_clauses:
+            unwind_op = UnwindOperator(
+                list_expression=unwind_clause.list_expression,
+                variable_name=unwind_clause.variable_name,
+            )
+            unwind_op.set_in_operator(current_op)
+            all_ops.append(unwind_op)
+            current_op = unwind_op
+
+        # Process WHERE from PartialQueryNode
+        if part.where_expression:
+            select_op = SelectionOperator(filter_expression=part.where_expression)
+            select_op.set_in_operator(current_op)
+            all_ops.append(select_op)
+            current_op = select_op
+
+        # Process RETURN clause
+        if part.return_body:
+            proj_op = ProjectionOperator(
+                projections=[
+                    (ret.alias, ret.inner_expression) for ret in part.return_body
+                ],
+                is_distinct=part.is_distinct,
+                order_by=[
+                    (item.expression, item.order.name == "DESC")
+                    for item in part.order_by
+                ],
+                limit=(
+                    int(part.limit_clause.limit_expression.value)
+                    if part.limit_clause
+                    and hasattr(part.limit_clause.limit_expression, "value")
+                    and part.limit_clause.limit_expression.value is not None
+                    else None
+                ),
+                skip=(
+                    int(part.limit_clause.skip_expression.value)
+                    if part.limit_clause
+                    and part.limit_clause.skip_expression
+                    and hasattr(part.limit_clause.skip_expression, "value")
+                    and part.limit_clause.skip_expression.value is not None
+                    else None
+                ),
+                having_expression=part.having_expression,
+            )
+            proj_op.set_in_operator(current_op)
+            all_ops.append(proj_op)
+            current_op = proj_op
 
         return current_op
 
@@ -565,7 +945,13 @@ class LogicalPlan:
         # This handles patterns like: (a)-[:KNOWS*1..2]-(b)-[:HAS_LOAN]->(l)
         # where we need to continue processing [:HAS_LOAN]->(l) after the recursive path
         current_op: LogicalOperator = join_op
-        target_idx = match_clause.pattern_parts.index(target_node)
+
+        # Find the index of the VLP relationship, then target is at vlp_idx + 1
+        # We can't use index(target_node) because for circular patterns like (a)-[*]->(a),
+        # target_node might be the same object as source_node, causing index() to return
+        # the wrong position (0 instead of 2)
+        vlp_idx = match_clause.pattern_parts.index(rel)
+        target_idx = vlp_idx + 1  # Target node is right after the VLP relationship
         remaining_parts = match_clause.pattern_parts[target_idx + 1:]
 
         if remaining_parts:
@@ -741,8 +1127,20 @@ class LogicalPlan:
 
         entity_ops: dict[str, DataSourceOperator] = {}
         prev_node: NodeEntity | None = None
+        # Bug #2 Fix: Track node aliases that have already been seen
+        # When the same variable appears in multiple pattern parts (e.g., (p)-[:A]->(x), (p)-[:B]->(y))
+        # we need to add a join condition to correlate the two occurrences of 'p'
+        seen_node_aliases: set[str] = set()
 
         for entity in match_clause.pattern_parts:
+            # Check if this entity alias was already seen (shared variable)
+            if entity.alias in entity_ops:
+                # Reuse existing operator - don't create a duplicate
+                # The join condition will be added when joining
+                if isinstance(entity, NodeEntity):
+                    prev_node = entity
+                continue
+
             ds_op = DataSourceOperator(entity=entity)
             entity_ops[entity.alias] = ds_op
             all_ops.append(ds_op)
@@ -750,6 +1148,7 @@ class LogicalPlan:
             # Track nodes for relationship connections
             if isinstance(entity, NodeEntity):
                 prev_node = entity
+                seen_node_aliases.add(entity.alias)
             elif isinstance(entity, RelationshipEntity) and prev_node:
                 # Update relationship's left entity name
                 entity.left_entity_name = prev_node.entity_name
@@ -765,14 +1164,25 @@ class LogicalPlan:
         # Join all entities together
         current_op: LogicalOperator | None = None
         prev_node_alias: str | None = None
+        # Track which node aliases are already in the join tree
+        joined_node_aliases: set[str] = set()
 
-        for entity in match_clause.pattern_parts:
+        for entity_idx, entity in enumerate(match_clause.pattern_parts):
+            # Bug #2 Fix: Handle shared node variables (same alias in multiple pattern parts)
+            if isinstance(entity, NodeEntity) and entity.alias in joined_node_aliases:
+                # This node is already in the join tree - it's a shared variable
+                # Just update prev_node_alias to use for subsequent relationships
+                # The join condition will be added when we join the next relationship
+                prev_node_alias = entity.alias
+                continue
+
             ds_op = entity_ops[entity.alias]
 
             if current_op is None:
                 current_op = ds_op
                 if isinstance(entity, NodeEntity):
                     prev_node_alias = entity.alias
+                    joined_node_aliases.add(entity.alias)
             else:
                 # Determine join type and create join pairs
                 join_op = JoinOperator(join_type=JoinType.INNER)
@@ -787,19 +1197,22 @@ class LogicalPlan:
                             pair_type=pair_type,
                         ))
                 elif isinstance(entity, NodeEntity):
-                    # Find the previous relationship to join with
-                    for prev_ent in match_clause.pattern_parts:
+                    # Join node to its immediately preceding relationship in the pattern
+                    # (not all relationships that match by entity name, which caused bugs
+                    # with comma-separated patterns like (a1)-[:R]->(t1), (a2)-[:R]->(t2))
+                    if entity_idx > 0:
+                        prev_ent = match_clause.pattern_parts[entity_idx - 1]
                         if isinstance(prev_ent, RelationshipEntity):
-                            if prev_ent.right_entity_name == entity.entity_name:
-                                pair_type = self._determine_sink_join_type(prev_ent)
-                                join_op.add_join_pair(
-                                    JoinKeyPair(
-                                        node_alias=entity.alias,
-                                        relationship_or_node_alias=prev_ent.alias,
-                                        pair_type=pair_type,
-                                    )
+                            pair_type = self._determine_sink_join_type(prev_ent)
+                            join_op.add_join_pair(
+                                JoinKeyPair(
+                                    node_alias=entity.alias,
+                                    relationship_or_node_alias=prev_ent.alias,
+                                    pair_type=pair_type,
                                 )
+                            )
                     prev_node_alias = entity.alias
+                    joined_node_aliases.add(entity.alias)
 
                 join_op.set_in_operators(current_op, ds_op)
                 all_ops.append(join_op)
@@ -860,3 +1273,128 @@ class LogicalPlan:
 
         for out_op in op.out_operators:
             self._propagate_down(out_op)
+
+    # =========================================================================
+    # AGGREGATION DETECTION UTILITIES
+    # =========================================================================
+
+    def _has_aggregation_in_expression(self, expr: QueryExpression) -> bool:
+        """Check if an expression contains an aggregation function.
+
+        This is used to detect when a WITH clause creates an aggregation
+        boundary that requires special handling for subsequent MATCH clauses.
+
+        Args:
+            expr: The expression to check for aggregation functions.
+
+        Returns:
+            True if the expression contains COUNT, SUM, AVG, etc.
+        """
+        if isinstance(expr, QueryExpressionAggregationFunction):
+            return True
+        if isinstance(expr, QueryExpressionBinary):
+            left_has = (
+                self._has_aggregation_in_expression(expr.left_expression)
+                if expr.left_expression
+                else False
+            )
+            right_has = (
+                self._has_aggregation_in_expression(expr.right_expression)
+                if expr.right_expression
+                else False
+            )
+            return left_has or right_has
+        if isinstance(expr, QueryExpressionFunction):
+            return any(
+                self._has_aggregation_in_expression(p) for p in expr.parameters
+            )
+        return False
+
+    def _has_aggregation_in_projections(
+        self, part: PartialQueryNode
+    ) -> bool:
+        """Check if a partial query's return body contains aggregations.
+
+        Args:
+            part: The partial query node to check.
+
+        Returns:
+            True if any projection in return_body contains an aggregation.
+        """
+        if not part.return_body:
+            return False
+        return any(
+            self._has_aggregation_in_expression(ret.inner_expression)
+            for ret in part.return_body
+        )
+
+    def _detect_match_after_aggregating_with(
+        self, query_node: SingleQueryNode
+    ) -> tuple[bool, int]:
+        """Detect if query has MATCH clauses after a WITH that aggregates.
+
+        This pattern requires special handling because:
+        1. The aggregating WITH creates a materialization boundary
+        2. Variables not projected are no longer visible
+        3. Subsequent MATCHes must join with the aggregated result
+
+        Args:
+            query_node: The single query node to analyze.
+
+        Returns:
+            A tuple of (detected, boundary_index) where:
+            - detected: True if the problematic pattern exists
+            - boundary_index: Index of the first aggregating WITH that is
+              followed by a MATCH clause (-1 if not detected)
+
+        Example patterns detected:
+            MATCH (a)-[:R1]->(b)
+            WITH a, COUNT(b) AS cnt    -- Part 0: aggregation
+            MATCH (a)-[:R2]->(c)       -- Part 1: MATCH after aggregation
+            RETURN a, cnt, COUNT(c)    -- DETECTED at boundary_index=0
+        """
+        has_aggregating_with = False
+        boundary_index = -1
+
+        for i, part in enumerate(query_node.parts):
+            # First check if we have a MATCH following a previous aggregation
+            # This must be checked BEFORE updating has_aggregating_with
+            if has_aggregating_with and part.match_clauses:
+                return True, boundary_index
+
+            # Then check if this part has aggregation in its projections
+            # (which would create a boundary for subsequent parts)
+            if self._has_aggregation_in_projections(part):
+                has_aggregating_with = True
+                boundary_index = i
+
+        return False, -1
+
+    def _raise_match_after_aggregation_error(
+        self,
+        query_node: SingleQueryNode,
+        boundary_index: int,
+    ) -> None:
+        """Raise a helpful error for MATCH after aggregating WITH.
+
+        This provides a clear error message explaining why the pattern
+        is not supported and what the user can do.
+
+        Args:
+            query_node: The query that contains the unsupported pattern.
+            boundary_index: Index of the aggregating WITH clause.
+        """
+        # Build a helpful error message
+        agg_part = query_node.parts[boundary_index]
+        agg_aliases = [ret.alias for ret in agg_part.return_body]
+
+        msg = (
+            "MATCH clause after aggregating WITH is not yet supported.\n\n"
+            f"The WITH clause at position {boundary_index + 1} contains "
+            f"aggregation and projects: {agg_aliases}\n\n"
+            "This pattern requires the aggregated result to be materialized "
+            "as a CTE before joining with subsequent MATCH patterns.\n\n"
+            "Workaround: Split your query into multiple queries, using the "
+            "aggregated result as input to the second query."
+        )
+        raise UnsupportedQueryPatternError(msg)
