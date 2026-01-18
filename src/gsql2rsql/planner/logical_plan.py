@@ -45,6 +45,7 @@ from gsql2rsql.planner.operators import (
     StartLogicalOperator,
     UnwindOperator,
 )
+from gsql2rsql.planner.path_analyzer import PathExpressionAnalyzer
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema
 
 
@@ -227,9 +228,15 @@ class LogicalPlan:
         """Create logical tree for a partial query (MATCH...RETURN)."""
         current_op = previous_op
 
+        # Collect return expressions for path analysis optimization
+        # These are needed to determine if relationships(path) is used in RETURN
+        return_exprs = [
+            ret.inner_expression for ret in part.return_body
+        ] if part.return_body else []
+
         # Process MATCH clauses
         for match_clause in part.match_clauses:
-            match_op = self._create_match_tree(match_clause, all_ops)
+            match_op = self._create_match_tree(match_clause, all_ops, return_exprs)
 
             if current_op is not None:
                 # Join with previous result
@@ -307,9 +314,19 @@ class LogicalPlan:
         return current_op
 
     def _create_match_tree(
-        self, match_clause: MatchClause, all_ops: list[LogicalOperator]
+        self,
+        match_clause: MatchClause,
+        all_ops: list[LogicalOperator],
+        return_exprs: list[QueryExpression] | None = None,
     ) -> LogicalOperator:
-        """Create logical tree for a MATCH clause."""
+        """Create logical tree for a MATCH clause.
+
+        Args:
+            match_clause: The MATCH clause to process
+            all_ops: List to collect all created operators
+            return_exprs: RETURN clause expressions for path usage analysis.
+                Used to determine if edge collection is needed in recursive CTEs.
+        """
         # Check for variable-length relationships
         var_length_rel = None
         source_node = None
@@ -337,6 +354,7 @@ class LogicalPlan:
                 source_node,
                 target_node,
                 all_ops,
+                return_exprs,
             )
 
         # Standard match tree creation for fixed-length relationships
@@ -349,8 +367,29 @@ class LogicalPlan:
         source_node: NodeEntity,
         target_node: NodeEntity,
         all_ops: list[LogicalOperator],
+        return_exprs: list[QueryExpression] | None = None,
     ) -> LogicalOperator:
-        """Create logical tree for variable-length path traversal."""
+        """Create logical tree for variable-length path traversal.
+
+        This method uses PathExpressionAnalyzer to optimize the recursive CTE:
+
+        1. EDGE COLLECTION OPTIMIZATION:
+           Only collects edge properties (path_edges array) when relationships(path)
+           is actually used. This avoids the overhead of building NAMED_STRUCT arrays
+           when they're not needed (e.g., when only SIZE(path) is used).
+
+        2. PREDICATE PUSHDOWN (future):
+           Extracts edge predicates from ALL() expressions for potential pushdown
+           into the CTE's WHERE clause, enabling early path elimination.
+
+        Args:
+            match_clause: The MATCH clause containing the variable-length pattern
+            rel: The variable-length relationship entity (e.g., [:TRANSFER*2..4])
+            source_node: The source node of the path
+            target_node: The target node of the path
+            all_ops: List to collect all created operators
+            return_exprs: RETURN clause expressions for path usage analysis
+        """
         # Create data source for source node
         source_ds = DataSourceOperator(entity=source_node)
         all_ops.append(source_ds)
@@ -372,8 +411,41 @@ class LogicalPlan:
         # Update match_clause with remaining WHERE (without source filter)
         match_clause.where_expression = remaining_where
 
-        # Create recursive traversal operator
-        # Pass path_variable to enable edge property collection for relationships(path)
+        # =====================================================================
+        # PATH USAGE ANALYSIS
+        # =====================================================================
+        # Use PathExpressionAnalyzer to determine if edge collection is needed.
+        #
+        # WHY: Collecting edge properties in the CTE is expensive. We only want
+        # to do it when relationships(path) is actually used, for example in:
+        #   - ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+        #   - REDUCE(sum = 0, r IN relationships(path) | sum + r.amount)
+        #   - [r IN relationships(path) | r.timestamp]
+        #
+        # We DON'T need edge collection for:
+        #   - SIZE(path)           -- Only uses path length
+        #   - nodes(path)          -- Only uses node IDs (already in path array)
+        #   - [n IN nodes(path)]   -- Uses nodes, not relationships
+        #
+        # This analysis examines both WHERE clause and RETURN expressions.
+        # =====================================================================
+        path_analyzer = PathExpressionAnalyzer()
+        path_info = path_analyzer.analyze(
+            path_variable=match_clause.path_variable,
+            where_expr=match_clause.where_expression,
+            return_exprs=return_exprs,
+        )
+
+        # Log analysis result for debugging
+        if self._logger:
+            self._logger.log(
+                f"Path analysis for '{match_clause.path_variable}': "
+                f"needs_edge_collection={path_info.needs_edge_collection}, "
+                f"has_pushable_predicates={path_info.has_pushable_predicates}"
+            )
+
+        # Create recursive traversal operator with optimized settings
+        # collect_edges is now data-driven based on actual path usage
         recursive_op = RecursiveTraversalOperator(
             edge_types=edge_types,
             source_node_type=source_node.entity_name,
@@ -386,7 +458,12 @@ class LogicalPlan:
             cte_name=f"paths_{rel.alias or 'r'}",
             source_alias=source_node.alias,
             target_alias=target_node.alias,
-            path_variable=match_clause.path_variable,  # Enable edge collection if path is named
+            path_variable=match_clause.path_variable,
+            # Optimization: Only collect edges when relationships(path) is used
+            collect_edges=path_info.needs_edge_collection,
+            collect_nodes=path_info.needs_node_collection,
+            # TODO: Use path_info.edge_predicates for predicate pushdown
+            # edge_filter=path_info.combined_edge_predicate,
         )
         recursive_op.add_in_operator(source_ds)
         source_ds.add_out_operator(recursive_op)
