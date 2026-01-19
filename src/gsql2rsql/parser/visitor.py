@@ -39,6 +39,7 @@ from gsql2rsql.parser.ast import (
     UnwindClause,
 )
 from gsql2rsql.parser.operators import (
+    AggregationFunction,
     Function,
     try_get_function,
     try_get_operator,
@@ -976,6 +977,8 @@ class CypherVisitor:
             return self.visit(ctx.oC_Reduce())
         if ctx.oC_ExistentialSubquery():
             return self.visit(ctx.oC_ExistentialSubquery())
+        if ctx.oC_PatternPredicate():
+            return self.visit_oC_PatternPredicate(ctx.oC_PatternPredicate())
         # Check for COUNT(*) - it's a token, not a rule
         if hasattr(ctx, "COUNT") and ctx.COUNT():
             return QueryExpressionAggregationFunction(
@@ -1222,6 +1225,50 @@ class CypherVisitor:
             where_expression=where_expression,
             is_negated=False,  # NOT is handled in expression visitor
             subquery=subquery,
+        )
+
+    def visit_oC_PatternPredicate(self, ctx: Any) -> QueryExpressionExists:
+        """Visit a pattern predicate context.
+
+        Grammar:
+        oC_PatternPredicate: oC_RelationshipsPattern ;
+
+        In OpenCypher, a pattern in a boolean context (e.g., WHERE clause) represents
+        an implicit EXISTS check. For example:
+            WHERE (c)-[:HAS_LOAN]->(:Loan)
+        is equivalent to:
+            WHERE EXISTS { (c)-[:HAS_LOAN]->(:Loan) }
+
+        This method converts the pattern into a QueryExpressionExists node.
+        """
+        pattern_entities: list[Entity] = []
+
+        # Visit the relationships pattern to extract entities
+        # oC_RelationshipsPattern: oC_NodePattern ( SP? oC_PatternElementChain )+
+        if ctx.oC_RelationshipsPattern():
+            rel_ctx = ctx.oC_RelationshipsPattern()
+
+            # Get the starting node pattern
+            if rel_ctx.oC_NodePattern():
+                node = self.visit(rel_ctx.oC_NodePattern())
+                if isinstance(node, NodeEntity):
+                    pattern_entities.append(node)
+
+            # Get the chain elements (relationships and nodes)
+            for chain_ctx in rel_ctx.oC_PatternElementChain() or []:
+                chain = self.visit(chain_ctx)
+                if isinstance(chain, list):
+                    pattern_entities.extend(chain)
+                elif isinstance(chain, Entity):
+                    pattern_entities.append(chain)
+
+        # Create an EXISTS expression with the pattern
+        # The NOT operator (if present) is handled by the parent expression visitor
+        return QueryExpressionExists(
+            pattern_entities=pattern_entities,
+            where_expression=None,
+            is_negated=False,
+            subquery=None,
         )
 
     def visit_oC_Parameter(self, ctx: Any) -> QueryExpressionParameter:
