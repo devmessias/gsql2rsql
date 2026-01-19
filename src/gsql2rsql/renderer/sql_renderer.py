@@ -167,6 +167,7 @@ class SQLRenderer:
         graph_schema_provider: ISQLDBSchemaProvider | None = None,
         db_schema_provider: ISQLDBSchemaProvider | None = None,
         enable_column_pruning: bool = True,
+        config: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the SQL renderer.
@@ -177,6 +178,11 @@ class SQLRenderer:
             logger: Optional logger for debugging.
             graph_schema_provider: The graph schema provider (for future use).
             db_schema_provider: The SQL database schema provider.
+            enable_column_pruning: Enable column pruning optimization.
+            config: Optional configuration dictionary.
+                Supported keys:
+                - 'undirected_strategy': Strategy for undirected relationships.
+                  Values: 'union_edges' (default) or 'or_join'
         """
         # Support both old and new parameter names
         self._graph_def = db_schema_provider or graph_def
@@ -198,6 +204,15 @@ class SQLRenderer:
         # inferring them from schema lookups. This makes the renderer "stupid and safe".
         # Set during render_plan() if the plan has been resolved.
         self._resolution_result: ResolutionResult | None = None
+
+        # Configuration
+        self._config = config or {}
+        # Feature flag: undirected relationship optimization strategy
+        # Default: 'union_edges' (Option A - UNION ALL of edges)
+        # Alternative: 'or_join' (current behavior - OR in JOIN condition)
+        self._undirected_strategy = self._config.get(
+            "undirected_strategy", "union_edges"
+        )
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
@@ -1645,6 +1660,9 @@ class SQLRenderer:
             prefix = " " if i == 0 else ","
             lines.append(f"{indent}  {prefix}{field_line}")
 
+        # Check if this join needs undirected optimization
+        needs_undirected_opt = self._should_use_undirected_union_optimization(op)
+
         # FROM left subquery
         lines.append(f"{indent}FROM (")
         lines.append(self._render_operator(left_op, depth + 1))
@@ -1653,14 +1671,24 @@ class SQLRenderer:
         # JOIN type and right subquery
         if op.join_type == JoinType.CROSS:
             lines.append(f"{indent}CROSS JOIN (")
-            lines.append(self._render_operator(right_op, depth + 1))
+            if needs_undirected_opt and isinstance(right_op, DataSourceOperator):
+                lines.append(
+                    self._render_undirected_edge_union(right_op, op, depth + 1)
+                )
+            else:
+                lines.append(self._render_operator(right_op, depth + 1))
             lines.append(f"{indent}) AS {right_var}")
         else:
             join_keyword = (
                 "INNER JOIN" if op.join_type == JoinType.INNER else "LEFT JOIN"
             )
             lines.append(f"{indent}{join_keyword} (")
-            lines.append(self._render_operator(right_op, depth + 1))
+            if needs_undirected_opt and isinstance(right_op, DataSourceOperator):
+                lines.append(
+                    self._render_undirected_edge_union(right_op, op, depth + 1)
+                )
+            else:
+                lines.append(self._render_operator(right_op, depth + 1))
             lines.append(f"{indent}) AS {right_var} ON")
 
             # Render join conditions
@@ -1673,6 +1701,189 @@ class SQLRenderer:
                     lines.append(f"{indent}{prefix}{cond}")
             else:
                 lines.append(f"{indent}  TRUE")
+
+        return "\n".join(lines)
+
+    def _should_use_undirected_union_optimization(
+        self, op: JoinOperator
+    ) -> bool:
+        """
+        Determine if a join should use UNION ALL optimization for undirected
+        relationships.
+
+        The UNION ALL optimization replaces inefficient OR conditions in JOINs
+        with bidirectional edge expansion. This enables hash/merge joins instead
+        of nested loops, improving performance from O(n²) to O(n).
+
+        Example transformation:
+            Before (slow): JOIN ON (p.id = k.source_id OR p.id = k.sink_id)
+            After (fast):  JOIN (SELECT ... UNION ALL SELECT ...) ON p.id = k.node_id
+
+        Args:
+            op: The join operator to check for optimization eligibility.
+
+        Returns:
+            True if both conditions are met:
+            1. Feature flag is enabled (undirected_strategy == 'union_edges')
+            2. Join has EITHER-type join pairs (indicates undirected relationship)
+
+        See Also:
+            - _render_undirected_edge_union(): Generates the UNION ALL subquery
+            - docs/development/UNDIRECTED_OPTIMIZATION_IMPLEMENTATION.md
+        """
+        if self._undirected_strategy != "union_edges":
+            return False
+
+        # Check if any join pair is EITHER type (undirected relationship)
+        return any(
+            pair.pair_type == JoinKeyPairType.EITHER
+            for pair in op.join_pairs
+        )
+
+    def _render_undirected_edge_union(
+        self, edge_op: DataSourceOperator, join_op: JoinOperator, depth: int
+    ) -> str:
+        """
+        Render an edge table with UNION ALL to expand undirected relationships.
+
+        This method implements the "UNION ALL of edges" optimization strategy
+        (Option A) for undirected relationships. Instead of using an OR condition
+        in the JOIN clause (which prevents index usage and forces O(n²) nested
+        loops), we expand edges bidirectionally before joining.
+
+        Performance Impact:
+            - Enables hash/merge join strategies (O(n) vs O(n²))
+            - Allows index usage on join columns
+            - Query planner can optimize join order
+            - Filter pushdown works correctly
+            - Trade-off: Reads edge table twice, but much faster overall
+
+        Example Output:
+            For Cypher: MATCH (p:Person)-[:KNOWS]-(f:Person)
+
+            Generates:
+              SELECT source_id AS _gsql2rsql_k_source_id,
+                     sink_id AS _gsql2rsql_k_sink_id,
+                     since AS _gsql2rsql_k_since
+              FROM graph.Knows
+              UNION ALL
+              SELECT sink_id AS _gsql2rsql_k_source_id,
+                     source_id AS _gsql2rsql_k_sink_id,
+                     since AS _gsql2rsql_k_since
+              FROM graph.Knows
+
+            This allows simple equality joins:
+              JOIN (...) ON p.id = k.source_id
+
+            Instead of inefficient OR joins:
+              JOIN (...) ON (p.id = k.source_id OR p.id = k.sink_id)
+
+        Args:
+            edge_op: The DataSourceOperator for the edge/relationship table.
+            join_op: The JoinOperator containing join pair information.
+            depth: Current indentation depth for SQL formatting.
+
+        Returns:
+            SQL string with UNION ALL subquery expanding edges bidirectionally.
+            Falls back to standard rendering if edge is not a valid relationship.
+
+        Note:
+            This method is only called when _should_use_undirected_union_optimization()
+            returns True. For directed relationships or when the feature flag is
+            disabled, standard rendering is used.
+
+        See Also:
+            - _should_use_undirected_union_optimization(): Detection logic
+            - _render_join_conditions(): Uses simple equality for optimized joins
+            - docs/development/UNDIRECTED_OPTIMIZATION_IMPLEMENTATION.md
+        """
+        indent = self._indent(depth)
+        lines: list[str] = []
+
+        # Get edge schema - first entity field describes the edge
+        if not edge_op.output_schema:
+            return self._render_operator(edge_op, depth)
+
+        entity_field = edge_op.output_schema[0]
+        if not isinstance(entity_field, EntityField):
+            return self._render_operator(edge_op, depth)
+
+        # Get table descriptor
+        table_desc = self._graph_def.get_sql_table_descriptors(
+            entity_field.bound_entity_name
+        )
+        if not table_desc:
+            return self._render_operator(edge_op, depth)
+
+        table_name = table_desc.full_table_name
+        alias = entity_field.field_alias
+
+        # Get source/sink columns
+        source_join = entity_field.rel_source_join_field
+        sink_join = entity_field.rel_sink_join_field
+
+        if not source_join or not sink_join:
+            # Not a relationship or missing join fields
+            return self._render_operator(edge_op, depth)
+
+        source_col = source_join.field_alias
+        sink_col = sink_join.field_alias
+
+        # Collect edge properties from encapsulated fields
+        # Skip the join key fields themselves to avoid duplication
+        skip_fields = {source_col, sink_col}
+        property_fields = [
+            f for f in entity_field.encapsulated_fields
+            if f.field_alias not in skip_fields
+        ]
+
+        # ========== FORWARD DIRECTION: source -> sink ==========
+        # For edge (Alice)-[:KNOWS]->(Bob), this branch represents:
+        #   Alice as source, Bob as sink (original direction)
+        lines.append(f"{indent}SELECT")
+        lines.append(
+            f"{indent}   {source_col} AS "
+            f"{self._get_field_name(alias, source_col)}"
+        )
+        lines.append(
+            f"{indent}  ,{sink_col} AS "
+            f"{self._get_field_name(alias, sink_col)}"
+        )
+        # Include all edge properties (e.g., "since", "weight")
+        for prop_field in property_fields:
+            prop_col = prop_field.field_alias
+            lines.append(
+                f"{indent}  ,{prop_col} AS "
+                f"{self._get_field_name(alias, prop_col)}"
+            )
+        lines.append(f"{indent}FROM")
+        lines.append(f"{indent}  {table_name}")
+
+        # ========== UNION ALL: Combine both directions ==========
+        lines.append(f"{indent}UNION ALL")
+
+        # ========== REVERSE DIRECTION: sink -> source (SWAPPED) ==========
+        # For edge (Alice)-[:KNOWS]->(Bob), this branch represents:
+        #   Bob as source, Alice as sink (reversed for undirected semantics)
+        # NOTE: Column names stay the same (source_col, sink_col) but values swap
+        lines.append(f"{indent}SELECT")
+        lines.append(
+            f"{indent}   {sink_col} AS "
+            f"{self._get_field_name(alias, source_col)}"  # Sink value → source alias
+        )
+        lines.append(
+            f"{indent}  ,{source_col} AS "
+            f"{self._get_field_name(alias, sink_col)}"  # Source value → sink alias
+        )
+        # Edge properties remain the same (not directional)
+        for prop_field in property_fields:
+            prop_col = prop_field.field_alias
+            lines.append(
+                f"{indent}  ,{prop_col} AS "
+                f"{self._get_field_name(alias, prop_col)}"
+            )
+        lines.append(f"{indent}FROM")
+        lines.append(f"{indent}  {table_name}")
 
         return "\n".join(lines)
 
@@ -1700,6 +1911,7 @@ class SQLRenderer:
 
         for field in op.output_schema:
             is_from_left = field.field_alias in left_aliases
+            is_from_right = field.field_alias in right_aliases
 
             if isinstance(field, EntityField):
                 # Entity field - output join keys
@@ -1711,12 +1923,22 @@ class SQLRenderer:
                         # Skip if already projected
                         if key_name not in projected_aliases:
                             # Determine which side of join has this column
+                            # Priority: Check actual column presence first (left_columns/right_columns)
+                            # then fall back to entity alias membership (defensive)
                             if key_name in left_columns:
                                 actual_var = left_var
                             elif key_name in right_columns:
                                 actual_var = right_var
                             else:
-                                actual_var = left_var if is_from_left else right_var
+                                # Fallback: Use entity alias to infer side
+                                # (with defensive validation)
+                                actual_var = self._determine_column_side(
+                                    field.field_alias,
+                                    is_from_left,
+                                    is_from_right,
+                                    left_var,
+                                    right_var,
+                                )
                             fields.append(f"{actual_var}.{key_name} AS {key_name}")
                             projected_aliases.add(key_name)
                 else:
@@ -1733,7 +1955,13 @@ class SQLRenderer:
                             elif src_key in right_columns:
                                 actual_var = right_var
                             else:
-                                actual_var = left_var if is_from_left else right_var
+                                actual_var = self._determine_column_side(
+                                    field.field_alias,
+                                    is_from_left,
+                                    is_from_right,
+                                    left_var,
+                                    right_var,
+                                )
                             fields.append(f"{actual_var}.{src_key} AS {src_key}")
                             projected_aliases.add(src_key)
                     if field.rel_sink_join_field:
@@ -1749,7 +1977,13 @@ class SQLRenderer:
                             elif sink_key in right_columns:
                                 actual_var = right_var
                             else:
-                                actual_var = left_var if is_from_left else right_var
+                                actual_var = self._determine_column_side(
+                                    field.field_alias,
+                                    is_from_left,
+                                    is_from_right,
+                                    left_var,
+                                    right_var,
+                                )
                             fields.append(f"{actual_var}.{sink_key} AS {sink_key}")
                             projected_aliases.add(sink_key)
 
@@ -1783,7 +2017,13 @@ class SQLRenderer:
                             elif field_alias in right_columns:
                                 actual_var = right_var
                             else:
-                                actual_var = left_var if is_from_left else right_var
+                                actual_var = self._determine_column_side(
+                                    field.field_alias,
+                                    is_from_left,
+                                    is_from_right,
+                                    left_var,
+                                    right_var,
+                                )
                             fields.append(f"{actual_var}.{field_alias} AS {field_alias}")
                             projected_aliases.add(field_alias)
 
@@ -1806,7 +2046,13 @@ class SQLRenderer:
                     elif field.field_alias in right_columns:
                         actual_var = right_var
                     else:
-                        actual_var = left_var if is_from_left else right_var
+                        actual_var = self._determine_column_side(
+                            field.field_alias,
+                            is_from_left,
+                            is_from_right,
+                            left_var,
+                            right_var,
+                        )
                     fields.append(f"{actual_var}.{field.field_alias} AS {field.field_alias}")
                     projected_aliases.add(field.field_alias)
 
@@ -1901,6 +2147,78 @@ class SQLRenderer:
                 columns.add(field.field_alias)
         return columns
 
+    def _determine_column_side(
+        self,
+        field_alias: str,
+        is_from_left: bool,
+        is_from_right: bool,
+        left_var: str,
+        right_var: str,
+    ) -> str:
+        """
+        Determine which side of a join a field belongs to (defensive programming).
+
+        This method implements defensive validation to catch bugs in the planner
+        or resolver that might create orphaned fields or ambiguous references.
+
+        Args:
+            field_alias: The field alias to locate (e.g., "p", "k", "f")
+            is_from_left: Whether field is in left output schema
+            is_from_right: Whether field is in right output schema
+            left_var: SQL variable name for left side (e.g., "_left")
+            right_var: SQL variable name for right side (e.g., "_right")
+
+        Returns:
+            The SQL variable name to use (_left or _right)
+
+        Raises:
+            RuntimeError: If field is not found in either side (orphaned field)
+
+        Examples:
+            # Normal case: field only in left
+            >>> _determine_column_side("p", True, False, "_left", "_right")
+            "_left"
+
+            # Normal case: field only in right
+            >>> _determine_column_side("f", False, True, "_left", "_right")
+            "_right"
+
+            # Ambiguous case: field in both (prioritizes left, could log warning)
+            >>> _determine_column_side("shared", True, True, "_left", "_right")
+            "_left"
+
+            # Bug case: field not in either (throws error)
+            >>> _determine_column_side("orphan", False, False, "_left", "_right")
+            RuntimeError: Field 'orphan' not found in left or right join schema
+        """
+        # Case 1: Field exists in both sides (ambiguous - rare but possible)
+        # This can happen if there's a naming collision after join operations.
+        # Prioritize left side for consistency with original logic.
+        if is_from_left and is_from_right:
+            # NOTE: In the future, we could log a warning here if needed
+            # for debugging ambiguous cases, but for now we silently prefer left.
+            return left_var
+
+        # Case 2: Field exists only in left side (normal case)
+        elif is_from_left:
+            return left_var
+
+        # Case 3: Field exists only in right side (normal case)
+        elif is_from_right:
+            return right_var
+
+        # Case 4: Field does NOT exist in either side (BUG in planner/resolver!)
+        # This indicates a serious bug where the planner created a field reference
+        # that wasn't properly included in the join output schemas.
+        # Fail-fast with a clear error message rather than generating invalid SQL.
+        else:
+            raise RuntimeError(
+                f"Field '{field_alias}' not found in left or right join output schemas. "
+                f"This indicates a bug in the query planner or resolver. "
+                f"The field should have been included in one of the join operator's "
+                f"output schemas during query planning."
+            )
+
     def _render_join_conditions(
         self,
         op: JoinOperator,
@@ -1978,8 +2296,8 @@ class SQLRenderer:
                         ),
                     )
                 else:
-                    # EITHER - undirected relationship, needs to match both directions
-                    # Generate: (node.id = rel.source_id OR node.id = rel.sink_id)
+                    # EITHER - undirected relationship (both directions match)
+                    # For Cypher: (a)-[:REL]-(b) matches both (a)-[:REL]->(b) and (a)<-[:REL]-(b)
                     source_key = None
                     sink_key = None
 
@@ -1993,11 +2311,35 @@ class SQLRenderer:
                         )
 
                     if source_key and sink_key:
-                        # Both directions available - generate OR condition
-                        conditions.append(
-                            f"({node_var}.{node_key} = {rel_var}.{source_key} "
-                            f"OR {node_var}.{node_key} = {rel_var}.{sink_key})"
-                        )
+                        # ========== STRATEGY SELECTION: OR vs UNION ALL ==========
+                        if self._undirected_strategy == "union_edges":
+                            # **OPTIMIZED (UNION ALL of edges - default)**
+                            # Edges are already expanded bidirectionally via UNION ALL
+                            # in _render_undirected_edge_union(), so we can use simple
+                            # equality join here. This enables hash/merge joins instead
+                            # of nested loops.
+                            #
+                            # Example:
+                            #   JOIN (... UNION ALL ...) k ON p.id = k.source_id
+                            #
+                            # Performance: O(n) with hash join
+                            conditions.append(
+                                f"{node_var}.{node_key} = {rel_var}.{source_key}"
+                            )
+                        else:
+                            # **LEGACY (OR condition - disabled by default)**
+                            # Use OR to match both directions in a single join.
+                            # This prevents index usage and forces nested loop joins.
+                            #
+                            # Example:
+                            #   JOIN k ON (p.id = k.source_id OR p.id = k.sink_id)
+                            #
+                            # Performance: O(n²) with nested loop
+                            # NOTE: Only use for small datasets or debugging
+                            conditions.append(
+                                f"({node_var}.{node_key} = {rel_var}.{source_key} "
+                                f"OR {node_var}.{node_key} = {rel_var}.{sink_key})"
+                            )
                         continue
                     elif source_key:
                         rel_key = source_key
