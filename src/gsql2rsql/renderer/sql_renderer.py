@@ -1155,8 +1155,9 @@ class SQLRenderer:
         cte_name = op.cte_name
         lines: list[str] = []
 
-        # Use the input operator as context for expression rendering
-        context_op = op.in_operator if op.in_operator else op
+        # Use the AggregationBoundaryOperator itself as context for expression rendering
+        # The expressions in group_keys and aggregates were resolved against this operator
+        context_op = op
 
         lines.append(f"{cte_name} AS (")
 
