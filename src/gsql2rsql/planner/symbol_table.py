@@ -191,7 +191,9 @@ class SymbolTable:
         self._scopes.pop()
         self._current_level -= 1
 
-    def clear_scope_for_aggregation(self, reason: str = "WITH aggregation") -> None:
+    def clear_scope_for_aggregation(
+        self, reason: str = "WITH aggregation", max_operator_id: int | None = None
+    ) -> None:
         """Clear current scope symbols for aggregation boundary.
 
         In Cypher, after an aggregating WITH, only the projected variables
@@ -202,15 +204,25 @@ class SymbolTable:
 
         Args:
             reason: Explanation for why symbols went out of scope
+            max_operator_id: If provided, only clear symbols defined by operators
+                with ID <= max_operator_id. This prevents clearing symbols from
+                downstream operators that were defined in Phase 1.
         """
-        # Record all symbols as going out of scope
-        for scope in self._scopes:
-            for entry in scope.symbols.values():
-                self._out_of_scope.append((entry, f"Not projected through {reason}"))
+        # Collect symbols to move to out-of-scope
+        symbols_to_clear: list[tuple[str, SymbolEntry]] = []
 
-        # Clear all scopes except global structure
         for scope in self._scopes:
-            scope.symbols.clear()
+            for name, entry in list(scope.symbols.items()):
+                # If max_operator_id is specified, only clear symbols from upstream operators
+                if max_operator_id is None or entry.definition_operator_id <= max_operator_id:
+                    symbols_to_clear.append((name, entry))
+                    self._out_of_scope.append((entry, f"Not projected through {reason}"))
+
+        # Clear the collected symbols
+        for scope in self._scopes:
+            for name, entry in symbols_to_clear:
+                if name in scope.symbols and scope.symbols[name] == entry:
+                    del scope.symbols[name]
 
     def define(self, name: str, entry: SymbolEntry) -> None:
         """Define a symbol in the current scope.
@@ -312,6 +324,23 @@ class SymbolTable:
             List of SymbolInfo objects for all visible symbols
         """
         return [entry.to_symbol_info() for entry in self.all_entries()]
+
+    def lookup_out_of_scope(self, name: str) -> SymbolEntry | None:
+        """Look up a symbol in the out-of-scope list.
+
+        This is used for special cases like AggregationBoundaryOperator where
+        we need to resolve expressions that reference pre-aggregation variables.
+
+        Args:
+            name: Variable name to look up
+
+        Returns:
+            SymbolEntry if found in out-of-scope list, None otherwise
+        """
+        for entry, _ in self._out_of_scope:
+            if entry.name == name:
+                return entry
+        return None
 
     def get_out_of_scope_symbols(self) -> list[tuple[SymbolInfo, str]]:
         """Get symbols that went out of scope, with reasons.
