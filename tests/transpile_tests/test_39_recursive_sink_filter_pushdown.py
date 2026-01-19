@@ -314,7 +314,7 @@ class TestRecursiveTraversalOperatorSinkFilter:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
-        plan.resolve(original_query=cypher)
+        plan.resolve(original_query=query)
 
         # Find the RecursiveTraversalOperator
         recursive_op = None
@@ -371,7 +371,7 @@ class TestLogicalPlanSinkFilterExtraction:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
-        plan.resolve(original_query=cypher)
+        plan.resolve(original_query=query)
 
         # Find the RecursiveTraversalOperator
         recursive_op = None
@@ -397,7 +397,7 @@ class TestLogicalPlanSinkFilterExtraction:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
-        plan.resolve(original_query=cypher)
+        plan.resolve(original_query=query)
 
         # Find the RecursiveTraversalOperator
         recursive_op = None
@@ -485,7 +485,7 @@ class TestSQLRendererSinkFilter:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
-        plan.resolve(original_query=cypher)
+        plan.resolve(original_query=query)
         optimize_plan(plan)
 
         sql = SQLRenderer(db_schema_provider=self.sql_schema).render_plan(plan)

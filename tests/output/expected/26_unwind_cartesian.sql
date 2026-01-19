@@ -13,6 +13,8 @@ from (
  from (
  select
  id as _gsql2rsql_a_id
+ ,tags as _gsql2rsql_a_tags
+ ,transactionIds as _gsql2rsql_a_transactionIds
  from
  graph.Account
  ) as _unwind_source,
