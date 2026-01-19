@@ -235,6 +235,35 @@ diff-all:  ## Show all diffs between actual and expected SQL
 	done
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Documentation
+# ─────────────────────────────────────────────────────────────────────────────
+
+docs-install:  ## Install documentation dependencies
+	pip install -r requirements-docs.txt
+
+docs-generate-artifacts:  ## Generate transpilation artifacts for examples
+	$(UV) run python examples/generate_artifacts.py
+
+docs-generate-pages:  ## Generate documentation pages from artifacts
+	$(UV) run python scripts/generate_example_docs.py
+
+docs-generate: docs-generate-artifacts docs-generate-pages  ## Generate all documentation content
+
+docs-serve:  ## Serve documentation locally
+	mkdocs serve
+
+docs-build:  ## Build documentation site
+	mkdocs build
+
+docs-deploy:  ## Deploy documentation to GitHub Pages
+	mkdocs gh-deploy --force
+
+docs-clean:  ## Clean documentation build artifacts
+	rm -rf site/ examples/out/ docs/examples/*.md
+
+docs-full: docs-generate docs-build  ## Generate and build documentation
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -251,3 +280,96 @@ tree:  ## Show project structure
 
 watch-test:  ## Run tests on file change (requires entr)
 	@find src tests -name "*.py" | entr -c make test
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Release & Publishing
+# ─────────────────────────────────────────────────────────────────────────────
+
+build:  ## Build package for distribution
+	$(UV) pip install build
+	python -m build
+
+check-release:  ## Check if package is ready for release
+	@echo "Checking package..."
+	$(UV) pip install twine
+	python -m build
+	twine check dist/*
+
+version-bump-patch:  ## Bump patch version (0.1.0 -> 0.1.1)
+	$(UV) pip install python-semantic-release
+	semantic-release version --patch
+
+version-bump-minor:  ## Bump minor version (0.1.0 -> 0.2.0)
+	$(UV) pip install python-semantic-release
+	semantic-release version --minor
+
+version-bump-major:  ## Bump major version (0.1.0 -> 1.0.0)
+	$(UV) pip install python-semantic-release
+	semantic-release version --major
+
+changelog:  ## Generate changelog from commits
+	$(UV) pip install python-semantic-release
+	semantic-release changelog
+
+release-dry-run:  ## Preview what would be released
+	$(UV) pip install python-semantic-release
+	semantic-release version --no-commit --no-tag --no-push
+
+release:  ## Create a new release (CI/CD recommended)
+	@echo "⚠️  Warning: This will create a new release based on commit history"
+	@echo "Use 'make release-dry-run' to preview changes first"
+	@read -p "Continue? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		$(UV) pip install python-semantic-release && \
+		semantic-release version && \
+		git push --follow-tags; \
+	fi
+
+publish-test:  ## Publish to TestPyPI
+	$(UV) pip install twine
+	python -m build
+	twine upload --repository testpypi dist/*
+
+publish:  ## Publish to PyPI (use GitHub Actions instead)
+	@echo "⚠️  Warning: Use GitHub Actions for releases"
+	@echo "Manual publish is not recommended"
+	@read -p "Continue anyway? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		$(UV) pip install twine && \
+		python -m build && \
+		twine upload dist/*; \
+	fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Git Commit Helpers (Conventional Commits)
+# ─────────────────────────────────────────────────────────────────────────────
+
+commit-feat:  ## Create a feature commit (triggers minor version bump)
+	@read -p "Feature description: " desc; \
+	git add -A && git commit -m "feat: $$desc"
+
+commit-fix:  ## Create a fix commit (triggers patch version bump)
+	@read -p "Fix description: " desc; \
+	git add -A && git commit -m "fix: $$desc"
+
+commit-docs:  ## Create a docs commit (no version bump)
+	@read -p "Docs description: " desc; \
+	git add -A && git commit -m "docs: $$desc"
+
+commit-chore:  ## Create a chore commit (no version bump)
+	@read -p "Chore description: " desc; \
+	git add -A && git commit -m "chore: $$desc"
+
+commit-test:  ## Create a test commit (no version bump)
+	@read -p "Test description: " desc; \
+	git add -A && git commit -m "test: $$desc"
+
+commit-refactor:  ## Create a refactor commit (no version bump)
+	@read -p "Refactor description: " desc; \
+	git add -A && git commit -m "refactor: $$desc"
+
+commit-perf:  ## Create a performance commit (triggers patch version bump)
+	@read -p "Performance improvement: " desc; \
+	git add -A && git commit -m "perf: $$desc"
