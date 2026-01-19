@@ -186,6 +186,7 @@ def transpile_query(
         ast = parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, schema_provider)
         optimize_plan(plan)
+        plan.resolve(query)  # Resolve column references before rendering
         renderer = SQLRenderer(schema_provider)
         sql = renderer.render_plan(plan)
         return sql, None
