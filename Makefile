@@ -32,6 +32,9 @@ test:  ## Run tests
 test-cov:  ## Run tests with coverage
 	$(UV) run pytest tests/ --cov=src/gsql2rsql --cov-report=term-missing --cov-report=html
 
+test-no-pyspark:  ## Run all tests except PySpark tests
+	$(UV) run pytest tests/ -v --ignore=tests/test_examples_with_pyspark.py --ignore=tests/test_pyspark_basic.py
+
 test-bfs:  ## Run BFS/recursive tests only
 	$(UV) run pytest tests/test_renderer.py::TestBFSWithRecursive -v
 
