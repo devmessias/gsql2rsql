@@ -27,14 +27,14 @@ Key aspects:
 WITH RECURSIVE _recursive_cte AS (
   -- Base case: Zero-length paths (depth = 0)
   SELECT
-     __p_id AS start_node
-    ,__p_id AS end_node
+     _gsql2rsql_p_id AS start_node
+    ,_gsql2rsql_p_id AS end_node
     ,0 AS depth
-    ,ARRAY(__p_id) AS path
+    ,ARRAY(_gsql2rsql_p_id) AS path
   FROM (
     SELECT
-       id AS __p_id
-      ,name AS __p_name
+       id AS _gsql2rsql_p_id
+      ,name AS _gsql2rsql_p_name
     FROM
       `graph`.`Person`
   ) AS _source
@@ -43,19 +43,19 @@ WITH RECURSIVE _recursive_cte AS (
 
   -- Base case: Direct edges (depth = 1)
   SELECT
-     __p_id AS start_node
+     _gsql2rsql_p_id AS start_node
     ,_edge.target_id AS end_node
     ,1 AS depth
-    ,ARRAY(__p_id, _edge.target_id) AS path
+    ,ARRAY(_gsql2rsql_p_id, _edge.target_id) AS path
   FROM (
     SELECT
-       id AS __p_id
-      ,name AS __p_name
+       id AS _gsql2rsql_p_id
+      ,name AS _gsql2rsql_p_name
     FROM
       `graph`.`Person`
   ) AS _source
   INNER JOIN `graph`.`Knows` AS _edge
-    ON __p_id = _edge.source_id
+    ON _gsql2rsql_p_id = _edge.source_id
 
   UNION ALL
 
@@ -72,16 +72,16 @@ WITH RECURSIVE _recursive_cte AS (
     AND NOT ARRAY_CONTAINS(_cte.path, _edge.target_id)
 )
 SELECT DISTINCT
-   __f_name AS name
+   _gsql2rsql_f_name AS name
 FROM _recursive_cte AS _cte
 INNER JOIN (
   SELECT
-     id AS __f_id
-    ,name AS __f_name
+     id AS _gsql2rsql_f_id
+    ,name AS _gsql2rsql_f_name
   FROM
     `graph`.`Person`
 ) AS _target
-  ON _cte.end_node = __f_id
+  ON _cte.end_node = _gsql2rsql_f_id
 WHERE _cte.depth >= 0
   AND _cte.depth <= 2
 ```
@@ -107,13 +107,13 @@ RETURN f.name
 ```sql
 WITH RECURSIVE _recursive_cte AS (
   -- Only depth=0 base case
-  SELECT __p_id AS start_node, __p_id AS end_node, 0 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _gsql2rsql_p_id AS end_node, 0 AS depth, ...
   FROM ... WHERE name = 'Alice'
   -- No depth=1 or recursive case needed since max_hops=0
 )
-SELECT __f_name AS name
+SELECT _gsql2rsql_f_name AS name
 FROM _recursive_cte
-JOIN Person f ON _cte.end_node = __f_id
+JOIN Person f ON _cte.end_node = _gsql2rsql_f_id
 WHERE _cte.depth >= 0 AND _cte.depth <= 0  -- Only depth=0
 ```
 
@@ -130,7 +130,7 @@ RETURN DISTINCT f.name
 ```sql
 WITH RECURSIVE _recursive_cte AS (
   -- Base case: depth=0
-  SELECT __p_id AS start_node, __p_id AS end_node, 0 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _gsql2rsql_p_id AS end_node, 0 AS depth, ...
   UNION ALL
   -- Base case: depth=1
   SELECT ...
@@ -139,7 +139,7 @@ WITH RECURSIVE _recursive_cte AS (
   SELECT ...
   WHERE NOT ARRAY_CONTAINS(_cte.path, _edge.target_id)  -- Only cycle check, no depth < N
 )
-SELECT DISTINCT __f_name AS name
+SELECT DISTINCT _gsql2rsql_f_name AS name
 FROM _recursive_cte
 WHERE _cte.depth >= 0  -- No upper bound
 ```
@@ -157,18 +157,18 @@ RETURN DISTINCT f.name
 ```sql
 WITH RECURSIVE _recursive_cte AS (
   -- Base case: depth=0 (same as single edge type)
-  SELECT __p_id AS start_node, __p_id AS end_node, 0 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _gsql2rsql_p_id AS end_node, 0 AS depth, ...
 
   UNION ALL
 
   -- Base case: depth=1 with multiple edge tables
-  SELECT __p_id AS start_node, _edge.target_id AS end_node, 1 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _edge.target_id AS end_node, 1 AS depth, ...
   FROM _source
   INNER JOIN `graph`.`Knows` AS _edge ON ...
 
   UNION ALL
 
-  SELECT __p_id AS start_node, _edge.target_id AS end_node, 1 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _edge.target_id AS end_node, 1 AS depth, ...
   FROM _source
   INNER JOIN `graph`.`Follows` AS _edge ON ...
 
@@ -187,7 +187,7 @@ WITH RECURSIVE _recursive_cte AS (
   INNER JOIN `graph`.`Follows` AS _edge ON ...
   WHERE _cte.depth < 2 AND cycle_detection
 )
-SELECT DISTINCT __f_name AS name
+SELECT DISTINCT _gsql2rsql_f_name AS name
 FROM _recursive_cte
 WHERE _cte.depth >= 0 AND _cte.depth <= 2
 ```
@@ -205,9 +205,9 @@ RETURN DISTINCT f.name
 ```sql
 WITH RECURSIVE _recursive_cte AS (
   -- Depth=0: Only Alice (filter applied to source)
-  SELECT __p_id AS start_node, __p_id AS end_node, 0 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _gsql2rsql_p_id AS end_node, 0 AS depth, ...
   FROM (
-    SELECT id AS __p_id, name AS __p_name
+    SELECT id AS _gsql2rsql_p_id, name AS _gsql2rsql_p_name
     FROM `graph`.`Person`
     WHERE name = 'Alice'  -- ← Filter here
   ) AS _source
@@ -215,9 +215,9 @@ WITH RECURSIVE _recursive_cte AS (
   UNION ALL
 
   -- Depth=1: Alice's direct friends
-  SELECT __p_id AS start_node, _edge.target_id, 1 AS depth, ...
+  SELECT _gsql2rsql_p_id AS start_node, _edge.target_id, 1 AS depth, ...
   FROM (
-    SELECT id AS __p_id, name AS __p_name
+    SELECT id AS _gsql2rsql_p_id, name AS _gsql2rsql_p_name
     FROM `graph`.`Person`
     WHERE name = 'Alice'  -- ← Filter here too
   ) AS _source
@@ -246,14 +246,14 @@ WITH RECURSIVE _recursive_cte AS (
   -- Depth=0, depth=1, recursive cases (no filter here)
   ...
 )
-SELECT DISTINCT __f_name AS name
+SELECT DISTINCT _gsql2rsql_f_name AS name
 FROM _recursive_cte
 JOIN (
-  SELECT id AS __f_id, name AS __f_name, age AS __f_age
+  SELECT id AS _gsql2rsql_f_id, name AS _gsql2rsql_f_name, age AS _gsql2rsql_f_age
   FROM `graph`.`Person`
-) AS _target ON _cte.end_node = __f_id
+) AS _target ON _cte.end_node = _gsql2rsql_f_id
 WHERE _cte.depth >= 0 AND _cte.depth <= 2
-  AND __f_age > 30  -- ← Filter on final results
+  AND _gsql2rsql_f_age > 30  -- ← Filter on final results
 ```
 
 ## Operator Analysis

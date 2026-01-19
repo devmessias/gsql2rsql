@@ -16,8 +16,8 @@ This query retrieves all nodes labeled `Person` where the `name` property equals
 
 ```sql
 SELECT
-  __p_id AS `p.id`,
-  __p_name AS `p.name`
+  _gsql2rsql_p_id AS `p.id`,
+  _gsql2rsql_p_name AS `p.name`
 FROM `dbo.Person` AS p
 WHERE
   p.name = 'Alice'

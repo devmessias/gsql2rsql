@@ -1,12 +1,12 @@
 """Test 43: Bare entity variable in GROUP BY clause.
 
 Validates that when a bare entity variable (like `l`) is used in a WITH clause
-with aggregations, it gets properly resolved to its ID column (like `__l_id`)
+with aggregations, it gets properly resolved to its ID column (like `_gsql2rsql_l_id`)
 instead of being rendered as a bare variable name.
 
 This is a regression test for the bug where:
   WITH c1, c2, l, AVG(a1.balance) AS avg_bal
-produces GROUP BY with bare 'l' instead of '__l_id'.
+produces GROUP BY with bare 'l' instead of '_gsql2rsql_l_id'.
 """
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
@@ -161,13 +161,13 @@ class TestBareEntityInGroupBy:
         sql = self._transpile(cypher)
 
         # The SQL should NOT contain bare 'l' or 'c' in GROUP BY
-        # Instead it should have __c_id and __l_id
+        # Instead it should have _gsql2rsql_c_id and _gsql2rsql_l_id
         assert ", l," not in sql.lower(), f"Found bare 'l' in SQL:\n{sql}"
         assert ", c," not in sql.lower(), f"Found bare 'c' in SQL:\n{sql}"
 
         # Should contain the proper column references
-        assert "__l_id" in sql.lower() or "__l_" in sql.lower(), f"Missing __l_ reference in SQL:\n{sql}"
-        assert "__c_id" in sql.lower() or "__c_" in sql.lower(), f"Missing __c_ reference in SQL:\n{sql}"
+        assert "_gsql2rsql_l_id" in sql.lower() or "_gsql2rsql_l_" in sql.lower(), f"Missing _gsql2rsql_l_ reference in SQL:\n{sql}"
+        assert "_gsql2rsql_c_id" in sql.lower() or "_gsql2rsql_c_" in sql.lower(), f"Missing _gsql2rsql_c_ reference in SQL:\n{sql}"
 
     def test_coborrower_scenario(self) -> None:
         """Test the exact co-borrower scenario that triggered the bug.
@@ -204,7 +204,7 @@ class TestBareEntityInGroupBy:
             f"Found bare 'l' variable in GROUP BY:\n{sql}"
 
         # Verify proper column references exist
-        assert "__l_id" in sql or "__l_" in sql, f"Missing __l_ column reference:\n{sql}"
+        assert "_gsql2rsql_l_id" in sql or "_gsql2rsql_l_" in sql, f"Missing _gsql2rsql_l_ column reference:\n{sql}"
 
     def test_multiple_bare_entities_in_with(self) -> None:
         """Test multiple bare entity variables in WITH clause."""

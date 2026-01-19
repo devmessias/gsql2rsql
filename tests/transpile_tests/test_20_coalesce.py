@@ -126,9 +126,9 @@ class TestCoalesce:
         sql_upper = sql.upper()
         assert "COALESCE" in sql_upper, "Should have COALESCE function"
         # Should reference all properties
-        assert "__p_nickname" in sql.lower() or "p_nickname" in sql.lower()
-        assert "__p_alias" in sql.lower() or "p_alias" in sql.lower()
-        assert "__p_name" in sql.lower() or "p_name" in sql.lower()
+        assert "_gsql2rsql_p_nickname" in sql.lower() or "p_nickname" in sql.lower()
+        assert "_gsql2rsql_p_alias" in sql.lower() or "p_alias" in sql.lower()
+        assert "_gsql2rsql_p_name" in sql.lower() or "p_name" in sql.lower()
 
     def test_coalesce_in_where_clause(self) -> None:
         """Test COALESCE in WHERE filter."""

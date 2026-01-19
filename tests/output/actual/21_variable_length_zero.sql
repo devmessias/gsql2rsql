@@ -32,7 +32,7 @@ with recursive
  and not array_contains(p.visited, e.target_id)
  )
 select distinct
- __f_name as name
+ _gsql2rsql_f_name as name
 from (
  select
  sink.id as __f_id

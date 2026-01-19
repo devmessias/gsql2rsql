@@ -132,5 +132,5 @@ class TestSimpleNodeLookup:
         sql = self._transpile(cypher)
 
         # Should have internal field names for projected properties
-        assert "__p_id" in sql, "Expected id property projection"
-        assert "__p_name" in sql, "Expected name property projection"
+        assert "_gsql2rsql_p_id" in sql, "Expected id property projection"
+        assert "_gsql2rsql_p_name" in sql, "Expected name property projection"

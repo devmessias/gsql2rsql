@@ -140,7 +140,7 @@ class TestRecursiveSinkFilterPushdown:
                   NOT at the outermost query level.
 
         CURRENT (suboptimal):
-            SELECT ... FROM (...) AS _proj WHERE (__b_risk_score) > (70)
+            SELECT ... FROM (...) AS _proj WHERE (_gsql2rsql_b_risk_score) > (70)
 
         GOAL (optimized):
             ...JOIN sink... WHERE p.depth >= 2 AND (sink.risk_score) > (70)
@@ -155,11 +155,11 @@ class TestRecursiveSinkFilterPushdown:
         # Goal: sink filter should be in WHERE clause of recursive join,
         # NOT at the outer level after _proj
 
-        # Check: filter should NOT be at outer level (after _proj with __b_ prefix)
+        # Check: filter should NOT be at outer level (after _proj with _gsql2rsql_b_ prefix)
         proj_idx = sql.find('_proj')
         if proj_idx != -1:
             outer_part = sql[proj_idx:]
-            filter_at_outer_level = '__b_risk_score' in outer_part and '70' in outer_part
+            filter_at_outer_level = '_gsql2rsql_b_risk_score' in outer_part and '70' in outer_part
         else:
             filter_at_outer_level = False
 

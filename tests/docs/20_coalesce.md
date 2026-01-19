@@ -24,12 +24,12 @@ Key aspects:
 
 ```sql
 SELECT
-  COALESCE(__p_nickname, __p_name) AS displayName
+  COALESCE(_gsql2rsql_p_nickname, _gsql2rsql_p_name) AS displayName
 FROM (
   SELECT
-     id AS __p_id
-    ,name AS __p_name
-    ,nickname AS __p_nickname
+     id AS _gsql2rsql_p_id
+    ,name AS _gsql2rsql_p_name
+    ,nickname AS _gsql2rsql_p_nickname
   FROM
     `graph`.`Person`
 ) AS _proj
@@ -47,7 +47,7 @@ RETURN COALESCE(p.nickname, 'Unknown') AS displayName
 Expected SQL:
 ```sql
 SELECT
-  COALESCE(__p_nickname, 'Unknown') AS displayName
+  COALESCE(_gsql2rsql_p_nickname, 'Unknown') AS displayName
 FROM ...
 ```
 
@@ -61,7 +61,7 @@ RETURN COALESCE(p.nickname, p.alias, p.name, 'Anonymous') AS displayName
 Expected SQL:
 ```sql
 SELECT
-  COALESCE(__p_nickname, __p_alias, __p_name, 'Anonymous') AS displayName
+  COALESCE(_gsql2rsql_p_nickname, _gsql2rsql_p_alias, _gsql2rsql_p_name, 'Anonymous') AS displayName
 FROM ...
 ```
 
@@ -75,10 +75,10 @@ RETURN p.name
 
 Expected SQL:
 ```sql
-SELECT __p_name AS name
+SELECT _gsql2rsql_p_name AS name
 FROM (
   SELECT * FROM (...)
-  WHERE COALESCE(__p_age, 0) > 18
+  WHERE COALESCE(_gsql2rsql_p_age, 0) > 18
 ) AS _proj
 ```
 
@@ -92,10 +92,10 @@ RETURN COALESCE(p.city, 'Unknown') AS city, COUNT(p) AS count
 Expected SQL:
 ```sql
 SELECT
-  COALESCE(__p_city, 'Unknown') AS city,
+  COALESCE(_gsql2rsql_p_city, 'Unknown') AS city,
   COUNT(*) AS count
 FROM ...
-GROUP BY COALESCE(__p_city, 'Unknown')
+GROUP BY COALESCE(_gsql2rsql_p_city, 'Unknown')
 ```
 
 ## Operator Analysis

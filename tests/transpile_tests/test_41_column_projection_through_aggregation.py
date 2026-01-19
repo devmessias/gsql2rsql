@@ -72,8 +72,8 @@ def _verify_column_projected_in_group_by_output(sql: str, column_name: str) -> N
 
         # Check if the column is in the projection
         # The column should be output (either as source or as alias)
-        # e.g., "__c_name AS something" or "something AS __c_name"
-        # or just "__c_name" in the projection
+        # e.g., "_gsql2rsql_c_name AS something" or "something AS _gsql2rsql_c_name"
+        # or just "_gsql2rsql_c_name" in the projection
 
         # Also check if it's an aggregation-only query that shouldn't need the column
         has_from_after_select = 'FROM' in projection_text.upper()
@@ -298,7 +298,7 @@ class TestColumnProjectionThroughAggregation:
             WITH c.name AS city, pop
             RETURN city
 
-        Expected: The SQL should correctly project __c_name through the
+        Expected: The SQL should correctly project _gsql2rsql_c_name through the
         aggregation so it's available for the outer WITH clause.
         """
         cypher = """
@@ -310,17 +310,17 @@ class TestColumnProjectionThroughAggregation:
         sql = self._transpile(cypher)
 
         # The city name must be accessible after the aggregation
-        # This means __c_name must be projected in the GROUP BY subquery output
+        # This means _gsql2rsql_c_name must be projected in the GROUP BY subquery output
         # Check that city appears in final output
         assert "city" in sql.lower(), "Expected 'city' in final projection"
 
         # The SQL should have GROUP BY
         assert_has_group_by(sql)
 
-        # CRITICAL BUG CHECK: Verify __c_name is projected through the GROUP BY
-        # This is the bug: the SELECT before GROUP BY only outputs __c_id, not __c_name
-        # After GROUP BY, __c_name is not available, causing "column not found" errors
-        assert_column_available_after_group_by(sql, "__c_name")
+        # CRITICAL BUG CHECK: Verify _gsql2rsql_c_name is projected through the GROUP BY
+        # This is the bug: the SELECT before GROUP BY only outputs _gsql2rsql_c_id, not _gsql2rsql_c_name
+        # After GROUP BY, _gsql2rsql_c_name is not available, causing "column not found" errors
+        assert_column_available_after_group_by(sql, "_gsql2rsql_c_name")
 
     def test_node_property_after_aggregation_with_filter(self) -> None:
         """Test the exact bug scenario from Query 26.
@@ -350,8 +350,8 @@ class TestColumnProjectionThroughAggregation:
         assert "order by" in sql.lower(), "Expected ORDER BY clause"
 
         # The critical check: c.name must be available after aggregation
-        # After the GROUP BY, we need __c_name to be in scope
-        # The fix should ensure __c_name is projected through the aggregation
+        # After the GROUP BY, we need _gsql2rsql_c_name to be in scope
+        # The fix should ensure _gsql2rsql_c_name is projected through the aggregation
 
     def test_multiple_properties_after_aggregation(self) -> None:
         """Test accessing multiple node properties after aggregation."""

@@ -1,15 +1,13 @@
 select
- __p_id as p
- ,__p_id as __p_id
- ,__p_name as __p_name
+ _gsql2rsql_p_id as p
 from (
  select *
  from (
  select
- id as __p_id
- ,name as __p_name
+ id as _gsql2rsql_p_id
+ ,name as _gsql2rsql_p_name
  from
  Person
  ) as _filter
- where (__p_name) = ('Alice')
+ where (_gsql2rsql_p_name) = ('Alice')
 ) as _proj

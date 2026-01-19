@@ -133,9 +133,9 @@ class TestSQLRenderer:
             variable_name="p",
             property_name="name",
         )
-        # The renderer generates internal field names with prefix
+        # The renderer generates internal field names with _gsql2rsql_ prefix
         result = self.renderer._get_field_name(expr.variable_name, expr.property_name)
-        assert result == "__p_name"
+        assert result == "_gsql2rsql_p_name"
 
 
 class TestDatabricksSqlTypes:

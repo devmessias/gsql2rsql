@@ -32,15 +32,15 @@ with recursive
  and not array_contains(p.visited, e.target_id)
  )
 select distinct
- __f_name as name
+ _gsql2rsql_f_name as name
 from (
  select
- sink.id as __f_id
- ,sink.name as __f_name
- ,sink.age as __f_age
- ,source.id as __p_id
- ,source.name as __p_name
- ,source.age as __p_age
+ sink.id as _gsql2rsql_f_id
+ ,sink.name as _gsql2rsql_f_name
+ ,sink.age as _gsql2rsql_f_age
+ ,source.id as _gsql2rsql_p_id
+ ,source.name as _gsql2rsql_p_name
+ ,source.age as _gsql2rsql_p_age
  ,p.start_node
  ,p.end_node
  ,p.depth

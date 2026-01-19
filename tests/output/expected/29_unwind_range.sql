@@ -1,15 +1,15 @@
-SELECT 
-   __a_id AS id
-  ,idx AS idx
-FROM (
-  SELECT
-     _unwind_source.*
-    ,idx
-  FROM (
-    SELECT
-       id AS __a_id
-    FROM
-      `graph`.`Account`
-  ) AS _unwind_source,
-  EXPLODE(SEQUENCE(0, 5)) AS _exploded(idx)
-) AS _proj
+select
+ _gsql2rsql_a_id as id
+ ,idx as idx
+from (
+ select
+ _unwind_source.*
+ ,idx
+ from (
+ select
+ id as _gsql2rsql_a_id
+ from
+ graph.Account
+ ) as _unwind_source,
+ EXPLODE(SEQUENCE(0, 5)) as _exploded(idx)
+) as _proj

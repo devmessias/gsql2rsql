@@ -1,18 +1,54 @@
---- expected+++ actual@@ -3,18 +3,13 @@ from (
+--- expected+++ actual@@ -1,38 +1,38 @@ select distinct
+- __f_name as name
++ _gsql2rsql_f_name as name
+ from (
   select
-  _left.__p_id as __p_id
-- ,_left.__p_name as __p_name
-- ,_left.__p_age as __p_age
-  ,_left.___anon1_source_id as ___anon1_source_id
-  ,_left.___anon1_target_id as ___anon1_target_id
-  ,_right.__f_id as __f_id
-  ,_right.__f_name as __f_name
-- ,_right.__f_age as __f_age
+- _left.__p_id as __p_id
+- ,_left.___anon1_source_id as ___anon1_source_id
+- ,_left.___anon1_target_id as ___anon1_target_id
+- ,_right.__f_id as __f_id
+- ,_right.__f_name as __f_name
++ _left._gsql2rsql_p_id as _gsql2rsql_p_id
++ ,_left._gsql2rsql__anon1_source_id as _gsql2rsql__anon1_source_id
++ ,_left._gsql2rsql__anon1_target_id as _gsql2rsql__anon1_target_id
++ ,_right._gsql2rsql_f_id as _gsql2rsql_f_id
++ ,_right._gsql2rsql_f_name as _gsql2rsql_f_name
   from (
   select
-  _left.__p_id as __p_id
-- ,_left.__p_name as __p_name
-- ,_left.__p_age as __p_age
-  ,_right.___anon1_source_id as ___anon1_source_id
-  ,_right.___anon1_target_id as ___anon1_target_id
+- _left.__p_id as __p_id
+- ,_right.___anon1_source_id as ___anon1_source_id
+- ,_right.___anon1_target_id as ___anon1_target_id
++ _left._gsql2rsql_p_id as _gsql2rsql_p_id
++ ,_right._gsql2rsql__anon1_source_id as _gsql2rsql__anon1_source_id
++ ,_right._gsql2rsql__anon1_target_id as _gsql2rsql__anon1_target_id
   from (
+  select
+- id as __p_id
++ id as _gsql2rsql_p_id
+  from
+  graph.Person
+  ) as _left
+  inner join (
+  select
+- source_id as ___anon1_source_id
+- ,target_id as ___anon1_target_id
++ source_id as _gsql2rsql__anon1_source_id
++ ,target_id as _gsql2rsql__anon1_target_id
+  from
+  graph.Knows
+  ) as _right on
+- _left.__p_id = _right.___anon1_source_id
++ _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_source_id
+  ) as _left
+  inner join (
+  select
+- id as __f_id
+- ,name as __f_name
++ id as _gsql2rsql_f_id
++ ,name as _gsql2rsql_f_name
+  from
+  graph.Person
+  ) as _right on
+- _right.__f_id = _left.___anon1_target_id
++ _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_target_id
+ ) as _proj

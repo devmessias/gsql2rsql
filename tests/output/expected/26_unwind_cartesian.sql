@@ -1,22 +1,22 @@
-SELECT 
-   __a_id AS id
-  ,tag AS tag
-  ,txId AS txId
-FROM (
-  SELECT
-     _unwind_source.*
-    ,txId
-  FROM (
-    SELECT
-       _unwind_source.*
-      ,tag
-    FROM (
-      SELECT
-         id AS __a_id
-      FROM
-        `graph`.`Account`
-    ) AS _unwind_source,
-    EXPLODE(__a_tags) AS _exploded(tag)
-  ) AS _unwind_source,
-  EXPLODE(__a_transactionIds) AS _exploded(txId)
-) AS _proj
+select
+ _gsql2rsql_a_id as id
+ ,tag as tag
+ ,txId as txId
+from (
+ select
+ _unwind_source.*
+ ,txId
+ from (
+ select
+ _unwind_source.*
+ ,tag
+ from (
+ select
+ id as _gsql2rsql_a_id
+ from
+ graph.Account
+ ) as _unwind_source,
+ EXPLODE(_gsql2rsql_a_tags) as _exploded(tag)
+ ) as _unwind_source,
+ EXPLODE(_gsql2rsql_a_transactionIds) as _exploded(txId)
+) as _proj

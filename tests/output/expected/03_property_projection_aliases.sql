@@ -1,10 +1,10 @@
 select
- __p_name as personName
- ,__p_id as personId
+ _gsql2rsql_p_name as personName
+ ,_gsql2rsql_p_id as personId
 from (
  select
- id as __p_id
- ,name as __p_name
+ id as _gsql2rsql_p_id
+ ,name as _gsql2rsql_p_name
  from
  Person
 ) as _proj

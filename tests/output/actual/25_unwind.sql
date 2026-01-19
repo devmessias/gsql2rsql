@@ -1,5 +1,5 @@
 select
- __a_id as id
+ _gsql2rsql_a_id as id
  ,tag as tag
 from (
  select
@@ -7,9 +7,9 @@ from (
  ,tag
  from (
  select
- id as __a_id
+ id as _gsql2rsql_a_id
  from
  graph.Account
  ) as _unwind_source,
- EXPLODE(__a_tags) as _exploded(tag)
+ EXPLODE(_gsql2rsql_a_tags) as _exploded(tag)
 ) as _proj

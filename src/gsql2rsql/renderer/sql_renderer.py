@@ -153,6 +153,10 @@ class SQLRenderer:
     WITH RECURSIVE CTEs for variable-length path traversals.
     """
 
+    # Prefix for generated column names to avoid collisions with user identifiers.
+    # Uses _gsql2rsql_ to match the naming convention from column_ref.py.
+    COLUMN_PREFIX = "_gsql2rsql_"
+
     def __init__(
         self,
         graph_def: ISQLDBSchemaProvider | None = None,
@@ -181,7 +185,7 @@ class SQLRenderer:
         self._graph_schema_provider = graph_schema_provider
         self._logger = logger
         self._cte_counter = 0
-        # Column pruning: set of required column aliases (e.g., "__p_name")
+        # Column pruning: set of required column aliases (e.g., "_gsql2rsql_p_name")
         self._required_columns: set[str] = set()
         # Bare variable references (e.g., "shared_cards") - used for ValueFields
         self._required_value_fields: set[str] = set()
@@ -379,7 +383,7 @@ class SQLRenderer:
     def _collect_columns_from_expression(self, expr: QueryExpression) -> None:
         """Extract column aliases from an expression and add to required set."""
         if isinstance(expr, QueryExpressionProperty):
-            # Property access like p.name -> __p_name
+            # Property access like p.name -> _gsql2rsql_p_name
             if expr.variable_name and expr.property_name:
                 col_alias = self._get_field_name(expr.variable_name, expr.property_name)
                 self._required_columns.add(col_alias)
@@ -580,7 +584,7 @@ class SQLRenderer:
         #
         # IMPORTANT: We use _render_edge_filter_expression instead of
         # _render_expression because the CTE uses direct column references
-        # (e.g., "e.amount") not entity-prefixed aliases (e.g., "__e_amount").
+        # (e.g., "e.amount") not entity-prefixed aliases (e.g., "_gsql2rsql_e_amount").
         edge_filter_sql: str | None = None
         if op.edge_filter and op.edge_filter_lambda_var:
             # Rewrite variable names: rel.amount -> e.amount
@@ -934,10 +938,10 @@ class SQLRenderer:
 
         Example output:
             SELECT
-               sink.id AS __b_id,
-               sink.name AS __b_name,
-               source.id AS __a_id,
-               source.name AS __a_name,
+               sink.id AS _gsql2rsql_b_id,
+               sink.name AS _gsql2rsql_b_name,
+               source.id AS _gsql2rsql_a_id,
+               source.name AS _gsql2rsql_a_name,
                p.path,
                p.path_edges
             FROM paths_1 p
@@ -990,26 +994,26 @@ class SQLRenderer:
         # Project fields from TARGET node (sink)
         field_lines: list[str] = []
         if target_node_schema:
-            field_lines.append(f"sink.{target_id_col} AS __{target_alias}_{target_id_col}")
+            field_lines.append(f"sink.{target_id_col} AS {self.COLUMN_PREFIX}{target_alias}_{target_id_col}")
             for prop in target_node_schema.properties:
                 prop_name = prop.property_name
                 if prop_name != target_id_col:
-                    field_lines.append(f"sink.{prop_name} AS __{target_alias}_{prop_name}")
+                    field_lines.append(f"sink.{prop_name} AS {self.COLUMN_PREFIX}{target_alias}_{prop_name}")
         else:
-            field_lines.append(f"sink.{target_id_col} AS __{target_alias}_id")
+            field_lines.append(f"sink.{target_id_col} AS {self.COLUMN_PREFIX}{target_alias}_id")
 
         # Project fields from SOURCE node
         # Skip if source_alias == target_alias (circular path like (a)-[*]->(a))
         # In that case, sink and source are the same entity, so we don't want duplicate columns
         if source_alias != target_alias:
             if source_node_schema:
-                field_lines.append(f"source.{source_id_col} AS __{source_alias}_{source_id_col}")
+                field_lines.append(f"source.{source_id_col} AS {self.COLUMN_PREFIX}{source_alias}_{source_id_col}")
                 for prop in source_node_schema.properties:
                     prop_name = prop.property_name
                     if prop_name != source_id_col:
-                        field_lines.append(f"source.{prop_name} AS __{source_alias}_{prop_name}")
+                        field_lines.append(f"source.{prop_name} AS {self.COLUMN_PREFIX}{source_alias}_{prop_name}")
             else:
-                field_lines.append(f"source.{source_id_col} AS __{source_alias}_id")
+                field_lines.append(f"source.{source_id_col} AS {self.COLUMN_PREFIX}{source_alias}_id")
 
         # Include path info from CTE
         field_lines.append("p.start_node")
@@ -1207,8 +1211,8 @@ class SQLRenderer:
             SELECT
                _left.c,
                _left.population,
-               _right.__c_id,
-               _right.__other_id,
+               _right._gsql2rsql_c_id,
+               _right._gsql2rsql_other_id,
                ...
             FROM (
                SELECT `c`, `population` FROM agg_boundary_1
@@ -1216,7 +1220,7 @@ class SQLRenderer:
             INNER JOIN (
                ... right side subquery ...
             ) AS _right ON
-               _left.c = _right.__c_id
+               _left.c = _right._gsql2rsql_c_id
         """
         indent = self._indent(depth)
         cte_name = boundary_op.cte_name
@@ -1279,14 +1283,14 @@ class SQLRenderer:
 
         # Render join conditions
         # The boundary projects entity variables (e.g., 'c') and we need to join
-        # them with the corresponding entity ID from the right side (e.g., '__c_id')
+        # them with the corresponding entity ID from the right side (e.g., '_gsql2rsql_c_id')
         conditions: list[str] = []
 
         for pair in join_op.join_pairs:
             if pair.pair_type == JoinKeyPairType.NODE_ID:
                 node_alias = pair.node_alias
                 # The boundary projects the entity variable directly (e.g., 'c')
-                # The right side has the entity ID column (e.g., '__c_id')
+                # The right side has the entity ID column (e.g., '_gsql2rsql_c_id')
                 if node_alias in boundary_op.projected_variables:
                     # Find the ID column name from the right side's schema
                     node_id_col = self._get_entity_id_column_from_schema(
@@ -1312,14 +1316,14 @@ class SQLRenderer:
         """Get the ID column name for an entity from a schema.
 
         Looks for an EntityField with the given alias and returns its ID column
-        name in the rendered format (e.g., '__c_id').
+        name in the rendered format (e.g., '_gsql2rsql_c_id').
 
         Args:
             schema: The schema to search in
             entity_alias: The entity alias to find (e.g., 'c')
 
         Returns:
-            The ID column name (e.g., '__c_id') or None if not found
+            The ID column name (e.g., '_gsql2rsql_c_id') or None if not found
         """
         for field in schema:
             if isinstance(field, EntityField) and field.field_alias == entity_alias:
@@ -1445,7 +1449,7 @@ class SQLRenderer:
         # Add pushed-down filter from optimizer (e.g., p.name = 'Alice')
         if op.filter_expression:
             # Render the filter expression using raw column names
-            # (not aliased names like __p_name)
+            # (not aliased names like _gsql2rsql_p_name)
             rendered_filter = self._render_datasource_filter(
                 op.filter_expression, entity_field.field_alias
             )
@@ -1465,7 +1469,7 @@ class SQLRenderer:
     ) -> str:
         """Render a filter expression for a DataSource using raw column names.
 
-        Unlike _render_expression which uses aliased names like __p_name,
+        Unlike _render_expression which uses aliased names like _gsql2rsql_p_name,
         this method renders expressions using raw column names from the table.
 
         Args:
@@ -1610,7 +1614,7 @@ class SQLRenderer:
         right_aliases = {f.field_alias for f in right_op.output_schema}
 
         # Also collect all column names that are actually available on each side
-        # This includes encapsulated field names like __entity_property
+        # This includes encapsulated field names like _gsql2rsql_entity_property
         left_columns = self._collect_all_column_names(left_op.output_schema)
         right_columns = self._collect_all_column_names(right_op.output_schema)
 
@@ -1714,10 +1718,10 @@ class SQLRenderer:
         # IMPORTANT: Also propagate required columns from the left side that weren't
         # already projected. This handles cases where an entity (like 'c') is in the
         # left side of the join but not in op.output_schema, yet its properties
-        # (like __c_id, __c_name) are needed downstream.
+        # (like _gsql2rsql_c_id, _gsql2rsql_c_name) are needed downstream.
         #
         # This is especially important for joins after recursive traversals, where
-        # the source node columns (e.g., __c_id from source.id) are rendered but
+        # the source node columns (e.g., _gsql2rsql_c_id from source.id) are rendered but
         # not tracked in the logical plan's output schema.
         if self._enable_column_pruning and self._required_columns:
             # Collect entity aliases that we know are available on the left side
@@ -1754,10 +1758,10 @@ class SQLRenderer:
                     continue  # Already projected
 
                 # Check if this column belongs to a known left-side entity
-                # Column pattern: __{entity}_{property}
+                # Column pattern: _gsql2rsql_{entity}_{property}
                 col_entity = None
-                if required_col.startswith("__"):
-                    parts = required_col[2:].split("_", 1)
+                if required_col.startswith(self.COLUMN_PREFIX):
+                    parts = required_col[len(self.COLUMN_PREFIX):].split("_", 1)
                     if len(parts) >= 1:
                         col_entity = parts[0]
 
@@ -2026,7 +2030,7 @@ class SQLRenderer:
         # Bug #1 Fix: When projecting entity variables through a WITH clause,
         # we need to also project any entity properties that are required downstream.
         # For example: WITH c, COUNT(p) AS pop -> if downstream needs c.name,
-        # we must project __c_name in addition to __c_id.
+        # we must project _gsql2rsql_c_name in addition to _gsql2rsql_c_id.
         #
         # This applies to:
         # 1. ALL aggregating projections (GROUP BY loses columns not in SELECT/GROUP BY)
@@ -2210,9 +2214,11 @@ class SQLRenderer:
     ) -> str:
         """Render a property access.
 
-        When property_name is provided, renders as __variable_property (e.g., __p_name).
+        When property_name is provided, renders as {prefix}variable_property
+        (e.g., _gsql2rsql_p_name).
         When property_name is None (bare entity reference like 'p'), renders as the
-        entity's ID column (e.g., __p_id for nodes, __r_source_id for relationships).
+        entity's ID column (e.g., _gsql2rsql_p_id for nodes,
+        _gsql2rsql_r_source_id for relationships).
         This is necessary for aggregations like COUNT(p) which need a valid column.
         """
         if expr.property_name:
@@ -2260,10 +2266,10 @@ class SQLRenderer:
                     expr.variable_name, entity_field.rel_source_join_field.field_alias
                 )
 
-        # Fallback for VLP queries: check if there's a column matching __{var}_id pattern
+        # Fallback for VLP queries: check if there's a column matching {prefix}{var}_id pattern
         # This handles cases where the schema doesn't have the EntityField but the
-        # column exists from a VLP join (e.g., __source_id, __sink_id)
-        expected_id_col = f"__{expr.variable_name}_id"
+        # column exists from a VLP join (e.g., _gsql2rsql_source_id, _gsql2rsql_sink_id)
+        expected_id_col = f"{self.COLUMN_PREFIX}{expr.variable_name}_id"
 
         # Check context_op.input_schema first
         if context_op.input_schema:
@@ -2271,7 +2277,7 @@ class SQLRenderer:
                 if field.field_alias == expected_id_col:
                     return expected_id_col
             # Check for any column with prefix
-            prefix = f"__{expr.variable_name}_"
+            prefix = f"{self.COLUMN_PREFIX}{expr.variable_name}_"
             for field in context_op.input_schema:
                 if field.field_alias.startswith(prefix):
                     return expected_id_col
@@ -2282,7 +2288,7 @@ class SQLRenderer:
             for field in in_op.output_schema:
                 if field.field_alias == expected_id_col:
                     return expected_id_col
-            prefix = f"__{expr.variable_name}_"
+            prefix = f"{self.COLUMN_PREFIX}{expr.variable_name}_"
             for field in in_op.output_schema:
                 if field.field_alias.startswith(prefix):
                     return expected_id_col
@@ -2290,7 +2296,7 @@ class SQLRenderer:
         # Check if required_columns has this pattern (for column pruning context)
         if self._required_columns:
             for col in self._required_columns:
-                if col == expected_id_col or col.startswith(f"__{expr.variable_name}_"):
+                if col == expected_id_col or col.startswith(f"{self.COLUMN_PREFIX}{expr.variable_name}_"):
                     return expected_id_col
 
         # Ultimate fallback: return variable name
@@ -3402,7 +3408,7 @@ class SQLRenderer:
         if source_node_schema and source_node_schema.node_id_property:
             source_node_id_col = source_node_schema.node_id_property.property_name
 
-        outer_field = f"__{source_alias}_{source_node_id_col}"
+        outer_field = f"{self.COLUMN_PREFIX}{source_alias}_{source_node_id_col}"
 
         # WHERE clause: correlate with outer query
         if relationship.direction == RelationshipDirection.BACKWARD:
@@ -3481,7 +3487,7 @@ class SQLRenderer:
         clean_prefix = "".join(
             c if c.isalnum() or c == "_" else "" for c in prefix
         )
-        return f"__{clean_prefix}_{field_name}"
+        return f"{self.COLUMN_PREFIX}{clean_prefix}_{field_name}"
 
     def _get_entity_properties_for_aggregation(
         self, op: ProjectionOperator
@@ -3489,8 +3495,8 @@ class SQLRenderer:
         """Get required entity property columns that need to be projected through GROUP BY.
 
         When a node variable (e.g., 'c') is projected through a GROUP BY, only its
-        ID column (__c_id) is normally included. But if downstream operators need
-        other properties (e.g., c.name -> __c_name), those must also be projected.
+        ID column (_gsql2rsql_c_id) is normally included. But if downstream operators need
+        other properties (e.g., c.name -> _gsql2rsql_c_name), those must also be projected.
 
         This method identifies entity variables in the projections and returns
         any required property columns for those entities that aren't already projected.
@@ -3499,7 +3505,7 @@ class SQLRenderer:
             op: The ProjectionOperator with aggregations.
 
         Returns:
-            List of column aliases (e.g., ['__c_name']) to add to the SELECT list.
+            List of column aliases (e.g., ['_gsql2rsql_c_name']) to add to the SELECT list.
         """
         extra_columns: list[str] = []
         already_projected: set[str] = set()
@@ -3513,7 +3519,7 @@ class SQLRenderer:
         for _, expr in op.projections:
             if isinstance(expr, QueryExpressionProperty):
                 if expr.property_name:
-                    # Property access - already projected as __entity_prop
+                    # Property access - already projected as _gsql2rsql_entity_prop
                     col = self._get_field_name(expr.variable_name, expr.property_name)
                     already_projected.add(col)
                 else:
@@ -3526,22 +3532,22 @@ class SQLRenderer:
                         )
                         entity_id_columns[expr.variable_name] = id_col
                         # Note: We do NOT add this to already_projected because
-                        # the projection aliases it as 'p', not '__p_id'
+                        # the projection aliases it as 'p', not '_gsql2rsql_p_id'
 
         # For bare entity references, we generally DON'T need to add their ID column
         # because the bare entity reference already provides the ID value.
-        # For example, if we project `a` (rendering as `__a_id AS a`), downstream
-        # code accessing `a.id` should use the alias `a`, not `__a_id`.
+        # For example, if we project `a` (rendering as `_gsql2rsql_a_id AS a`), downstream
+        # code accessing `a.id` should use the alias `a`, not `_gsql2rsql_a_id`.
         #
         # We only add the ID column separately if there are OTHER properties
-        # of that entity that need to be projected (e.g., __a_name for a.name).
-        # In that case, we need __a_id as a grouping key alongside __a_name.
+        # of that entity that need to be projected (e.g., _gsql2rsql_a_name for a.name).
+        # In that case, we need _gsql2rsql_a_id as a grouping key alongside _gsql2rsql_a_name.
         for entity_var, id_col in entity_id_columns.items():
             if id_col not in already_projected:
                 # Only add if we're adding OTHER properties for this entity
                 # (not just the ID column itself)
                 has_other_properties = any(
-                    req_col.startswith(f"__{entity_var}_") and req_col != id_col
+                    req_col.startswith(f"{self.COLUMN_PREFIX}{entity_var}_") and req_col != id_col
                     for req_col in self._required_columns
                 )
                 if has_other_properties:
@@ -3553,12 +3559,12 @@ class SQLRenderer:
             if required_col in already_projected:
                 continue
             # Check if this column belongs to one of our entity variables
-            # Pattern: __{entity}_{property}
+            # Pattern: _gsql2rsql_{entity}_{property}
             for entity_var in entity_vars:
-                prefix = f"__{entity_var}_"
+                prefix = f"{self.COLUMN_PREFIX}{entity_var}_"
                 if required_col.startswith(prefix):
                     # Skip the entity's ID column - it's already provided by the bare entity
-                    # reference (e.g., __a_id is already available via the alias 'a')
+                    # reference (e.g., _gsql2rsql_a_id is already available via the alias 'a')
                     id_col = entity_id_columns.get(entity_var)
                     if required_col == id_col:
                         break
@@ -3575,7 +3581,7 @@ class SQLRenderer:
         This method is specifically for rendering predicates that have been
         pushed down into the recursive CTE. Unlike _render_expression, this
         renders property accesses as direct SQL column references (e.g., e.amount)
-        rather than entity-prefixed aliases (e.g., __e_amount).
+        rather than entity-prefixed aliases (e.g., _gsql2rsql_e_amount).
 
         This is necessary because inside the CTE, we reference edge columns
         directly from the edge table (aliased as 'e'), not through the
@@ -3583,7 +3589,7 @@ class SQLRenderer:
 
         Example:
             Input: QueryExpressionProperty(variable_name="e", property_name="amount")
-            _render_expression output: "__e_amount" (wrong for CTE)
+            _render_expression output: "_gsql2rsql_e_amount" (wrong for CTE)
             This method output: "e.amount" (correct for CTE)
 
         Args:

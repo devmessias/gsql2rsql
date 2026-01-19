@@ -15,8 +15,8 @@ This query retrieves all nodes labeled `Person` from the graph. It does not appl
 
 ```sql
 SELECT
-  __p_id AS `p.id`,
-  __p_name AS `p.name`
+  _gsql2rsql_p_id AS `p.id`,
+  _gsql2rsql_p_name AS `p.name`
 FROM `dbo.Person` AS p
 ```
 

@@ -493,8 +493,8 @@ class TestMatchAfterAggregatingWithSQL:
         sql = renderer.render_plan(plan)
 
         # The join should be on the city ID
-        # The CTE projects 'c' (the city ID), and the new MATCH has '__c_id'
-        assert "`c` = " in sql or "= _right.__c_id" in sql
+        # The CTE projects 'c' (the city ID), and the new MATCH has '_gsql2rsql_c_id'
+        assert "`c` = " in sql or "= _right._gsql2rsql_c_id" in sql
 
     def test_sql_having_clause_for_where_on_aggregation(self) -> None:
         """Test that WHERE on aggregated column becomes HAVING."""
