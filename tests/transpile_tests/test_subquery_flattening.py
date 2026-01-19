@@ -130,6 +130,9 @@ class TestSubqueryFlatteningOptimizer:
             optimizer = SubqueryFlatteningOptimizer(enabled=True)
             optimizer.optimize(plan)
 
+        # Resolve before rendering
+        plan.resolve(original_query=query)
+
         renderer = SQLRenderer(SQL_SCHEMA)
         return renderer.render_plan(plan)
 
@@ -137,7 +140,10 @@ class TestSubqueryFlatteningOptimizer:
         """Helper to get a logical plan without optimization."""
         parser = OpenCypherParser()
         ast = parser.parse(query)
-        return LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        plan = LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        # Resolve before returning
+        plan.resolve(original_query=query)
+        return plan
 
     # =========================================================================
     # Basic Flattening Tests
@@ -337,6 +343,9 @@ class TestFlatteningTradeoffs:
             optimizer = SubqueryFlatteningOptimizer(enabled=True)
             optimizer.optimize(plan)
 
+        # Resolve before rendering
+        plan.resolve(original_query=query)
+
         renderer = SQLRenderer(SQL_SCHEMA)
         return renderer.render_plan(plan)
 
@@ -388,6 +397,9 @@ class TestSelectionIntoSelectionFlattening:
         if optimize:
             optimizer = SubqueryFlatteningOptimizer(enabled=True)
             optimizer.optimize(plan)
+
+        # Resolve before rendering
+        plan.resolve(original_query=query)
 
         renderer = SQLRenderer(SQL_SCHEMA)
         return renderer.render_plan(plan)

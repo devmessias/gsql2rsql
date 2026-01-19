@@ -70,6 +70,7 @@ class TestSingleHopRelationship:
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)
         sql = renderer.render_plan(plan)
 
@@ -90,6 +91,7 @@ class TestSingleHopRelationship:
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)
         sql = renderer.render_plan(plan)
 

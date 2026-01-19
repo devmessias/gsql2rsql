@@ -1,5 +1,5 @@
 select
- a as id
+ _gsql2rsql_a_id as id
  ,transferCount as transferCount
  ,totalAmount as totalAmount
 from (

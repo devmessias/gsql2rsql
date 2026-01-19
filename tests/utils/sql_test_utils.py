@@ -272,6 +272,8 @@ class TranspilerTestCase:
         parser = OpenCypherParser()
         ast = parser.parse(self.cypher_query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        # Resolve before rendering (renderer now requires resolution)
+        plan.resolve(original_query=self.cypher_query)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)
         return renderer.render_plan(plan)
 

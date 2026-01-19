@@ -169,6 +169,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         # Verify plan was created successfully
         assert plan is not None
@@ -198,6 +199,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -217,6 +219,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -236,6 +239,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -255,6 +259,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         # Should not have an AggregationBoundaryOperator
@@ -275,6 +280,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         # Should not have an AggregationBoundaryOperator (no MATCH after)
@@ -295,6 +301,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -317,6 +324,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -336,6 +344,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -355,6 +364,7 @@ class TestMatchAfterAggregatingWith:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         boundary_ops = list(
             plan.terminal_operators[0].get_all_upstream_operators(
@@ -461,6 +471,7 @@ class TestMatchAfterAggregatingWithSQL:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         renderer = SQLRenderer(self.sql_schema)
         sql = renderer.render_plan(plan)
@@ -488,6 +499,7 @@ class TestMatchAfterAggregatingWithSQL:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         renderer = SQLRenderer(self.sql_schema)
         sql = renderer.render_plan(plan)
@@ -507,6 +519,7 @@ class TestMatchAfterAggregatingWithSQL:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         renderer = SQLRenderer(self.sql_schema)
         sql = renderer.render_plan(plan)
@@ -555,6 +568,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         assert plan is not None
 
     def test_with_where_on_aggregation_no_match(self) -> None:
@@ -567,6 +581,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         assert plan is not None
 
         # No boundary needed - no MATCH after aggregation
@@ -587,6 +602,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         assert plan is not None
         boundary_ops = list(
@@ -606,6 +622,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         """
         ast = self._parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         assert plan is not None
 
         # DISTINCT alone doesn't create an aggregation boundary

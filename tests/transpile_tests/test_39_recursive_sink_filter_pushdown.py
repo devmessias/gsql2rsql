@@ -118,6 +118,7 @@ class TestRecursiveSinkFilterPushdown:
         """Transpile a Cypher query to SQL."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)
@@ -313,6 +314,7 @@ class TestRecursiveTraversalOperatorSinkFilter:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         # Find the RecursiveTraversalOperator
         recursive_op = None
@@ -369,6 +371,7 @@ class TestLogicalPlanSinkFilterExtraction:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         # Find the RecursiveTraversalOperator
         recursive_op = None
@@ -394,6 +397,7 @@ class TestLogicalPlanSinkFilterExtraction:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         # Find the RecursiveTraversalOperator
         recursive_op = None
@@ -481,6 +485,7 @@ class TestSQLRendererSinkFilter:
         """
         ast = self.parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         optimize_plan(plan)
 
         sql = SQLRenderer(db_schema_provider=self.sql_schema).render_plan(plan)
@@ -555,6 +560,7 @@ class TestEdgeCases:
         """Transpile a Cypher query to SQL."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         optimize_plan(plan)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)
         return renderer.render_plan(plan)

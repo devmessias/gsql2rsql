@@ -164,6 +164,7 @@ class TestConjunctionSplittingPushdown:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         return plan
@@ -498,6 +499,7 @@ class TestPushdownOptimizerStats:
         """
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         optimizer = SelectionPushdownOptimizer()
         optimizer.optimize(plan)
@@ -516,6 +518,7 @@ class TestPushdownOptimizerStats:
         """
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         optimizer = SelectionPushdownOptimizer()
         optimizer.optimize(plan)
@@ -534,6 +537,7 @@ class TestPushdownOptimizerStats:
         """
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
 
         optimizer = SelectionPushdownOptimizer()
         optimizer.optimize(plan)
@@ -626,6 +630,7 @@ class TestOptionalMatchSafetyCheck:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         return plan
@@ -803,6 +808,7 @@ class TestVolatileFunctionSafetyCheck:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         return plan
@@ -959,6 +965,7 @@ class TestCorrelatedSubquerySafetyCheck:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         return plan

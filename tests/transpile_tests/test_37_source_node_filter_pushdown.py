@@ -103,6 +103,7 @@ class TestSourceNodeFilterPushdown:
         """Transpile a Cypher query to SQL."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)

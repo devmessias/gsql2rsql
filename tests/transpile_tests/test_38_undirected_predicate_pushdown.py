@@ -219,6 +219,7 @@ class TestUndirectedPredicatePushdown:
         """Helper to transpile a Cypher query."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         renderer = SQLRenderer(db_schema_provider=self.sql_schema)
@@ -228,6 +229,7 @@ class TestUndirectedPredicatePushdown:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
         plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
         return plan
