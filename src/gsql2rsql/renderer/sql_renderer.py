@@ -2093,11 +2093,18 @@ class SQLRenderer:
         # 1. ALL aggregating projections (GROUP BY loses columns not in SELECT/GROUP BY)
         # 2. INTERMEDIATE non-aggregating projections (depth > 0) where entity variables
         #    are passed through and downstream needs their properties
+        # 3. ROOT projection (depth == 0) with entity returns (RETURN p projects all properties)
         #
-        # For the ROOT projection (depth == 0) without aggregation, we don't add extra
-        # columns because the user explicitly selected what they want in RETURN.
+        # Check if there are any entity returns in this projection
+        has_entity_return = False
+        if op.operator_debug_id in self._resolution_result.resolved_projections:
+            has_entity_return = any(
+                proj.is_entity_ref
+                for proj in self._resolution_result.resolved_projections[op.operator_debug_id]
+            )
+
         extra_columns: list[str] = []
-        if self._required_columns and (has_aggregation or depth > 0):
+        if self._required_columns and (has_aggregation or depth > 0 or has_entity_return):
             extra_columns = self._get_entity_properties_for_aggregation(op)
             for col_alias in extra_columns:
                 lines.append(f"{indent}  ,{col_alias} AS {col_alias}")
@@ -3477,8 +3484,9 @@ class SQLRenderer:
                     if resolved_ref:
                         id_col = resolved_ref.sql_column_name
                         entity_id_columns[expr.variable_name] = id_col
-                        # Note: We do NOT add this to already_projected because
-                        # the projection aliases it as 'p', not '_gsql2rsql_p_id'
+                        # Mark ID as already projected to avoid duplicating it in extra_columns
+                        # The ID is already in the main projection as "_gsql2rsql_p_id AS p"
+                        already_projected.add(id_col)
 
         # For bare entity references, we generally DON'T need to add their ID column
         # because the bare entity reference already provides the ID value.
@@ -3519,7 +3527,8 @@ class SQLRenderer:
                     already_projected.add(required_col)
                     break
 
-        return extra_columns
+        # Sort to ensure deterministic output (avoid non-determinism from set iteration)
+        return sorted(extra_columns)
 
     def _render_edge_filter_expression(self, expr: QueryExpression) -> str:
         """Render an edge filter expression using DIRECT column references.

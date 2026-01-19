@@ -124,6 +124,8 @@ class ColumnResolver:
         self._current_phase: str = ""
         self._current_part_index: int = 0
         self._result: ResolutionResult = ResolutionResult()
+        self._allow_out_of_scope_lookups: bool = False  # For AggregationBoundaryOperator
+        self._graph_schema: Any = None  # Graph schema for looking up entity properties
 
     def resolve(
         self,
@@ -145,6 +147,7 @@ class ColumnResolver:
         self._symbol_table = SymbolTable()
         self._original_query = original_query
         self._result = ResolutionResult()
+        self._graph_schema = plan.graph_schema  # Store for EXISTS pattern resolution
 
         # Phase 1: Build symbol table by visiting operators in topological order
         self._current_phase = "symbol_table_building"
@@ -272,15 +275,15 @@ class ColumnResolver:
         An aggregation boundary clears the current scope and introduces
         only the projected variables.
 
+        CRITICAL: We must look up entity information BEFORE clearing scope,
+        otherwise the lookups will fail.
+
         Args:
             op: The AggregationBoundaryOperator
         """
-        # Clear scope - after aggregation, only projected variables are visible
-        self._symbol_table.clear_scope_for_aggregation(
-            f"WITH aggregation at operator {op.operator_debug_id}"
-        )
+        # FIRST: Look up entity information for projections BEFORE clearing scope
+        projection_info: list[tuple[str, bool, Any, str | None, list[str], bool]] = []
 
-        # Add symbols for each projection
         for alias, expr in op.all_projections:
             # Determine if this is an entity reference or computed value
             is_entity = False
@@ -303,6 +306,15 @@ class ColumnResolver:
             if is_aggregated:
                 data_type_name = self._infer_aggregation_type(expr)
 
+            projection_info.append((alias, is_entity, entity_info, data_type_name, properties, is_aggregated))
+
+        # SECOND: Clear scope - after aggregation, only projected variables are visible
+        self._symbol_table.clear_scope_for_aggregation(
+            f"WITH aggregation at operator {op.operator_debug_id}"
+        )
+
+        # THIRD: Define symbols using the information we collected before clearing
+        for alias, is_entity, entity_info, data_type_name, properties, is_aggregated in projection_info:
             entry = SymbolEntry(
                 name=alias,
                 symbol_type=SymbolType.ENTITY if is_entity else SymbolType.VALUE,
@@ -424,6 +436,40 @@ class ColumnResolver:
                 resolved_expr = self._resolve_expression(expr)
                 resolved_exprs.append(resolved_expr)
 
+                # Check if this is an entity return and expand to all properties
+                # For "RETURN p", we need to include ALL properties of p, not just the ID
+                if isinstance(expr, QueryExpressionProperty) and expr.property_name is None:
+                    # This is a bare entity reference - check if it's marked as entity return
+                    entity_var = expr.variable_name
+                    entity_entry = self._symbol_table.lookup(entity_var)
+
+                    if entity_entry and entity_entry.symbol_type == SymbolType.ENTITY:
+                        # Query schema for all properties of this entity
+                        if self._graph_schema and entity_entry.data_type_name:
+                            node_def = self._graph_schema.get_node_definition(entity_entry.data_type_name)
+                            if node_def and node_def.properties:
+                                # Add ResolvedColumnRef for each property to mark them as "used"
+                                for prop in node_def.properties:
+                                    prop_name = prop.property_name
+                                    sql_col_name = compute_sql_column_name(entity_var, prop_name)
+
+                                    # Create a ResolvedColumnRef for this property
+                                    prop_ref = ResolvedColumnRef(
+                                        original_variable=entity_var,
+                                        original_property=prop_name,
+                                        ref_type=ColumnRefType.ENTITY_PROPERTY,
+                                        source_operator_id=entity_entry.definition_operator_id,
+                                        sql_column_name=sql_col_name,
+                                        data_type_name=prop.data_type.__name__ if prop.data_type else None,
+                                        derivation=f"from entity return {entity_var} (expanded from schema)",
+                                        is_entity_return=False,  # This is a property, not the entity itself
+                                    )
+
+                                    # Add to resolved expression's column refs
+                                    key = f"{entity_var}.{prop_name}"
+                                    resolved_expr.column_refs[key] = prop_ref
+                                    self._result.total_references_resolved += 1
+
                 # Create ResolvedProjection
                 is_entity_ref = (
                     isinstance(expr, QueryExpressionProperty)
@@ -468,10 +514,16 @@ class ColumnResolver:
                 resolved_exprs.append(resolved)
 
         elif isinstance(op, AggregationBoundaryOperator):
-            for alias, expr in op.all_projections:
-                resolved_exprs.append(self._resolve_expression(expr))
-            if op.having_filter:
-                resolved_exprs.append(self._resolve_expression(op.having_filter))
+            # SPECIAL CASE: Allow lookups from out-of-scope when resolving
+            # aggregation expressions like COUNT(p) where p is pre-aggregation
+            self._allow_out_of_scope_lookups = True
+            try:
+                for alias, expr in op.all_projections:
+                    resolved_exprs.append(self._resolve_expression(expr))
+                if op.having_filter:
+                    resolved_exprs.append(self._resolve_expression(op.having_filter))
+            finally:
+                self._allow_out_of_scope_lookups = False
 
         elif isinstance(op, UnwindOperator):
             if op.list_expression:
@@ -564,6 +616,9 @@ class ColumnResolver:
         elif isinstance(expr, QueryExpressionAggregationFunction):
             if expr.inner_expression:
                 self._resolve_expression_recursive(expr.inner_expression, resolved)
+            # Resolve ORDER BY expressions for ordered aggregations (e.g., COLLECT(x ORDER BY y))
+            for order_expr, _ in expr.order_by or []:
+                self._resolve_expression_recursive(order_expr, resolved)
 
         elif isinstance(expr, QueryExpressionCaseExpression):
             if expr.test_expression:
@@ -579,10 +634,32 @@ class ColumnResolver:
                 self._resolve_expression_recursive(item, resolved)
 
         elif isinstance(expr, QueryExpressionListPredicate):
+            # Resolve the list expression first (e.g., amounts)
             if expr.list_expression:
                 self._resolve_expression_recursive(expr.list_expression, resolved)
+
+            # Add the loop variable as a temporary local symbol
+            # e.g., in ALL(x IN amounts WHERE x > 1000), 'x' is a local binding
+            loop_var = expr.variable_name
+            temp_entry = SymbolEntry(
+                name=loop_var,
+                symbol_type=SymbolType.VALUE,
+                definition_operator_id=self._current_operator.operator_debug_id if self._current_operator else 0,
+                definition_location=f"{expr.predicate_type.name}({loop_var} IN ...)",
+                scope_level=self._symbol_table.current_level,
+                data_type_name="ANY",  # Element type of list
+            )
+            # Save existing entry if any (for nested predicates)
+            existing_entry = self._symbol_table.lookup(loop_var)
+            self._symbol_table.define_or_update(loop_var, temp_entry)
+
+            # Now resolve filter expression with the loop variable in scope
             if expr.filter_expression:
                 self._resolve_expression_recursive(expr.filter_expression, resolved)
+
+            # Restore the original entry if it existed
+            if existing_entry:
+                self._symbol_table.define_or_update(loop_var, existing_entry)
 
         elif isinstance(expr, QueryExpressionListComprehension):
             # Resolve the list expression first (e.g., nodes(path))
@@ -619,12 +696,51 @@ class ColumnResolver:
                 pass
 
         elif isinstance(expr, QueryExpressionReduce):
-            if expr.initial_expression:
-                self._resolve_expression_recursive(expr.initial_expression, resolved)
+            # Resolve initial value and list expression first (use outer scope)
+            if expr.initial_value:
+                self._resolve_expression_recursive(expr.initial_value, resolved)
             if expr.list_expression:
                 self._resolve_expression_recursive(expr.list_expression, resolved)
-            if expr.accumulator_expression:
-                self._resolve_expression_recursive(expr.accumulator_expression, resolved)
+
+            # Add the accumulator and loop variable as temporary local symbols
+            # e.g., in REDUCE(total = 0, x IN amounts | total + x), both 'total' and 'x' are local bindings
+            accumulator_var = expr.accumulator_name
+            loop_var = expr.variable_name
+
+            # Define accumulator variable
+            acc_entry = SymbolEntry(
+                name=accumulator_var,
+                symbol_type=SymbolType.VALUE,
+                definition_operator_id=self._current_operator.operator_debug_id if self._current_operator else 0,
+                definition_location=f"REDUCE({accumulator_var} = ...)",
+                scope_level=self._symbol_table.current_level,
+                data_type_name="ANY",  # Type from initial_value
+            )
+            # Define loop variable
+            loop_entry = SymbolEntry(
+                name=loop_var,
+                symbol_type=SymbolType.VALUE,
+                definition_operator_id=self._current_operator.operator_debug_id if self._current_operator else 0,
+                definition_location=f"REDUCE(... {loop_var} IN ...)",
+                scope_level=self._symbol_table.current_level,
+                data_type_name="ANY",  # Element type of list
+            )
+
+            # Save existing entries if any
+            existing_acc_entry = self._symbol_table.lookup(accumulator_var)
+            existing_loop_entry = self._symbol_table.lookup(loop_var)
+            self._symbol_table.define_or_update(accumulator_var, acc_entry)
+            self._symbol_table.define_or_update(loop_var, loop_entry)
+
+            # Now resolve reducer expression with both variables in scope
+            if expr.reducer_expression:
+                self._resolve_expression_recursive(expr.reducer_expression, resolved)
+
+            # Restore the original entries if they existed
+            if existing_acc_entry:
+                self._symbol_table.define_or_update(accumulator_var, existing_acc_entry)
+            if existing_loop_entry:
+                self._symbol_table.define_or_update(loop_var, existing_loop_entry)
 
         elif isinstance(expr, QueryExpressionWithAlias):
             if expr.inner_expression:
@@ -635,9 +751,8 @@ class ColumnResolver:
                 self._resolve_expression_recursive(value, resolved)
 
         elif isinstance(expr, QueryExpressionExists):
-            # EXISTS subqueries have their own scope - skip for now
-            # TODO: Handle EXISTS subquery resolution with nested scope
-            pass
+            # EXISTS subqueries have their own scope
+            self._resolve_exists_expression(expr, resolved)
 
         elif isinstance(expr, QueryExpressionValue):
             # Literal values don't need resolution
@@ -663,10 +778,16 @@ class ColumnResolver:
         # Look up variable in symbol table
         entry = self._symbol_table.lookup(variable)
 
+        # If not found and we're in an aggregation boundary context,
+        # try looking in out-of-scope symbols (for expressions like COUNT(p))
+        if entry is None and self._allow_out_of_scope_lookups:
+            entry = self._symbol_table.lookup_out_of_scope(variable)
+
         if entry is None:
             self._raise_undefined_variable_error(expr)
 
         # Determine reference type and validate
+        is_entity_return = False
         if property_name is None:
             # Bare entity reference (e.g., "p" in RETURN p)
             ref_type = ColumnRefType.ENTITY_ID
@@ -676,6 +797,10 @@ class ColumnResolver:
             if entry.symbol_type == SymbolType.VALUE:
                 ref_type = ColumnRefType.VALUE_ALIAS
                 sql_name = variable  # Use the alias directly
+            else:
+                # This is a bare entity reference - mark as potential entity return
+                # (will be used in projection context to expand to all properties)
+                is_entity_return = True
 
         else:
             # Property access (e.g., "p.name")
@@ -699,7 +824,77 @@ class ColumnResolver:
             sql_column_name=sql_name,
             data_type_name=entry.data_type_name,
             derivation=f"from {entry.definition_location}",
+            is_entity_return=is_entity_return,
         )
+
+    def _resolve_exists_expression(
+        self, expr: QueryExpressionExists, resolved: ResolvedExpression
+    ) -> None:
+        """Resolve column references inside an EXISTS expression.
+
+        EXISTS patterns have their own nested scope with entities defined
+        by the pattern. We need to:
+        1. Create a nested scope
+        2. Define symbols for pattern entities
+        3. Resolve the WHERE expression
+        4. Exit the nested scope
+
+        Args:
+            expr: The EXISTS expression
+            resolved: The resolved expression to add refs to
+        """
+        from gsql2rsql.parser.ast import NodeEntity, RelationshipEntity
+
+        # Enter nested scope for EXISTS pattern
+        self._symbol_table.enter_scope()
+
+        try:
+            # Define symbols for each entity in the pattern
+            for entity in expr.pattern_entities:
+                if isinstance(entity, NodeEntity):
+                    # Define node symbol
+                    alias = entity.alias or "_anon"
+                    label = entity.entity_name or "Node"
+
+                    # Get properties from schema if available
+                    properties: list[str] = []
+                    if hasattr(self, '_graph_schema') and self._graph_schema:
+                        node_def = self._graph_schema.get_node_definition(label)
+                        if node_def and node_def.properties:
+                            properties = [p.property_name for p in node_def.properties]
+
+                    entry = SymbolEntry(
+                        name=alias,
+                        symbol_type=SymbolType.ENTITY,
+                        definition_operator_id=self._current_operator.operator_debug_id if self._current_operator else 0,
+                        definition_location=f"EXISTS pattern",
+                        scope_level=self._symbol_table.current_level,
+                        data_type_name=label,
+                        properties=properties,
+                    )
+                    self._symbol_table.define_or_update(alias, entry)
+
+                elif isinstance(entity, RelationshipEntity):
+                    # Define relationship symbol if it has an alias
+                    if entity.alias:
+                        entry = SymbolEntry(
+                            name=entity.alias,
+                            symbol_type=SymbolType.ENTITY,
+                            definition_operator_id=self._current_operator.operator_debug_id if self._current_operator else 0,
+                            definition_location=f"EXISTS pattern",
+                            scope_level=self._symbol_table.current_level,
+                            data_type_name=entity.entity_name or "Relationship",
+                            properties=[],
+                        )
+                        self._symbol_table.define_or_update(entity.alias, entry)
+
+            # Resolve the WHERE expression inside EXISTS
+            if expr.where_expression:
+                self._resolve_expression_recursive(expr.where_expression, resolved)
+
+        finally:
+            # Exit nested scope
+            self._symbol_table.exit_scope()
 
     def _raise_undefined_variable_error(
         self, expr: QueryExpressionProperty
@@ -948,12 +1143,19 @@ class ColumnResolver:
         Called AFTER expressions in the projection are resolved, so that
         COUNT(f) can see f, but downstream operators cannot.
 
+        IMPORTANT: Only clears symbols from UPSTREAM operators (with lower IDs)
+        to avoid clearing symbols from downstream operators that were defined
+        in Phase 1.
+
         Args:
             op: The aggregating ProjectionOperator
         """
-        # Clear scope - after aggregation, only projected variables are visible
+        # Clear scope - but only for symbols from upstream operators
+        # This prevents clearing symbols from downstream operators (like 'city' from op 7)
+        # when resolving an upstream aggregation (like op 6)
         self._symbol_table.clear_scope_for_aggregation(
-            f"WITH aggregation at ProjectionOperator {op.operator_debug_id}"
+            f"WITH aggregation at ProjectionOperator {op.operator_debug_id}",
+            max_operator_id=op.operator_debug_id,
         )
 
         # Define only the projected symbols

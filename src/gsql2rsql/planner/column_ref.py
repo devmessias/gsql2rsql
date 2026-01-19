@@ -77,6 +77,7 @@ class ResolvedColumnRef:
     source_operator_id: int = 0
     sql_column_name: str = ""
     sql_table_alias: str | None = None
+    is_entity_return: bool = False  # True if this is a bare entity return (RETURN p vs RETURN p.name)
 
     # Type information
     data_type: type[Any] | None = None

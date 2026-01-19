@@ -79,6 +79,7 @@ class LogicalPlan:
         self._terminal_operators: list[LogicalOperator] = []
         self._resolution_result: ResolutionResult | None = None
         self._original_query: str = ""
+        self._graph_schema: IGraphSchemaProvider | None = None
 
     @property
     def starting_operators(self) -> list[StartLogicalOperator]:
@@ -102,6 +103,11 @@ class LogicalPlan:
     def is_resolved(self) -> bool:
         """Check if column resolution has been performed."""
         return self._resolution_result is not None
+
+    @property
+    def graph_schema(self) -> IGraphSchemaProvider | None:
+        """Return the graph schema provider used to create this plan."""
+        return self._graph_schema
 
     def resolve(self, original_query: str = "") -> ResolutionResult:
         """Perform column resolution on this plan.
@@ -165,6 +171,7 @@ class LogicalPlan:
             A LogicalPlan instance.
         """
         planner = cls(logger)
+        planner._graph_schema = graph_def
         all_logical_ops: list[LogicalOperator] = []
 
         # Resolve entity names for nodes referenced without labels
