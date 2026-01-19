@@ -2,10 +2,10 @@ select
  _gsql2rsql_a_id as id
 from (
  select
- _gsql2rsql_a_id as a
+ _gsql2rsql_a_id as _gsql2rsql_a_id
  ,COLLECT_LIST(_gsql2rsql_t_amount) as amounts
- ,_gsql2rsql_a_verified as _gsql2rsql_a_verified
  ,_gsql2rsql_a_name as _gsql2rsql_a_name
+ ,_gsql2rsql_a_verified as _gsql2rsql_a_verified
  from (
  select
  _left._gsql2rsql_a_id as _gsql2rsql_a_id
@@ -49,6 +49,6 @@ from (
  ) as _right on
  _right._gsql2rsql_b_id = _left._gsql2rsql_t_target_id
  ) as _proj
- group by _gsql2rsql_a_id, _gsql2rsql_a_verified, _gsql2rsql_a_name
+ group by _gsql2rsql_a_id, _gsql2rsql_a_name, _gsql2rsql_a_verified
  having FORALL(amounts, x -> (x) > (1000))
 ) as _proj

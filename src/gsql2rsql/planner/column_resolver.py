@@ -158,11 +158,23 @@ class ColumnResolver:
             self._build_symbols_for_operator(op)
 
         # Phase 2: Resolve all expressions
+        # IMPORTANT: Process operators in topological order, allowing scope changes
+        # to flow from upstream to downstream operators
         self._current_phase = "expression_resolution"
+
+        # Reset symbol table to start of Phase 2
+        # We need to rebuild the symbol table state as we process operators
+        # This ensures each operator sees the correct scope
+        self._symbol_table = SymbolTable()
+
         for op in all_operators:
             self._current_operator = op
+            # Rebuild symbols for this operator (adds entities/variables to scope)
+            self._build_symbols_for_operator(op)
+            # Now resolve expressions with current symbol table state
             self._resolve_operator_expressions(op)
 
+        # Use final symbol table state for result
         self._result.symbol_table = self._symbol_table
         return self._result
 

@@ -2077,13 +2077,43 @@ class SQLRenderer:
         lines.append(f"{indent}SELECT {distinct}")
 
         # Render projection fields
+        # Note: Check for aggregation first since we need it for alias logic
+        has_aggregation = any(self._has_aggregation(expr) for _, expr in op.projections)
+
         for i, (alias, expr) in enumerate(op.projections):
             rendered = self._render_expression(expr, op)
             prefix = " " if i == 0 else ","
-            lines.append(f"{indent}  {prefix}{rendered} AS {alias}")
 
-        # Check for aggregations (needed for both extra column projection and GROUP BY)
-        has_aggregation = any(self._has_aggregation(expr) for _, expr in op.projections)
+            # Bug fix: In aggregation contexts or intermediate projections, entity IDs should
+            # keep their full column names instead of being aliased to short names. This
+            # prevents UNRESOLVED_COLUMN errors in PySpark when outer queries try to
+            # reference the original column name.
+            #
+            # Example bug: WITH p, COUNT(t) AS total
+            #   - Buggy:  _gsql2rsql_p_id AS p  (aliases away the column)
+            #   - Fixed:  _gsql2rsql_p_id AS _gsql2rsql_p_id  (preserves column name)
+            #
+            # This applies to:
+            # 1. Aggregating projections (has_aggregation=True)
+            # 2. Intermediate projections (depth > 0) that pass entities through
+            #
+            # Check if this is a bare entity reference (not an aggregate, not a property access)
+            is_bare_entity = (
+                isinstance(expr, QueryExpressionProperty)
+                and expr.property_name is None
+                and not self._has_aggregation(expr)
+            )
+
+            if (has_aggregation or depth > 0) and is_bare_entity:
+                # Use full column name as alias to preserve column availability
+                output_alias = rendered
+            else:
+                # Use user-provided alias (normal behavior)
+                output_alias = alias
+
+            lines.append(f"{indent}  {prefix}{rendered} AS {output_alias}")
+
+        # has_aggregation was already computed above (line 2081) for alias logic
 
         # Bug #1 Fix: When projecting entity variables through a WITH clause,
         # we need to also project any entity properties that are required downstream.

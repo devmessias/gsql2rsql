@@ -4,7 +4,7 @@ select
  ,totalAmount as totalAmount
 from (
  select
- _gsql2rsql_a_id as a
+ _gsql2rsql_a_id as _gsql2rsql_a_id
  ,count(_gsql2rsql_b_id) as transferCount
  ,sum(_gsql2rsql_t_amount) as totalAmount
  ,_gsql2rsql_a_name as _gsql2rsql_a_name

@@ -2,7 +2,7 @@ select
  _gsql2rsql_a_id as id
 from (
  select
- _gsql2rsql_a_id as a
+ _gsql2rsql_a_id as _gsql2rsql_a_id
  ,COLLECT_LIST(_gsql2rsql_t_amount) as amounts
  ,_gsql2rsql_a_name as _gsql2rsql_a_name
  ,_gsql2rsql_a_verified as _gsql2rsql_a_verified
