@@ -446,43 +446,67 @@ class SQLRenderer:
             # Add node's join key column
             if node_field and isinstance(node_field, EntityField):
                 if node_field.node_join_field:
-                    node_key = self._get_field_name(
-                        node_alias, node_field.node_join_field.field_alias
-                    )
+                    # Use pre-rendered field name if available (varlen paths)
+                    if node_field.node_join_field.field_name and node_field.node_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                        node_key = node_field.node_join_field.field_name
+                    else:
+                        node_key = self._get_field_name(
+                            node_alias, node_field.node_join_field.field_alias
+                        )
                     self._required_columns.add(node_key)
 
             # Add relationship/node's join key column based on pair type
             if rel_field and isinstance(rel_field, EntityField):
                 if pair.pair_type == JoinKeyPairType.SOURCE:
                     if rel_field.rel_source_join_field:
-                        rel_key = self._get_field_name(
-                            rel_alias, rel_field.rel_source_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.rel_source_join_field.field_name and rel_field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            rel_key = rel_field.rel_source_join_field.field_name
+                        else:
+                            rel_key = self._get_field_name(
+                                rel_alias, rel_field.rel_source_join_field.field_alias
+                            )
                         self._required_columns.add(rel_key)
                 elif pair.pair_type == JoinKeyPairType.SINK:
                     if rel_field.rel_sink_join_field:
-                        rel_key = self._get_field_name(
-                            rel_alias, rel_field.rel_sink_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.rel_sink_join_field.field_name and rel_field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            rel_key = rel_field.rel_sink_join_field.field_name
+                        else:
+                            rel_key = self._get_field_name(
+                                rel_alias, rel_field.rel_sink_join_field.field_alias
+                            )
                         self._required_columns.add(rel_key)
                 elif pair.pair_type == JoinKeyPairType.NODE_ID:
                     # Node to node join
                     if rel_field.node_join_field:
-                        rel_key = self._get_field_name(
-                            rel_alias, rel_field.node_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.node_join_field.field_name and rel_field.node_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            rel_key = rel_field.node_join_field.field_name
+                        else:
+                            rel_key = self._get_field_name(
+                                rel_alias, rel_field.node_join_field.field_alias
+                            )
                         self._required_columns.add(rel_key)
                 elif pair.pair_type in (JoinKeyPairType.EITHER, JoinKeyPairType.BOTH):
                     # EITHER/BOTH - need both source and sink keys
                     if rel_field.rel_source_join_field:
-                        source_key = self._get_field_name(
-                            rel_alias, rel_field.rel_source_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.rel_source_join_field.field_name and rel_field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            source_key = rel_field.rel_source_join_field.field_name
+                        else:
+                            source_key = self._get_field_name(
+                                rel_alias, rel_field.rel_source_join_field.field_alias
+                            )
                         self._required_columns.add(source_key)
                     if rel_field.rel_sink_join_field:
-                        sink_key = self._get_field_name(
-                            rel_alias, rel_field.rel_sink_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.rel_sink_join_field.field_name and rel_field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            sink_key = rel_field.rel_sink_join_field.field_name
+                        else:
+                            sink_key = self._get_field_name(
+                                rel_alias, rel_field.rel_sink_join_field.field_alias
+                            )
                         self._required_columns.add(sink_key)
 
     def _collect_required_columns(self, op: LogicalOperator) -> None:
@@ -1917,9 +1941,13 @@ class SQLRenderer:
                 # Entity field - output join keys
                 if field.entity_type == EntityType.NODE:
                     if field.node_join_field:
-                        key_name = self._get_field_name(
-                            field.field_alias, field.node_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if field.node_join_field.field_name and field.node_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            key_name = field.node_join_field.field_name
+                        else:
+                            key_name = self._get_field_name(
+                                field.field_alias, field.node_join_field.field_alias
+                            )
                         # Skip if already projected
                         if key_name not in projected_aliases:
                             # Determine which side of join has this column
@@ -1943,10 +1971,14 @@ class SQLRenderer:
                             projected_aliases.add(key_name)
                 else:
                     if field.rel_source_join_field:
-                        src_key = self._get_field_name(
-                            field.field_alias,
-                            field.rel_source_join_field.field_alias,
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if field.rel_source_join_field.field_name and field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            src_key = field.rel_source_join_field.field_name
+                        else:
+                            src_key = self._get_field_name(
+                                field.field_alias,
+                                field.rel_source_join_field.field_alias,
+                            )
                         # Skip if already projected
                         if src_key not in projected_aliases:
                             # Determine which side of join has this column
@@ -1965,10 +1997,14 @@ class SQLRenderer:
                             fields.append(f"{actual_var}.{src_key} AS {src_key}")
                             projected_aliases.add(src_key)
                     if field.rel_sink_join_field:
-                        sink_key = self._get_field_name(
-                            field.field_alias,
-                            field.rel_sink_join_field.field_alias,
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if field.rel_sink_join_field.field_name and field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            sink_key = field.rel_sink_join_field.field_name
+                        else:
+                            sink_key = self._get_field_name(
+                                field.field_alias,
+                                field.rel_sink_join_field.field_alias,
+                            )
                         # Skip if already projected
                         if sink_key not in projected_aliases:
                             # Determine which side of join has this column
@@ -1999,9 +2035,13 @@ class SQLRenderer:
 
                 for encap_field in field.encapsulated_fields:
                     if encap_field.field_alias not in skip_fields:
-                        field_alias = self._get_field_name(
-                            field.field_alias, encap_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if encap_field.field_name and encap_field.field_name.startswith(self.COLUMN_PREFIX):
+                            field_alias = encap_field.field_name
+                        else:
+                            field_alias = self._get_field_name(
+                                field.field_alias, encap_field.field_alias
+                            )
                         # Skip if already projected
                         if field_alias in projected_aliases:
                             continue
@@ -2126,23 +2166,36 @@ class SQLRenderer:
         for field in schema:
             if isinstance(field, EntityField):
                 # Add the node/relationship join key columns
+                # Use pre-rendered field names if available (varlen paths)
                 if field.node_join_field:
-                    columns.add(
-                        self._get_field_name(field.field_alias, field.node_join_field.field_alias)
-                    )
+                    if field.node_join_field.field_name and field.node_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                        columns.add(field.node_join_field.field_name)
+                    else:
+                        columns.add(
+                            self._get_field_name(field.field_alias, field.node_join_field.field_alias)
+                        )
                 if field.rel_source_join_field:
-                    columns.add(
-                        self._get_field_name(field.field_alias, field.rel_source_join_field.field_alias)
-                    )
+                    if field.rel_source_join_field.field_name and field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                        columns.add(field.rel_source_join_field.field_name)
+                    else:
+                        columns.add(
+                            self._get_field_name(field.field_alias, field.rel_source_join_field.field_alias)
+                        )
                 if field.rel_sink_join_field:
-                    columns.add(
-                        self._get_field_name(field.field_alias, field.rel_sink_join_field.field_alias)
-                    )
+                    if field.rel_sink_join_field.field_name and field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                        columns.add(field.rel_sink_join_field.field_name)
+                    else:
+                        columns.add(
+                            self._get_field_name(field.field_alias, field.rel_sink_join_field.field_alias)
+                        )
                 # Add all encapsulated fields
                 for encap_field in field.encapsulated_fields:
-                    columns.add(
-                        self._get_field_name(field.field_alias, encap_field.field_alias)
-                    )
+                    if encap_field.field_name and encap_field.field_name.startswith(self.COLUMN_PREFIX):
+                        columns.add(encap_field.field_name)
+                    else:
+                        columns.add(
+                            self._get_field_name(field.field_alias, encap_field.field_alias)
+                        )
             elif isinstance(field, ValueField):
                 columns.add(field.field_alias)
         return columns
@@ -2258,43 +2311,87 @@ class SQLRenderer:
             if isinstance(node_field, EntityField) and isinstance(
                 rel_field, EntityField
             ):
-                node_key = self._get_field_name(
-                    node_alias,
-                    (
-                        node_field.node_join_field.field_alias
-                        if node_field.node_join_field
-                        else "id"
-                    ),
-                )
-
-                if pair.pair_type == JoinKeyPairType.SOURCE:
-                    rel_key = self._get_field_name(
-                        rel_alias,
+                # ========== FIX: Variable-length path field naming ==========
+                # For normal entities (from DataSourceOperator), we construct the
+                # field name from alias + field_alias (e.g., "peer" + "id" -> "_gsql2rsql_peer_id").
+                #
+                # However, for entities from variable-length paths (RecursiveTraversalOperator),
+                # the fields are already projected with full SQL names in _render_recursive_join()
+                # (e.g., "sink.id AS _gsql2rsql_peer_id"). In this case, the field_name
+                # attribute is set to the complete SQL column name.
+                #
+                # Using field_name directly when it's already a full SQL name prevents
+                # double-prefixing (e.g., "_gsql2rsql_peer_peer_id" ❌).
+                if (
+                    node_field.node_join_field
+                    and node_field.node_join_field.field_name
+                    and node_field.node_join_field.field_name.startswith(self.COLUMN_PREFIX)
+                ):
+                    # Use the pre-rendered SQL column name directly (varlen paths)
+                    node_key = node_field.node_join_field.field_name
+                else:
+                    # Construct field name from alias + field_alias (normal entities)
+                    node_key = self._get_field_name(
+                        node_alias,
                         (
-                            rel_field.rel_source_join_field.field_alias
-                            if rel_field.rel_source_join_field
-                            else "source_id"
-                        ),
-                    )
-                elif pair.pair_type == JoinKeyPairType.SINK:
-                    rel_key = self._get_field_name(
-                        rel_alias,
-                        (
-                            rel_field.rel_sink_join_field.field_alias
-                            if rel_field.rel_sink_join_field
-                            else "sink_id"
-                        ),
-                    )
-                elif pair.pair_type == JoinKeyPairType.NODE_ID:
-                    # Node to node join
-                    rel_key = self._get_field_name(
-                        rel_alias,
-                        (
-                            rel_field.node_join_field.field_alias
-                            if rel_field.node_join_field
+                            node_field.node_join_field.field_alias
+                            if node_field.node_join_field
                             else "id"
                         ),
                     )
+
+                if pair.pair_type == JoinKeyPairType.SOURCE:
+                    # Use pre-rendered field name if available (varlen paths)
+                    if (
+                        rel_field.rel_source_join_field
+                        and rel_field.rel_source_join_field.field_name
+                        and rel_field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX)
+                    ):
+                        rel_key = rel_field.rel_source_join_field.field_name
+                    else:
+                        rel_key = self._get_field_name(
+                            rel_alias,
+                            (
+                                rel_field.rel_source_join_field.field_alias
+                                if rel_field.rel_source_join_field
+                                else "source_id"
+                            ),
+                        )
+                elif pair.pair_type == JoinKeyPairType.SINK:
+                    # Use pre-rendered field name if available (varlen paths)
+                    if (
+                        rel_field.rel_sink_join_field
+                        and rel_field.rel_sink_join_field.field_name
+                        and rel_field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX)
+                    ):
+                        rel_key = rel_field.rel_sink_join_field.field_name
+                    else:
+                        rel_key = self._get_field_name(
+                            rel_alias,
+                            (
+                                rel_field.rel_sink_join_field.field_alias
+                                if rel_field.rel_sink_join_field
+                                else "sink_id"
+                            ),
+                        )
+                elif pair.pair_type == JoinKeyPairType.NODE_ID:
+                    # Node to node join
+                    # Use pre-rendered field name if available (varlen paths)
+                    if (
+                        rel_field.node_join_field
+                        and rel_field.node_join_field.field_name
+                        and rel_field.node_join_field.field_name.startswith(self.COLUMN_PREFIX)
+                    ):
+                        rel_key = rel_field.node_join_field.field_name
+                    else:
+                        rel_key = self._get_field_name(
+                            rel_alias,
+                            (
+                                rel_field.node_join_field.field_alias
+                                if rel_field.node_join_field
+                                else "id"
+                            ),
+                        )
                 else:
                     # EITHER - undirected relationship (both directions match)
                     # For Cypher: (a)-[:REL]-(b) matches both (a)-[:REL]->(b) and (a)<-[:REL]-(b)
@@ -2302,13 +2399,21 @@ class SQLRenderer:
                     sink_key = None
 
                     if rel_field.rel_source_join_field:
-                        source_key = self._get_field_name(
-                            rel_alias, rel_field.rel_source_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.rel_source_join_field.field_name and rel_field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            source_key = rel_field.rel_source_join_field.field_name
+                        else:
+                            source_key = self._get_field_name(
+                                rel_alias, rel_field.rel_source_join_field.field_alias
+                            )
                     if rel_field.rel_sink_join_field:
-                        sink_key = self._get_field_name(
-                            rel_alias, rel_field.rel_sink_join_field.field_alias
-                        )
+                        # Use pre-rendered field name if available (varlen paths)
+                        if rel_field.rel_sink_join_field.field_name and rel_field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            sink_key = rel_field.rel_sink_join_field.field_name
+                        else:
+                            sink_key = self._get_field_name(
+                                rel_alias, rel_field.rel_sink_join_field.field_alias
+                            )
 
                     if source_key and sink_key:
                         # ========== STRATEGY SELECTION: OR vs UNION ALL ==========
