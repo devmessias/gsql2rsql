@@ -427,7 +427,7 @@ class TestKnownErrorPatterns:
             pytest.skip("features_queries.yaml not found")
 
         result = self.executor.execute_query(
-            "MATCH (p:Person) RETURN p.name, p.age",
+            "MATCH (p:Person) RETURN p.name, p.id",
             self.provider,
         )
         assert result.success, f"Simple MATCH failed: {result.error}"
@@ -449,7 +449,7 @@ class TestKnownErrorPatterns:
             pytest.skip("features_queries.yaml not found")
 
         result = self.executor.execute_query(
-            "MATCH (p:Person) WHERE p.age > 30 RETURN p.name",
+            "MATCH (p:Person) WHERE p.id > 2 RETURN p.name",
             self.provider,
         )
         assert result.success, f"WHERE clause failed: {result.error}"
@@ -471,7 +471,7 @@ class TestKnownErrorPatterns:
             pytest.skip("features_queries.yaml not found")
 
         result = self.executor.execute_query(
-            "MATCH (p:Person) RETURN p.name, p.age ORDER BY p.age DESC",
+            "MATCH (p:Person) RETURN p.name, p.id ORDER BY p.id DESC",
             self.provider,
         )
         assert result.success, f"ORDER BY failed: {result.error}"
