@@ -164,9 +164,13 @@ class LogicalOperator(ABC):
                     f"({field.entity_type.name}) props={props}"
                 )
             elif isinstance(field, ValueField):
+                # Show authoritative structured_type when available
+                if field.structured_type is not None:
+                    type_info = f"authoritative={field.structured_type.sql_type_name()}"
+                else:
+                    type_info = f"legacy_type={field.data_type}"
                 lines.append(
-                    f"  {field.field_alias}: {field.field_name} "
-                    f"(type={field.data_type})"
+                    f"  {field.field_alias}: {field.field_name} ({type_info})"
                 )
             else:
                 lines.append(f"  {field.field_alias}: {type(field).__name__}")
@@ -1061,7 +1065,18 @@ class RecursiveTraversalOperator(LogicalOperator):
         RecursiveTraversal output includes:
         1. All fields from input (source node)
         2. Target node as EntityField
-        3. Path variable if specified (as ValueField with list type)
+        3. Path variable if specified (AUTHORITATIVE ArrayType with structured element)
+
+        AUTHORITATIVE SCHEMA DECLARATION
+        ---------------------------------
+        This method is the source of truth for the path variable's type.
+        The path is declared as ARRAY<STRUCT<id: INT, ...>> where the struct
+        contains at minimum the node ID field. This enables downstream components
+        (ColumnResolver, Renderer) to correctly resolve expressions like:
+            [n IN nodes(path) | n.id]
+
+        The resolver MUST trust this declaration and NOT infer the type.
+        The renderer MUST use this type information and NOT guess.
         """
         fields: list[Field] = []
 
@@ -1085,16 +1100,71 @@ class RecursiveTraversalOperator(LogicalOperator):
             )
             fields.append(target_field)
 
-        # Add path variable if specified
+        # Add path variable if specified (with AUTHORITATIVE structured type)
         if self.path_variable:
-            path_field = ValueField(
-                field_alias=self.path_variable,
-                field_name=f"_gsql2rsql_{self.path_variable}",
-                data_type=list,
-            )
+            path_field = self._create_authoritative_path_field()
             fields.append(path_field)
 
         self.output_schema = Schema(fields)
+
+    def _create_authoritative_path_field(self) -> ValueField:
+        """Create an authoritative path field with structured type.
+
+        This method creates a ValueField for the path variable with a fully
+        specified ArrayType(StructType(...)) that enables proper resolution
+        of expressions like [n IN nodes(path) | n.id].
+
+        DESIGN NOTE:
+        ------------
+        The path contains node IDs (not full node objects), so when we iterate
+        over nodes(path), we're iterating over integers. However, since Cypher
+        semantics allow n.id on path elements, we model the element as a struct
+        with an 'id' field.
+
+        For now, we use a minimal struct with just the ID field. If we need
+        additional node properties in the future, we can extend this.
+
+        TODO: If multi-label nodes are traversed, the struct should include
+              only fields guaranteed to exist on all possible node types.
+
+        Returns:
+            ValueField with authoritative ArrayType(StructType) type
+        """
+        from gsql2rsql.planner.data_types import (
+            ArrayType,
+            StructType,
+            StructField,
+            PrimitiveType,
+        )
+        from gsql2rsql.planner.column_ref import compute_sql_column_name
+
+        # Build the struct fields for path elements
+        # At minimum, we guarantee the 'id' field exists
+        struct_fields: list[StructField] = [
+            StructField(
+                name="id",
+                data_type=PrimitiveType.INT,
+                sql_name=compute_sql_column_name("node", "id"),
+            ),
+        ]
+
+        # Create the element struct type
+        # TODO: Add 'label' field if needed for multi-label traversals
+        element_struct = StructType(
+            name=f"PathElement_{self.path_variable}",
+            fields=tuple(struct_fields),
+        )
+
+        # Create the array type
+        path_type = ArrayType(element_type=element_struct)
+
+        # Create the ValueField with authoritative type
+        return ValueField(
+            field_alias=self.path_variable,
+            field_name=f"_gsql2rsql_{self.path_variable}",
+            data_type=list,  # Legacy type for backward compatibility
+            structured_type=path_type,  # AUTHORITATIVE type declaration
+        )
 
     def introduced_symbols(self) -> set[str]:
         """Return symbols introduced by this traversal.
