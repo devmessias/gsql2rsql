@@ -105,6 +105,73 @@ class LogicalOperator(ABC):
         """Propagate data types from input schema to output schema."""
         pass
 
+    # =========================================================================
+    # Schema Propagation API (new methods for complete schema propagation)
+    # See docs/development/schema-propagation.md for design details.
+    # =========================================================================
+
+    def get_output_scope(self) -> Schema:
+        """Return the authoritative output scope for this operator.
+
+        This is the single source of truth for what columns are available
+        downstream. The renderer MUST use this instead of guessing.
+
+        Returns:
+            Schema containing all fields available to downstream operators.
+        """
+        return self.output_schema
+
+    def required_input_symbols(self) -> set[str]:
+        """Return symbols required from input to compute output.
+
+        If a required symbol is not in input_schema, propagation should fail.
+        Override in subclasses that consume symbols (e.g., Selection, Projection).
+
+        Returns:
+            Set of symbol names (field aliases) required from input.
+        """
+        # Default: no requirements
+        return set()
+
+    def introduced_symbols(self) -> set[str]:
+        """Return symbols newly created by this operator.
+
+        These are symbols that don't exist in the input but are created
+        by this operator (e.g., DataSource introduces entity alias).
+        Override in subclasses that create new symbols.
+
+        Returns:
+            Set of symbol names (field aliases) introduced by this operator.
+        """
+        # Default: no new symbols
+        return set()
+
+    def dump_scope(self) -> str:
+        """Return human-readable dump of the output scope.
+
+        Useful for debugging schema propagation issues.
+
+        Returns:
+            Multi-line string describing the output scope.
+        """
+        lines = [f"=== {self.__class__.__name__} (id={self.operator_debug_id}) ==="]
+        lines.append(f"Output Scope ({len(self.output_schema)} fields):")
+        for field in self.output_schema:
+            if isinstance(field, EntityField):
+                props = [f.field_alias for f in field.encapsulated_fields]
+                lines.append(
+                    f"  {field.field_alias}: {field.entity_name} "
+                    f"({field.entity_type.name}) props={props}"
+                )
+            elif isinstance(field, ValueField):
+                lines.append(
+                    f"  {field.field_alias}: {field.field_name} "
+                    f"(type={field.data_type})"
+                )
+            else:
+                lines.append(f"  {field.field_alias}: {type(field).__name__}")
+        return "\n".join(lines)
+
     def __str__(self) -> str:
         return f"{self.__class__.__name__}(id={self.operator_debug_id})"
 
@@ -307,9 +374,22 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
                 entity_field.rel_source_join_field = edge_src_id_field
                 entity_field.rel_sink_join_field = edge_sink_id_field
 
+    def introduced_symbols(self) -> set[str]:
+        """Return symbols introduced by this data source.
+
+        DataSource introduces exactly one symbol: the entity alias.
+        """
+        if self.entity:
+            return {self.entity.alias}
+        return set()
+
     def __str__(self) -> str:
         base = super().__str__()
-        filter_str = f"\n  Filter: {self.filter_expression}" if self.filter_expression else ""
+        filter_str = (
+            f"\n  Filter: {self.filter_expression}"
+            if self.filter_expression
+            else ""
+        )
         return f"{base}\n  DataSource: {self.entity}{filter_str}"
 
 
@@ -423,6 +503,24 @@ class SelectionOperator(UnaryLogicalOperator):
         if self.input_schema:
             self.output_schema = Schema(self.input_schema.fields)
 
+    def required_input_symbols(self) -> set[str]:
+        """Return symbols required from input for the filter expression."""
+        from gsql2rsql.parser.ast import QueryExpressionProperty
+
+        required: set[str] = set()
+        if self.filter_expression:
+            # Direct property reference
+            if isinstance(self.filter_expression, QueryExpressionProperty):
+                required.add(self.filter_expression.variable_name)
+
+            # Recursively find all property references
+            for prop in self.filter_expression.get_children_query_expression_type(
+                QueryExpressionProperty
+            ):
+                required.add(prop.variable_name)
+
+        return required
+
     def __str__(self) -> str:
         base = super().__str__()
         return f"{base}\n  Filter: {self.filter_expression}"
@@ -475,6 +573,74 @@ class ProjectionOperator(UnaryLogicalOperator):
         filter_str = f"\n  Filter: {self.filter_expression}" if self.filter_expression else ""
         having = f"\n  Having: {self.having_expression}" if self.having_expression else ""
         return f"{base}\n  Projections: {projs}{filter_str}{having}"
+
+    def propagate_data_types_for_in_schema(self) -> None:
+        """Propagate data types from upstream operator to input schema.
+
+        Projection's input schema is the output schema of its input operator.
+        """
+        if self.in_operator and self.in_operator.output_schema:
+            self.input_schema = Schema(self.in_operator.output_schema.fields)
+
+    def introduced_symbols(self) -> set[str]:
+        """Return symbols introduced by this projection.
+
+        A symbol is introduced if the projection alias is not an existing
+        symbol in the input scope. For example:
+        - RETURN p.name AS name  -> 'name' is introduced
+        - RETURN p               -> no new symbol if 'p' exists in input
+        - RETURN p AS q          -> 'q' is introduced (aliasing)
+        """
+        introduced: set[str] = set()
+
+        # Get input symbol names
+        input_names: set[str] = set()
+        if self.in_operator and self.in_operator.output_schema:
+            for field in self.in_operator.output_schema:
+                input_names.add(field.field_alias)
+
+        for alias, _ in self.projections:
+            if alias not in input_names:
+                introduced.add(alias)
+
+        return introduced
+
+    def required_input_symbols(self) -> set[str]:
+        """Return symbols required from input to compute output.
+
+        Extracts all variable names referenced in projection expressions,
+        filter_expression, having_expression, and order_by expressions.
+        """
+        required: set[str] = set()
+
+        # Collect variable references from all projections
+        for _, expr in self.projections:
+            self._collect_variable_refs(expr, required)
+
+        # Also collect from filter_expression if present
+        if self.filter_expression:
+            self._collect_variable_refs(self.filter_expression, required)
+
+        # And from having_expression if present
+        if self.having_expression:
+            self._collect_variable_refs(self.having_expression, required)
+
+        # And from order_by if present
+        for order_expr, _ in self.order_by:
+            self._collect_variable_refs(order_expr, required)
+
+        return required
+
+    def _collect_variable_refs(self, expr: QueryExpression, out: set[str]) -> None:
+        """Recursively collect variable references from an expression."""
+        from gsql2rsql.parser.ast import QueryExpressionProperty
+
+        if isinstance(expr, QueryExpressionProperty):
+            out.add(expr.variable_name)
+
+        # Recurse into child expressions
+        for child in expr.get_children_query_expression_type(QueryExpressionProperty):
+            out.add(child.variable_name)
 
     def propagate_data_types_for_out_schema(self) -> None:
         """Propagate data types from input schema to output schema.
@@ -703,6 +869,26 @@ class SetOperator(BinaryLogicalOperator):
         base = super().__str__()
         return f"{base}\n  SetOp: {self.set_operation.name}"
 
+    def propagate_data_types_for_in_schema(self) -> None:
+        """Propagate data types from upstream operators to input schema.
+
+        SetOperator merges both branches into input schema.
+        """
+        if self.in_operator_left and self.in_operator_right:
+            self.input_schema = Schema.merge(
+                self.in_operator_left.output_schema,
+                self.in_operator_right.output_schema,
+            )
+
+    def propagate_data_types_for_out_schema(self) -> None:
+        """Propagate data types to output schema.
+
+        For UNION, the output schema follows the left branch's schema.
+        (SQL UNION semantics: column names from first SELECT).
+        """
+        if self.in_operator_left and self.in_operator_left.output_schema:
+            self.output_schema = Schema(self.in_operator_left.output_schema.fields)
+
 
 class RecursiveTraversalOperator(LogicalOperator):
     r"""Operator for recursive traversal (BFS/DFS with variable-length paths).
@@ -856,6 +1042,74 @@ class RecursiveTraversalOperator(LogicalOperator):
         circular_str = ", circular=True" if self.is_circular else ""
         return f"RecursiveTraversal({edge_str}{hops_str}{path_str}{circular_str})"
 
+    def propagate_data_types_for_in_schema(self) -> None:
+        """Propagate data types from upstream operators to input schema.
+
+        RecursiveTraversal's input schema is the merged output of all input operators
+        (typically the source node's DataSourceOperator).
+        """
+        if self._in_operators:
+            merged_fields: list[Field] = []
+            for op in self._in_operators:
+                if op.output_schema:
+                    merged_fields.extend(op.output_schema.fields)
+            self.input_schema = Schema(merged_fields)
+
+    def propagate_data_types_for_out_schema(self) -> None:
+        """Propagate data types to output schema.
+
+        RecursiveTraversal output includes:
+        1. All fields from input (source node)
+        2. Target node as EntityField
+        3. Path variable if specified (as ValueField with list type)
+        """
+        fields: list[Field] = []
+
+        # Copy input fields (source node)
+        if self.input_schema:
+            fields.extend(self.input_schema.fields)
+
+        # Add target node as EntityField
+        if self.target_alias:
+            target_field = EntityField(
+                field_alias=self.target_alias,
+                entity_name=self.target_alias,
+                entity_type=EntityType.NODE,
+                bound_entity_name=self.target_node_type,
+                node_join_field=ValueField(
+                    field_alias=f"{self.target_alias}_id",
+                    field_name=f"_gsql2rsql_{self.target_alias}_id",
+                    data_type=int,
+                ),
+                encapsulated_fields=[],
+            )
+            fields.append(target_field)
+
+        # Add path variable if specified
+        if self.path_variable:
+            path_field = ValueField(
+                field_alias=self.path_variable,
+                field_name=f"_gsql2rsql_{self.path_variable}",
+                data_type=list,
+            )
+            fields.append(path_field)
+
+        self.output_schema = Schema(fields)
+
+    def introduced_symbols(self) -> set[str]:
+        """Return symbols introduced by this traversal.
+
+        RecursiveTraversal introduces:
+        - target_alias (if specified)
+        - path_variable (if specified)
+        """
+        introduced: set[str] = set()
+        if self.target_alias:
+            introduced.add(self.target_alias)
+        if self.path_variable:
+            introduced.add(self.path_variable)
+        return introduced
+
 
 @dataclass
 class UnwindOperator(UnaryLogicalOperator):
@@ -877,3 +1131,36 @@ class UnwindOperator(UnaryLogicalOperator):
     def __str__(self) -> str:
         base = super().__str__()
         return f"{base}\n  Unwind: {self.list_expression} AS {self.variable_name}"
+
+    def propagate_data_types_for_in_schema(self) -> None:
+        """Propagate data types from upstream operator to input schema."""
+        if self.in_operator and self.in_operator.output_schema:
+            self.input_schema = Schema(self.in_operator.output_schema.fields)
+
+    def propagate_data_types_for_out_schema(self) -> None:
+        """Propagate data types to output schema.
+
+        UNWIND adds the variable_name as a new ValueField while preserving
+        all upstream fields.
+        """
+        fields: list[Field] = []
+
+        # Preserve upstream fields
+        if self.input_schema:
+            fields.extend(self.input_schema.fields)
+
+        # Add the unwound variable
+        if self.variable_name:
+            fields.append(ValueField(
+                field_alias=self.variable_name,
+                field_name=f"_gsql2rsql_{self.variable_name}",
+                data_type=None,
+            ))
+
+        self.output_schema = Schema(fields)
+
+    def introduced_symbols(self) -> set[str]:
+        """Return symbols introduced by UNWIND."""
+        if self.variable_name:
+            return {self.variable_name}
+        return set()

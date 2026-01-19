@@ -60,6 +60,13 @@ def main() -> None:
     help="Enable column resolution validation (default: enabled). "
          "Validates all column references before rendering SQL.",
 )
+@click.option(
+    "--explain-scopes",
+    is_flag=True,
+    default=False,
+    help="Output scope information for each operator in the logical plan. "
+         "Useful for debugging schema propagation issues.",
+)
 def transpile(
     input_file: Path | None,
     output_file: Path | None,
@@ -67,6 +74,7 @@ def transpile(
     pretty: bool,  # noqa: ARG001
     optimize: bool,
     resolve: bool,
+    explain_scopes: bool,
 ) -> None:
     """Transpile an openCypher query to Databricks SQL."""
     # Read the query
@@ -112,6 +120,17 @@ def transpile(
                 # Print the full context error message
                 click.echo(str(e), err=True)
                 sys.exit(1)
+
+        # Output scope information if requested
+        if explain_scopes:
+            click.echo("=" * 60, err=True)
+            click.echo("SCOPE INFORMATION (--explain-scopes)", err=True)
+            click.echo("=" * 60, err=True)
+            for op in plan.all_operators():
+                click.echo(op.dump_scope(), err=True)
+                click.echo("-" * 40, err=True)
+            click.echo("=" * 60, err=True)
+            click.echo("", err=True)
 
         renderer = SQLRenderer(graph_def)
         sql = renderer.render_plan(plan)

@@ -216,6 +216,8 @@ class ColumnResolver:
             self._build_symbols_for_unwind(op)
         elif isinstance(op, ProjectionOperator):
             self._build_symbols_for_projection(op)
+        elif isinstance(op, RecursiveTraversalOperator):
+            self._build_symbols_for_recursive_traversal(op)
         # JoinOperator, SelectionOperator, etc. don't introduce new symbols
 
     def _build_symbols_for_datasource(self, op: DataSourceOperator) -> None:
@@ -330,6 +332,30 @@ class ColumnResolver:
         )
 
         self._symbol_table.define_or_update(op.variable_name, entry)
+
+    def _build_symbols_for_recursive_traversal(
+        self, op: RecursiveTraversalOperator
+    ) -> None:
+        """Build symbols for a RecursiveTraversal operator.
+
+        RecursiveTraversal introduces:
+        - path_variable (if specified) - the named path variable
+        - Target nodes are handled by their own DataSourceOperators
+
+        Args:
+            op: The RecursiveTraversalOperator
+        """
+        # Add path variable if specified
+        if op.path_variable:
+            entry = SymbolEntry(
+                name=op.path_variable,
+                symbol_type=SymbolType.PATH,
+                definition_operator_id=op.operator_debug_id,
+                definition_location=f"MATCH {op.path_variable} = ...",
+                scope_level=self._symbol_table.current_level,
+                data_type_name="PATH",  # Path type
+            )
+            self._symbol_table.define_or_update(op.path_variable, entry)
 
     def _build_symbols_for_projection(self, op: ProjectionOperator) -> None:
         """Build symbols for a projection operator.
@@ -515,12 +541,38 @@ class ColumnResolver:
                 self._resolve_expression_recursive(expr.filter_expression, resolved)
 
         elif isinstance(expr, QueryExpressionListComprehension):
-            if expr.source_expression:
-                self._resolve_expression_recursive(expr.source_expression, resolved)
+            # Resolve the list expression first (e.g., nodes(path))
+            if expr.list_expression:
+                self._resolve_expression_recursive(expr.list_expression, resolved)
+
+            # Add the loop variable as a temporary local symbol
+            # e.g., in [n IN nodes(path) | n.id], 'n' is a local binding
+            loop_var = expr.variable_name
+            temp_entry = SymbolEntry(
+                name=loop_var,
+                symbol_type=SymbolType.VALUE,
+                definition_operator_id=0,
+                definition_location=f"[{loop_var} IN ...]",
+                scope_level=self._symbol_table.current_level,
+                data_type_name="ANY",  # Element type of list
+            )
+            # Save existing entry if any (for nested comprehensions)
+            existing_entry = self._symbol_table.lookup(loop_var)
+            self._symbol_table.define_or_update(loop_var, temp_entry)
+
+            # Now resolve filter and map expressions with the loop variable in scope
             if expr.filter_expression:
                 self._resolve_expression_recursive(expr.filter_expression, resolved)
             if expr.map_expression:
                 self._resolve_expression_recursive(expr.map_expression, resolved)
+
+            # Restore the original entry or remove the temporary one
+            if existing_entry:
+                self._symbol_table.define_or_update(loop_var, existing_entry)
+            else:
+                # Remove the temporary entry - not strictly necessary but cleaner
+                # The symbol table doesn't have a remove method, so we leave it
+                pass
 
         elif isinstance(expr, QueryExpressionReduce):
             if expr.initial_expression:
