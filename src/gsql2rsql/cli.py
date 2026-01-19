@@ -54,12 +54,19 @@ def main() -> None:
     default=True,
     help="Enable subquery flattening optimization (default: enabled).",
 )
+@click.option(
+    "--resolve/--no-resolve",
+    default=True,
+    help="Enable column resolution validation (default: enabled). "
+         "Validates all column references before rendering SQL.",
+)
 def transpile(
     input_file: Path | None,
     output_file: Path | None,
     schema_file: Path,
     pretty: bool,  # noqa: ARG001
     optimize: bool,
+    resolve: bool,
 ) -> None:
     """Transpile an openCypher query to Databricks SQL."""
     # Read the query
@@ -87,6 +94,7 @@ def transpile(
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
         from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
+        from gsql2rsql.common.exceptions import ColumnResolutionError
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -96,8 +104,21 @@ def transpile(
         optimizer = SubqueryFlatteningOptimizer(enabled=optimize)
         optimizer.optimize(plan)
 
+        # Perform column resolution (validates all references)
+        if resolve:
+            try:
+                plan.resolve(original_query=query)
+            except ColumnResolutionError as e:
+                # Print the full context error message
+                click.echo(str(e), err=True)
+                sys.exit(1)
+
         renderer = SQLRenderer(graph_def)
         sql = renderer.render_plan(plan)
+    except ColumnResolutionError as e:
+        # Handle resolution errors with full context
+        click.echo(str(e), err=True)
+        sys.exit(1)
     except Exception as e:
         click.echo(f"Error transpiling query: {e}", err=True)
         sys.exit(1)
@@ -442,13 +463,19 @@ def _load_schema_from_yaml(schema_data: dict) -> Any:
     return provider
 
 
-def _transpile_query(query: str, graph_def: Any, optimize: bool = True) -> dict[str, Any]:
+def _transpile_query(
+    query: str,
+    graph_def: Any,
+    optimize: bool = True,
+    resolve: bool = True,
+) -> dict[str, Any]:
     """Transpile a query and return detailed results.
 
     Args:
         query: The openCypher query to transpile.
         graph_def: The graph schema definition.
         optimize: Whether to apply subquery flattening optimization.
+        resolve: Whether to perform column resolution validation.
 
     Returns:
         A dictionary with transpilation results including success status,
@@ -462,6 +489,7 @@ def _transpile_query(query: str, graph_def: Any, optimize: bool = True) -> dict[
         "sql": None,
         "parse_error": None,
         "transpile_error": None,
+        "resolution_error": None,
     }
 
     if not query.strip():
@@ -471,6 +499,7 @@ def _transpile_query(query: str, graph_def: Any, optimize: bool = True) -> dict[
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
         from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
+        from gsql2rsql.common.exceptions import ColumnResolutionError
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -488,10 +517,20 @@ def _transpile_query(query: str, graph_def: Any, optimize: bool = True) -> dict[
                 optimizer = SubqueryFlatteningOptimizer(enabled=optimize)
                 optimizer.optimize(plan)
 
+                # Perform column resolution (validates all references)
+                if resolve:
+                    try:
+                        plan.resolve(original_query=query)
+                    except ColumnResolutionError as e:
+                        result["resolution_error"] = str(e)
+                        return result
+
                 renderer = SQLRenderer(graph_def)
                 sql = renderer.render_plan(plan)
                 result["sql"] = sql
                 result["success"] = True
+            except ColumnResolutionError as e:
+                result["resolution_error"] = str(e)
             except Exception as e:
                 result["transpile_error"] = str(e)
         else:

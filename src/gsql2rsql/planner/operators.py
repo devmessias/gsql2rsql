@@ -476,6 +476,124 @@ class ProjectionOperator(UnaryLogicalOperator):
         having = f"\n  Having: {self.having_expression}" if self.having_expression else ""
         return f"{base}\n  Projections: {projs}{filter_str}{having}"
 
+    def propagate_data_types_for_out_schema(self) -> None:
+        """Propagate data types from input schema to output schema.
+
+        The output schema contains:
+        - For entity projections (bare variable like 'p'): EntityField or ValueField with ID
+        - For property projections (p.name): ValueField with inferred type
+        - For computed expressions: ValueField with inferred type
+
+        This method ensures that downstream operators have correct schema information
+        for column resolution and SQL generation.
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionProperty,
+            QueryExpressionAggregationFunction,
+        )
+
+        fields: list[Field] = []
+
+        for alias, expr in self.projections:
+            # Case 1: Bare entity reference (e.g., 'p' in RETURN p)
+            if isinstance(expr, QueryExpressionProperty) and expr.property_name is None:
+                var_name = expr.variable_name
+                # Try to find entity in input schema
+                entity_field = None
+                for fld in self.input_schema:
+                    if isinstance(fld, EntityField) and fld.field_alias == var_name:
+                        entity_field = fld
+                        break
+
+                if entity_field:
+                    # Create a new EntityField with the alias
+                    if alias == var_name:
+                        # Same name - keep the entity field
+                        fields.append(EntityField(
+                            field_alias=alias,
+                            entity_name=entity_field.entity_name,
+                            entity_type=entity_field.entity_type,
+                            bound_entity_name=entity_field.bound_entity_name,
+                            bound_source_entity_name=entity_field.bound_source_entity_name,
+                            bound_sink_entity_name=entity_field.bound_sink_entity_name,
+                            node_join_field=entity_field.node_join_field,
+                            rel_source_join_field=entity_field.rel_source_join_field,
+                            rel_sink_join_field=entity_field.rel_sink_join_field,
+                            encapsulated_fields=entity_field.encapsulated_fields,
+                        ))
+                    else:
+                        # Different alias - project the ID as a value
+                        fields.append(ValueField(
+                            field_alias=alias,
+                            field_name=f"_gsql2rsql_{var_name}_id",
+                            data_type=entity_field.node_join_field.data_type if entity_field.node_join_field else None,
+                        ))
+                else:
+                    # No entity found - might be a value reference
+                    for fld in self.input_schema:
+                        if isinstance(fld, ValueField) and fld.field_alias == var_name:
+                            fields.append(ValueField(
+                                field_alias=alias,
+                                field_name=fld.field_name,
+                                data_type=fld.data_type,
+                            ))
+                            break
+                    else:
+                        # Fallback: create a generic value field
+                        fields.append(ValueField(
+                            field_alias=alias,
+                            field_name=f"_gsql2rsql_{alias}",
+                            data_type=None,
+                        ))
+
+            # Case 2: Property access (e.g., 'p.name' in RETURN p.name AS name)
+            elif isinstance(expr, QueryExpressionProperty) and expr.property_name is not None:
+                var_name = expr.variable_name
+                prop_name = expr.property_name
+
+                # Try to find entity and get property type
+                data_type = None
+                for fld in self.input_schema:
+                    if isinstance(fld, EntityField) and fld.field_alias == var_name:
+                        for prop_field in fld.encapsulated_fields:
+                            if prop_field.field_name == prop_name:
+                                data_type = prop_field.data_type
+                                break
+                        break
+
+                fields.append(ValueField(
+                    field_alias=alias,
+                    field_name=f"_gsql2rsql_{var_name}_{prop_name}",
+                    data_type=data_type,
+                ))
+
+            # Case 3: Aggregation expression
+            elif isinstance(expr, QueryExpressionAggregationFunction):
+                # Infer type from aggregation function
+                agg_name = expr.aggregation_function.name if expr.aggregation_function else ""
+                if agg_name in ("COUNT",):
+                    data_type = int
+                elif agg_name in ("SUM", "AVG"):
+                    data_type = float
+                else:
+                    data_type = None
+
+                fields.append(ValueField(
+                    field_alias=alias,
+                    field_name=f"_gsql2rsql_{alias}",
+                    data_type=data_type,
+                ))
+
+            # Case 4: Other expressions (computed values)
+            else:
+                fields.append(ValueField(
+                    field_alias=alias,
+                    field_name=f"_gsql2rsql_{alias}",
+                    data_type=None,  # Type inference could be added
+                ))
+
+        self.output_schema = Schema(fields)
+
 
 @dataclass
 class AggregationBoundaryOperator(UnaryLogicalOperator):

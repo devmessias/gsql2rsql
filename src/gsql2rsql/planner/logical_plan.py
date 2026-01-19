@@ -55,6 +55,10 @@ from gsql2rsql.planner.path_analyzer import (
 )
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema
 
+# Import resolution types for optional column resolution
+from gsql2rsql.planner.column_resolver import ColumnResolver, ResolutionResult
+from gsql2rsql.planner.symbol_table import SymbolTable
+
 
 class LogicalPlan:
     """
@@ -62,12 +66,19 @@ class LogicalPlan:
 
     The logical plan transforms the abstract syntax tree into a relational
     query logical plan similar to Relational Algebra.
+
+    After creation, call resolve() to perform column resolution which:
+    - Builds a symbol table with all variable definitions
+    - Validates all column references
+    - Creates resolved references for use during rendering
     """
 
     def __init__(self, logger: ILoggable | None = None) -> None:
         self._logger = logger
         self._starting_operators: list[StartLogicalOperator] = []
         self._terminal_operators: list[LogicalOperator] = []
+        self._resolution_result: ResolutionResult | None = None
+        self._original_query: str = ""
 
     @property
     def starting_operators(self) -> list[StartLogicalOperator]:
@@ -78,6 +89,62 @@ class LogicalPlan:
     def terminal_operators(self) -> list[LogicalOperator]:
         """Return operators that are terminals (representing output)."""
         return self._terminal_operators
+
+    @property
+    def resolution_result(self) -> ResolutionResult | None:
+        """Return the column resolution result, if resolution was performed.
+
+        Returns None if resolve() has not been called.
+        """
+        return self._resolution_result
+
+    @property
+    def is_resolved(self) -> bool:
+        """Check if column resolution has been performed."""
+        return self._resolution_result is not None
+
+    def resolve(self, original_query: str = "") -> ResolutionResult:
+        """Perform column resolution on this plan.
+
+        This validates all column references and creates ResolvedColumnRef
+        objects for use during rendering. Should be called after process_query_tree.
+
+        Args:
+            original_query: The original Cypher query text (for error messages)
+
+        Returns:
+            ResolutionResult containing resolved references
+
+        Raises:
+            ColumnResolutionError: If any reference cannot be resolved
+        """
+        self._original_query = original_query
+        resolver = ColumnResolver()
+        self._resolution_result = resolver.resolve(self, original_query)
+        return self._resolution_result
+
+    def all_operators(self) -> list[LogicalOperator]:
+        """Get all operators in the plan.
+
+        Returns:
+            List of all LogicalOperator instances in the plan
+        """
+        result: list[LogicalOperator] = []
+        visited: set[int] = set()
+
+        def visit(op: LogicalOperator) -> None:
+            op_id = id(op)
+            if op_id in visited:
+                return
+            visited.add(op_id)
+            result.append(op)
+            for out_op in op._out_operators:
+                visit(out_op)
+
+        for start_op in self._starting_operators:
+            visit(start_op)
+
+        return result
 
     @classmethod
     def process_query_tree(
