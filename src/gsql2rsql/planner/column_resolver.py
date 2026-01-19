@@ -13,6 +13,7 @@ The resolution pass:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -362,9 +363,14 @@ class ColumnResolver:
 
         Projections that rename or compute values create new symbols.
 
+        NOTE: Scope clearing for aggregating projections is handled in
+        _resolve_operator_expressions AFTER resolving the projection's
+        own expressions (so COUNT(f) can reference f).
+
         Args:
             op: The ProjectionOperator
         """
+        # Normal projection processing
         for alias, expr in op.projections:
             # Check if this creates a new name (alias differs from source)
             creates_new_name = True
@@ -449,6 +455,13 @@ class ColumnResolver:
             for order_expr, _ in op.order_by:
                 resolved_exprs.append(self._resolve_expression(order_expr))
 
+            # SCOPE BOUNDARY: If this projection contains aggregation AND has
+            # downstream operators, it creates a scope boundary.
+            # Clear scope AFTER resolving expressions (so COUNT(f) can see f),
+            # but BEFORE downstream operators are processed.
+            if self._projection_has_aggregation(op) and op.out_operators:
+                self._apply_aggregation_scope_boundary(op)
+
         elif isinstance(op, DataSourceOperator):
             if op.filter_expression:
                 resolved = self._resolve_expression(op.filter_expression)
@@ -467,8 +480,39 @@ class ColumnResolver:
 
         elif isinstance(op, RecursiveTraversalOperator):
             if op.edge_filter:
+                # The edge_filter comes from PathExpressionAnalyzer extracting predicates
+                # from ALL(r IN relationships(path) WHERE r.amount > 100).
+                # The lambda variable (e.g., 'r') needs to be temporarily bound.
+                lambda_var = op.edge_filter_lambda_var
+                existing_entry = None
+
+                if lambda_var:
+                    # Save existing entry if any
+                    existing_entry = self._symbol_table.lookup(lambda_var)
+
+                    # Create temporary symbol for the lambda variable
+                    # It represents an edge element in the path
+                    temp_entry = SymbolEntry(
+                        name=lambda_var,
+                        symbol_type=SymbolType.VALUE,
+                        definition_operator_id=op.operator_debug_id,
+                        definition_location=f"ALL({lambda_var} IN relationships(path) WHERE ...)",
+                        scope_level=self._symbol_table.current_level,
+                        data_type_name="EDGE",  # Edge element type
+                        # Include edge properties if available
+                        properties=op.edge_properties or [],
+                    )
+                    self._symbol_table.define_or_update(lambda_var, temp_entry)
+
                 resolved = self._resolve_expression(op.edge_filter)
                 resolved_exprs.append(resolved)
+
+                # Restore original entry
+                if lambda_var:
+                    if existing_entry:
+                        self._symbol_table.define_or_update(lambda_var, existing_entry)
+                    # Note: we leave the temp entry if there was no existing
+                    # since the scope will be cleaned up naturally
 
         if resolved_exprs:
             self._result.resolved_expressions[op.operator_debug_id] = resolved_exprs
@@ -679,10 +723,15 @@ class ColumnResolver:
         # Build hints
         hints = self._build_hints_for_undefined_variable(variable, out_of_scope)
 
+        # Find approximate position of error in query
+        error_offset, error_length = self._find_token_position(variable, expr.property_name)
+
         context = ColumnResolutionErrorContext(
             error_type="UndefinedVariable",
             message=f"Variable '{variable}' is not defined",
             query_text=self._original_query,
+            error_offset=error_offset,
+            error_length=error_length,
             available_symbols=self._symbol_table.get_available_symbols(),
             out_of_scope_symbols=out_of_scope,
             suggestions=suggestions,
@@ -730,10 +779,15 @@ class ColumnResolver:
             f"Available properties: {', '.join(entry.properties)}"
         ]
 
+        # Find approximate position of error in query
+        error_offset, error_length = self._find_token_position(variable, property_name)
+
         context = ColumnResolutionErrorContext(
             error_type="InvalidPropertyAccess",
             message=f"Entity '{variable}' has no property '{property_name}'",
             query_text=self._original_query,
+            error_offset=error_offset,
+            error_length=error_length,
             available_symbols=self._symbol_table.get_available_symbols(),
             suggestions=suggestions,
             hints=hints,
@@ -747,6 +801,58 @@ class ColumnResolver:
             f"Entity '{variable}' has no property '{property_name}'",
             context=context,
         )
+
+    def _find_token_position(
+        self, variable: str, property_name: str | None = None
+    ) -> tuple[int, int]:
+        """Find the approximate position of a variable or property in the query.
+
+        This is a best-effort heuristic since AST nodes don't track positions.
+        It searches for the variable (or variable.property) pattern in the query text.
+
+        LIMITATIONS:
+        - If the same variable appears multiple times, this will find the first occurrence
+        - Doesn't account for variable occurrences in comments or strings
+        - Position may not be exact, but is better than showing nothing
+
+        TODO: Add position tracking to AST nodes during parsing for exact positions.
+
+        Args:
+            variable: The variable name to find
+            property_name: Optional property name (for property access errors)
+
+        Returns:
+            Tuple of (error_offset, error_length) where:
+            - error_offset: Character offset in query text (0 if not found)
+            - error_length: Length of the token (variable or variable.property)
+        """
+        if not self._original_query:
+            return (0, len(variable))
+
+        # Build the search pattern
+        if property_name:
+            # Look for "variable.property"
+            pattern = rf'\b{re.escape(variable)}\.{re.escape(property_name)}\b'
+            token_length = len(variable) + 1 + len(property_name)  # variable + . + property
+        else:
+            # Look for bare variable (ensure it's a word boundary)
+            pattern = rf'\b{re.escape(variable)}\b'
+            token_length = len(variable)
+
+        # Search for the pattern
+        match = re.search(pattern, self._original_query)
+        if match:
+            return (match.start(), token_length)
+
+        # Fallback: if property search failed, try just the variable
+        if property_name:
+            pattern = rf'\b{re.escape(variable)}\b'
+            match = re.search(pattern, self._original_query)
+            if match:
+                return (match.start(), len(variable))
+
+        # Not found - return start of query
+        return (0, token_length)
 
     def _compute_suggestions(self, target: str) -> list[str]:
         """Compute 'did you mean' suggestions for a variable name.
@@ -820,6 +926,68 @@ class ColumnResolver:
             )
 
         return hints
+
+    def _projection_has_aggregation(self, op: ProjectionOperator) -> bool:
+        """Check if a projection operator contains any aggregation.
+
+        Args:
+            op: The ProjectionOperator to check
+
+        Returns:
+            True if any projection expression contains aggregation
+        """
+        for _, expr in op.projections:
+            if self._expression_contains_aggregation(expr):
+                return True
+        return False
+
+    def _apply_aggregation_scope_boundary(self, op: ProjectionOperator) -> None:
+        """Apply scope boundary after an aggregating projection.
+
+        This clears the current scope and defines only the projected symbols.
+        Called AFTER expressions in the projection are resolved, so that
+        COUNT(f) can see f, but downstream operators cannot.
+
+        Args:
+            op: The aggregating ProjectionOperator
+        """
+        # Clear scope - after aggregation, only projected variables are visible
+        self._symbol_table.clear_scope_for_aggregation(
+            f"WITH aggregation at ProjectionOperator {op.operator_debug_id}"
+        )
+
+        # Define only the projected symbols
+        for alias, expr in op.projections:
+            is_entity = False
+            data_type_name = None
+            properties: list[str] = []
+
+            if isinstance(expr, QueryExpressionProperty):
+                if expr.property_name is None:
+                    # Bare entity reference - look up in out-of-scope symbols
+                    for sym_info, _ in self._symbol_table.get_out_of_scope_symbols():
+                        if sym_info.name == expr.variable_name:
+                            if sym_info.symbol_type == "entity":
+                                is_entity = True
+                                data_type_name = sym_info.data_type
+                                properties = sym_info.properties or []
+                            break
+
+            is_aggregated = self._expression_contains_aggregation(expr)
+            if is_aggregated:
+                data_type_name = self._infer_aggregation_type(expr)
+
+            entry = SymbolEntry(
+                name=alias,
+                symbol_type=SymbolType.ENTITY if is_entity else SymbolType.VALUE,
+                definition_operator_id=op.operator_debug_id,
+                definition_location=f"WITH AS {alias}",
+                scope_level=self._symbol_table.current_level,
+                data_type_name=data_type_name,
+                properties=properties,
+                is_aggregated=is_aggregated,
+            )
+            self._symbol_table.define_or_update(alias, entry)
 
     def _expression_contains_aggregation(self, expr: QueryExpression) -> bool:
         """Check if an expression contains aggregation functions.

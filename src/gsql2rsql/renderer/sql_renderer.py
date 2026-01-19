@@ -54,6 +54,8 @@ from gsql2rsql.planner.operators import (
 from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
 from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
+from gsql2rsql.planner.column_resolver import ResolutionResult
+from gsql2rsql.planner.column_ref import ResolvedColumnRef, ColumnRefType
 from gsql2rsql.renderer.schema_provider import (
     ISQLDBSchemaProvider,
     SQLTableDescriptor,
@@ -191,22 +193,51 @@ class SQLRenderer:
         self._required_value_fields: set[str] = set()
         # Enable column pruning by default
         self._enable_column_pruning = enable_column_pruning
+        # Resolution result from ColumnResolver (Phase 1 of renderer refactoring).
+        # When available, the renderer uses resolved column references instead of
+        # inferring them from schema lookups. This makes the renderer "stupid and safe".
+        # Set during render_plan() if the plan has been resolved.
+        self._resolution_result: ResolutionResult | None = None
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
         Render a logical plan to Databricks SQL.
 
+        The renderer is now "stupid and safe" - it requires pre-resolved plans
+        and only performs mechanical SQL generation. All semantic decisions
+        (column resolution, scope checking) are handled by ColumnResolver.
+
         Args:
-            plan: The logical plan to render.
+            plan: The logical plan to render. MUST be resolved via plan.resolve()
+                  before calling this method.
 
         Returns:
             The rendered Databricks SQL query string.
+
+        Raises:
+            ValueError: If the plan has not been resolved.
+
+        Trade-offs:
+            - Enforces separation of concerns (resolver = semantic, renderer = mechanical)
+            - Prevents subtle bugs from schema-based guessing
+            - Requires calling plan.resolve() before rendering
         """
         if not plan.terminal_operators:
             return ""
 
+        # REQUIRE RESOLUTION: Renderer is now stupid and safe
+        if not plan.is_resolved or plan.resolution_result is None:
+            raise ValueError(
+                "SQLRenderer requires a resolved plan. Call plan.resolve(original_query) "
+                "before rendering. The renderer no longer performs column resolution - "
+                "that is the job of ColumnResolver."
+            )
+
         # Reset CTE counter
         self._cte_counter = 0
+
+        # Store resolution result - this is now guaranteed to be non-None
+        self._resolution_result = plan.resolution_result
 
         # Column pruning: collect required columns before rendering
         self._required_columns = set()
@@ -275,150 +306,184 @@ class SQLRenderer:
 
         return has_recursive
 
-    def _collect_required_columns(self, op: LogicalOperator) -> None:
+    def _get_resolved_ref(
+        self,
+        variable: str,
+        property_name: str | None,
+        context_op: LogicalOperator,
+    ) -> ResolvedColumnRef | None:
+        """Look up a resolved column reference from the ResolutionResult.
+
+        This is the primary interface for the renderer to access pre-resolved
+        column information. When available, this avoids the need for schema
+        lookups and guessing in _find_entity_field().
+
+        Args:
+            variable: The variable name (e.g., "p")
+            property_name: The property name (e.g., "name") or None for bare refs
+            context_op: The operator context for the lookup
+
+        Returns:
+            ResolvedColumnRef if the reference was resolved, None otherwise.
+            Returns None if:
+            - No resolution result is available (unresolved plan)
+            - The operator has no resolved expressions
+            - The specific reference was not found
+
+        Trade-offs:
+            - Prefers resolution lookup over schema search for correctness
+            - Falls back to None (allowing legacy path) for backwards compat
         """
-        Collect required column aliases from the operator tree (column pruning).
+        if self._resolution_result is None:
+            return None
 
-        Traverses the operator tree and collects all column aliases that are
-        actually referenced in projections, filters, joins, aggregations, etc.
-        This allows the renderer to only output required columns in intermediate
-        subqueries, improving query performance.
+        op_id = context_op.operator_debug_id
+        resolved_exprs = self._resolution_result.resolved_expressions.get(op_id, [])
+
+        # Search through all resolved expressions for this operator
+        for resolved_expr in resolved_exprs:
+            ref = resolved_expr.get_ref(variable, property_name)
+            if ref is not None:
+                return ref
+
+        # Also check resolved projections if this is a ProjectionOperator
+        if op_id in self._resolution_result.resolved_projections:
+            for resolved_proj in self._resolution_result.resolved_projections[op_id]:
+                ref = resolved_proj.expression.get_ref(variable, property_name)
+                if ref is not None:
+                    return ref
+
+        return None
+
+    def _collect_required_columns_from_resolution(
+        self, op: LogicalOperator
+    ) -> None:
+        """Collect required columns using resolution result (Phase 4 optimization).
+
+        Uses pre-resolved column references instead of walking AST.
+        This is more accurate since resolution has already validated all references.
+
+        Trade-offs:
+            - Faster: O(n) direct lookup vs O(n) AST walk
+            - More accurate: Uses validated references
+            - Limitation: Still needs to handle join keys separately (from schema)
         """
-        if isinstance(op, ProjectionOperator):
-            # Collect columns from projection expressions
-            for _, expr in op.projections:
-                self._collect_columns_from_expression(expr)
-            # Collect from order by
-            if op.order_by:
-                for expr, _ in op.order_by:
-                    self._collect_columns_from_expression(expr)
-            # Collect from flattened WHERE clause (filter_expression)
-            if op.filter_expression:
-                self._collect_columns_from_expression(op.filter_expression)
-            # Collect from HAVING clause
-            if op.having_expression:
-                self._collect_columns_from_expression(op.having_expression)
+        assert self._resolution_result is not None
 
-        elif isinstance(op, SelectionOperator):
-            # Collect columns from filter expression
-            if op.filter_expression:
-                self._collect_columns_from_expression(op.filter_expression)
+        op_id = op.operator_debug_id
 
-        elif isinstance(op, JoinOperator):
-            # Join key columns are always required for the join condition
-            # We need to add them to _required_columns for column pruning to work
-            # correctly with boundary joins
-            for pair in op.join_pairs:
-                node_alias = pair.node_alias
-                rel_alias = pair.relationship_or_node_alias
+        # Collect from resolved expressions for this operator
+        if op_id in self._resolution_result.resolved_expressions:
+            for resolved_expr in self._resolution_result.resolved_expressions[op_id]:
+                for ref in resolved_expr.all_refs():
+                    self._required_columns.add(ref.sql_column_name)
+                    # Track bare variable references
+                    if ref.original_property is None:
+                        self._required_value_fields.add(ref.original_variable)
 
-                # Find the fields in the input schema
-                node_field = next(
-                    (f for f in op.input_schema if f.field_alias == node_alias),
-                    None,
-                )
-                rel_field = next(
-                    (f for f in op.input_schema if f.field_alias == rel_alias),
-                    None,
-                )
+        # Collect from resolved projections for ProjectionOperators
+        if op_id in self._resolution_result.resolved_projections:
+            for resolved_proj in self._resolution_result.resolved_projections[op_id]:
+                for ref in resolved_proj.expression.all_refs():
+                    self._required_columns.add(ref.sql_column_name)
+                    if ref.original_property is None:
+                        self._required_value_fields.add(ref.original_variable)
 
-                # Add node's join key column
-                if node_field and isinstance(node_field, EntityField):
-                    if node_field.node_join_field:
-                        node_key = self._get_field_name(
-                            node_alias, node_field.node_join_field.field_alias
-                        )
-                        self._required_columns.add(node_key)
+        # Handle JoinOperator join keys (still need schema for join keys)
+        if isinstance(op, JoinOperator):
+            self._collect_join_key_columns(op)
 
-                # Add relationship/node's join key column based on pair type
-                if rel_field and isinstance(rel_field, EntityField):
-                    if pair.pair_type == JoinKeyPairType.SOURCE:
-                        if rel_field.rel_source_join_field:
-                            rel_key = self._get_field_name(
-                                rel_alias, rel_field.rel_source_join_field.field_alias
-                            )
-                            self._required_columns.add(rel_key)
-                    elif pair.pair_type == JoinKeyPairType.SINK:
-                        if rel_field.rel_sink_join_field:
-                            rel_key = self._get_field_name(
-                                rel_alias, rel_field.rel_sink_join_field.field_alias
-                            )
-                            self._required_columns.add(rel_key)
-                    elif pair.pair_type == JoinKeyPairType.NODE_ID:
-                        # Node to node join
-                        if rel_field.node_join_field:
-                            rel_key = self._get_field_name(
-                                rel_alias, rel_field.node_join_field.field_alias
-                            )
-                            self._required_columns.add(rel_key)
-                    elif pair.pair_type in (JoinKeyPairType.EITHER, JoinKeyPairType.BOTH):
-                        # EITHER/BOTH - need both source and sink keys
-                        if rel_field.rel_source_join_field:
-                            source_key = self._get_field_name(
-                                rel_alias, rel_field.rel_source_join_field.field_alias
-                            )
-                            self._required_columns.add(source_key)
-                        if rel_field.rel_sink_join_field:
-                            sink_key = self._get_field_name(
-                                rel_alias, rel_field.rel_sink_join_field.field_alias
-                            )
-                            self._required_columns.add(sink_key)
-
-        elif isinstance(op, SetOperator):
-            # Recurse into both sides of set operation
+        # Handle SetOperator (recurse into both sides)
+        if isinstance(op, SetOperator):
             if op.in_operator_left:
-                self._collect_required_columns(op.in_operator_left)
+                self._collect_required_columns_from_resolution(op.in_operator_left)
             if op.in_operator_right:
-                self._collect_required_columns(op.in_operator_right)
+                self._collect_required_columns_from_resolution(op.in_operator_right)
             return  # Don't recurse further for set operators
 
         # Recurse into input operators
         if hasattr(op, "in_operator") and op.in_operator:
-            self._collect_required_columns(op.in_operator)
+            self._collect_required_columns_from_resolution(op.in_operator)
         if hasattr(op, "in_operator_left") and op.in_operator_left:
-            self._collect_required_columns(op.in_operator_left)
+            self._collect_required_columns_from_resolution(op.in_operator_left)
         if hasattr(op, "in_operator_right") and op.in_operator_right:
-            self._collect_required_columns(op.in_operator_right)
+            self._collect_required_columns_from_resolution(op.in_operator_right)
 
-    def _collect_columns_from_expression(self, expr: QueryExpression) -> None:
-        """Extract column aliases from an expression and add to required set."""
-        if isinstance(expr, QueryExpressionProperty):
-            # Property access like p.name -> _gsql2rsql_p_name
-            if expr.variable_name and expr.property_name:
-                col_alias = self._get_field_name(expr.variable_name, expr.property_name)
-                self._required_columns.add(col_alias)
-            elif expr.variable_name:
-                # Just a variable reference (bare variable like 'shared_cards' or 'p')
-                # For ValueFields, the variable name itself is the column alias
-                # For EntityFields, this represents the whole entity
-                # Mark the variable as required - used to preserve ValueFields
-                # through joins when referenced in outer projections
-                self._required_value_fields.add(expr.variable_name)
-        elif isinstance(expr, QueryExpressionBinary):
-            if expr.left_expression:
-                self._collect_columns_from_expression(expr.left_expression)
-            if expr.right_expression:
-                self._collect_columns_from_expression(expr.right_expression)
-        elif isinstance(expr, QueryExpressionFunction):
-            for param in expr.parameters:
-                self._collect_columns_from_expression(param)
-        elif isinstance(expr, QueryExpressionAggregationFunction):
-            if expr.inner_expression:
-                self._collect_columns_from_expression(expr.inner_expression)
-        elif isinstance(expr, QueryExpressionList):
-            for item in expr.items:
-                self._collect_columns_from_expression(item)
-        elif isinstance(expr, QueryExpressionCaseExpression):
-            if expr.test_expression:
-                self._collect_columns_from_expression(expr.test_expression)
-            for when_expr, then_expr in expr.alternatives:
-                self._collect_columns_from_expression(when_expr)
-                self._collect_columns_from_expression(then_expr)
-            if expr.else_expression:
-                self._collect_columns_from_expression(expr.else_expression)
-        elif isinstance(expr, QueryExpressionExists):
-            # EXISTS subquery - collect from pattern entities if they reference outer columns
-            pass  # EXISTS patterns are rendered separately
+    def _collect_join_key_columns(self, op: JoinOperator) -> None:
+        """Collect join key columns from JoinOperator (used by both resolution and legacy paths).
+
+        Join keys come from schema, not from expressions, so this is shared logic.
+        """
+        for pair in op.join_pairs:
+            node_alias = pair.node_alias
+            rel_alias = pair.relationship_or_node_alias
+
+            # Find the fields in the input schema
+            node_field = next(
+                (f for f in op.input_schema if f.field_alias == node_alias),
+                None,
+            )
+            rel_field = next(
+                (f for f in op.input_schema if f.field_alias == rel_alias),
+                None,
+            )
+
+            # Add node's join key column
+            if node_field and isinstance(node_field, EntityField):
+                if node_field.node_join_field:
+                    node_key = self._get_field_name(
+                        node_alias, node_field.node_join_field.field_alias
+                    )
+                    self._required_columns.add(node_key)
+
+            # Add relationship/node's join key column based on pair type
+            if rel_field and isinstance(rel_field, EntityField):
+                if pair.pair_type == JoinKeyPairType.SOURCE:
+                    if rel_field.rel_source_join_field:
+                        rel_key = self._get_field_name(
+                            rel_alias, rel_field.rel_source_join_field.field_alias
+                        )
+                        self._required_columns.add(rel_key)
+                elif pair.pair_type == JoinKeyPairType.SINK:
+                    if rel_field.rel_sink_join_field:
+                        rel_key = self._get_field_name(
+                            rel_alias, rel_field.rel_sink_join_field.field_alias
+                        )
+                        self._required_columns.add(rel_key)
+                elif pair.pair_type == JoinKeyPairType.NODE_ID:
+                    # Node to node join
+                    if rel_field.node_join_field:
+                        rel_key = self._get_field_name(
+                            rel_alias, rel_field.node_join_field.field_alias
+                        )
+                        self._required_columns.add(rel_key)
+                elif pair.pair_type in (JoinKeyPairType.EITHER, JoinKeyPairType.BOTH):
+                    # EITHER/BOTH - need both source and sink keys
+                    if rel_field.rel_source_join_field:
+                        source_key = self._get_field_name(
+                            rel_alias, rel_field.rel_source_join_field.field_alias
+                        )
+                        self._required_columns.add(source_key)
+                    if rel_field.rel_sink_join_field:
+                        sink_key = self._get_field_name(
+                            rel_alias, rel_field.rel_sink_join_field.field_alias
+                        )
+                        self._required_columns.add(sink_key)
+
+    def _collect_required_columns(self, op: LogicalOperator) -> None:
+        """
+        Collect required column aliases from the operator tree (column pruning).
+
+        Uses pre-resolved column references from ResolutionResult for accuracy.
+        This is an optimization to only output required columns in intermediate
+        subqueries, improving query performance.
+
+        The renderer now requires resolution, so this method always uses the
+        resolution-based path.
+        """
+        # Always use resolution (guaranteed to be non-None after render_plan check)
+        assert self._resolution_result is not None, "Resolution required"
+        self._collect_required_columns_from_resolution(op)
 
     def _render_recursive_cte(self, op: RecursiveTraversalOperator) -> str:
         """
@@ -1630,10 +1695,13 @@ class SQLRenderer:
                         )
                         # Skip if already projected
                         if key_name not in projected_aliases:
-                            # Verify column source using actual column availability
-                            actual_var = self._determine_column_source(
-                                key_name, left_columns, right_columns, is_from_left, left_var, right_var
-                            )
+                            # Determine which side of join has this column
+                            if key_name in left_columns:
+                                actual_var = left_var
+                            elif key_name in right_columns:
+                                actual_var = right_var
+                            else:
+                                actual_var = left_var if is_from_left else right_var
                             fields.append(f"{actual_var}.{key_name} AS {key_name}")
                             projected_aliases.add(key_name)
                 else:
@@ -1644,10 +1712,13 @@ class SQLRenderer:
                         )
                         # Skip if already projected
                         if src_key not in projected_aliases:
-                            # Verify column source using actual column availability
-                            actual_var = self._determine_column_source(
-                                src_key, left_columns, right_columns, is_from_left, left_var, right_var
-                            )
+                            # Determine which side of join has this column
+                            if src_key in left_columns:
+                                actual_var = left_var
+                            elif src_key in right_columns:
+                                actual_var = right_var
+                            else:
+                                actual_var = left_var if is_from_left else right_var
                             fields.append(f"{actual_var}.{src_key} AS {src_key}")
                             projected_aliases.add(src_key)
                     if field.rel_sink_join_field:
@@ -1657,10 +1728,13 @@ class SQLRenderer:
                         )
                         # Skip if already projected
                         if sink_key not in projected_aliases:
-                            # Verify column source using actual column availability
-                            actual_var = self._determine_column_source(
-                                sink_key, left_columns, right_columns, is_from_left, left_var, right_var
-                            )
+                            # Determine which side of join has this column
+                            if sink_key in left_columns:
+                                actual_var = left_var
+                            elif sink_key in right_columns:
+                                actual_var = right_var
+                            else:
+                                actual_var = left_var if is_from_left else right_var
                             fields.append(f"{actual_var}.{sink_key} AS {sink_key}")
                             projected_aliases.add(sink_key)
 
@@ -1688,10 +1762,13 @@ class SQLRenderer:
                             or not self._required_columns
                             or field_alias in self._required_columns
                         ):
-                            # Verify column source using actual column availability
-                            actual_var = self._determine_column_source(
-                                field_alias, left_columns, right_columns, is_from_left, left_var, right_var
-                            )
+                            # Determine which side of join has this column
+                            if field_alias in left_columns:
+                                actual_var = left_var
+                            elif field_alias in right_columns:
+                                actual_var = right_var
+                            else:
+                                actual_var = left_var if is_from_left else right_var
                             fields.append(f"{actual_var}.{field_alias} AS {field_alias}")
                             projected_aliases.add(field_alias)
 
@@ -1708,10 +1785,13 @@ class SQLRenderer:
                     or field.field_alias in self._required_columns
                     or field.field_alias in self._required_value_fields
                 ):
-                    # Verify column source using actual column availability
-                    actual_var = self._determine_column_source(
-                        field.field_alias, left_columns, right_columns, is_from_left, left_var, right_var
-                    )
+                    # Determine which side of join has this column
+                    if field.field_alias in left_columns:
+                        actual_var = left_var
+                    elif field.field_alias in right_columns:
+                        actual_var = right_var
+                    else:
+                        actual_var = left_var if is_from_left else right_var
                     fields.append(f"{actual_var}.{field.field_alias} AS {field.field_alias}")
                     projected_aliases.add(field.field_alias)
 
@@ -1805,29 +1885,6 @@ class SQLRenderer:
             elif isinstance(field, ValueField):
                 columns.add(field.field_alias)
         return columns
-
-    def _determine_column_source(
-        self,
-        column_name: str,
-        left_columns: set[str],
-        right_columns: set[str],
-        is_from_left_hint: bool,
-        left_var: str,
-        right_var: str,
-    ) -> str:
-        """Determine which side of the join a column should come from."""
-        # First, use the hint from entity alias
-        if is_from_left_hint and column_name in left_columns:
-            return left_var
-        if not is_from_left_hint and column_name in right_columns:
-            return right_var
-        # If hint doesn't match, try the other side
-        if column_name in left_columns:
-            return left_var
-        if column_name in right_columns:
-            return right_var
-        # Fallback to the hint
-        return left_var if is_from_left_hint else right_var
 
     def _render_join_conditions(
         self,
@@ -2212,150 +2269,40 @@ class SQLRenderer:
     def _render_property(
         self, expr: QueryExpressionProperty, context_op: LogicalOperator
     ) -> str:
-        """Render a property access.
+        """Render a property access using pre-resolved column references.
 
-        When property_name is provided, renders as {prefix}variable_property
-        (e.g., _gsql2rsql_p_name).
-        When property_name is None (bare entity reference like 'p'), renders as the
-        entity's ID column (e.g., _gsql2rsql_p_id for nodes,
-        _gsql2rsql_r_source_id for relationships).
-        This is necessary for aggregations like COUNT(p) which need a valid column.
+        The renderer is now "stupid and safe" - it uses pre-resolved column
+        references from ColumnResolver and doesn't perform any semantic resolution.
+
+        Args:
+            expr: The property expression (e.g., p.name or p)
+            context_op: The operator context
+
+        Returns:
+            SQL column reference (e.g., "_gsql2rsql_p_name")
+
+        Raises:
+            ValueError: If the reference was not resolved (indicates a bug in ColumnResolver)
+
+        Trade-offs:
+            - No guessing or schema lookups - uses pre-validated references
+            - Fails fast if resolution is incomplete (better than silent bugs)
+            - Simpler, more maintainable code
         """
-        if expr.property_name:
-            # Check if this is accessing .id on a variable that was projected as bare entity
-            # in a WITH clause. In that case, the variable itself contains the ID.
-            # IMPORTANT: Check for bare entity projection FIRST, before doing entity field lookup,
-            # because recursive entity field search might find the original EntityField.
-            if expr.property_name == "id":
-                # First, check if the in_operator is a ProjectionOperator that projected
-                # this variable as a bare entity (e.g., WITH source, sink, ...)
-                in_op = getattr(context_op, "in_operator", None)
-                if in_op is not None and isinstance(in_op, ProjectionOperator):
-                    for alias, proj_expr in in_op.projections:
-                        if alias == expr.variable_name:
-                            # Found the projection - check if it's a bare entity reference
-                            if (isinstance(proj_expr, QueryExpressionProperty)
-                                and proj_expr.property_name is None):
-                                # The variable was projected as a bare entity
-                                # So source.id should just be 'source'
-                                return expr.variable_name
+        # Use resolution - guaranteed to be available after render_plan check
+        resolved_ref = self._get_resolved_ref(
+            expr.variable_name, expr.property_name, context_op
+        )
 
-            field_alias = self._get_field_name(expr.variable_name, expr.property_name)
-            return field_alias
+        if resolved_ref is None:
+            # This should never happen if ColumnResolver is working correctly
+            prop_text = f"{expr.variable_name}.{expr.property_name}" if expr.property_name else expr.variable_name
+            raise ValueError(
+                f"Unresolved column reference: {prop_text} in operator {context_op.operator_debug_id}. "
+                f"This indicates a bug in ColumnResolver - all references should be resolved before rendering."
+            )
 
-        # Bare entity reference - need to resolve to the entity's ID column
-        # Look up the entity in the context operator's input schema (what's available
-        # before the operation, e.g., for projections, the fields from the input)
-        entity_field = self._find_entity_field(expr.variable_name, context_op)
-
-        if entity_field:
-            # For nodes, use the node_join_field (ID column)
-            if (
-                entity_field.entity_type == EntityType.NODE
-                and entity_field.node_join_field
-            ):
-                return self._get_field_name(
-                    expr.variable_name, entity_field.node_join_field.field_alias
-                )
-            # For relationships, use the source join field as the identifier
-            if (
-                entity_field.entity_type == EntityType.RELATIONSHIP
-                and entity_field.rel_source_join_field
-            ):
-                return self._get_field_name(
-                    expr.variable_name, entity_field.rel_source_join_field.field_alias
-                )
-
-        # Fallback for VLP queries: check if there's a column matching {prefix}{var}_id pattern
-        # This handles cases where the schema doesn't have the EntityField but the
-        # column exists from a VLP join (e.g., _gsql2rsql_source_id, _gsql2rsql_sink_id)
-        expected_id_col = f"{self.COLUMN_PREFIX}{expr.variable_name}_id"
-
-        # Check context_op.input_schema first
-        if context_op.input_schema:
-            for field in context_op.input_schema:
-                if field.field_alias == expected_id_col:
-                    return expected_id_col
-            # Check for any column with prefix
-            prefix = f"{self.COLUMN_PREFIX}{expr.variable_name}_"
-            for field in context_op.input_schema:
-                if field.field_alias.startswith(prefix):
-                    return expected_id_col
-
-        # Check in_operator's output_schema
-        in_op = getattr(context_op, "in_operator", None)
-        if in_op and in_op.output_schema:
-            for field in in_op.output_schema:
-                if field.field_alias == expected_id_col:
-                    return expected_id_col
-            prefix = f"{self.COLUMN_PREFIX}{expr.variable_name}_"
-            for field in in_op.output_schema:
-                if field.field_alias.startswith(prefix):
-                    return expected_id_col
-
-        # Check if required_columns has this pattern (for column pruning context)
-        if self._required_columns:
-            for col in self._required_columns:
-                if col == expected_id_col or col.startswith(f"{self.COLUMN_PREFIX}{expr.variable_name}_"):
-                    return expected_id_col
-
-        # Ultimate fallback: return variable name
-        return expr.variable_name
-
-    def _find_entity_field(
-        self, variable_name: str, context_op: LogicalOperator
-    ) -> EntityField | None:
-        """Find an entity field by variable name in the context operator's schemas.
-
-        Searches in this order:
-        1. input_schema (what's available to this operator)
-        2. in_operator.output_schema (for unary operators, the input from child)
-        3. output_schema (last resort)
-        4. Recursive search through nested operators (JoinOperator left/right)
-        """
-        # Check input_schema first (what's available to this operator)
-        if context_op.input_schema:
-            field = context_op.input_schema.get_field(variable_name)
-            if isinstance(field, EntityField):
-                return field
-
-        # For unary operators like ProjectionOperator, check the input operator's output schema
-        # This is where entity fields from MATCH clauses are stored
-        # Use getattr since in_operator is only on UnaryLogicalOperator
-        in_op = getattr(context_op, "in_operator", None)
-        if in_op is not None and in_op.output_schema:
-            field = in_op.output_schema.get_field(variable_name)
-            if isinstance(field, EntityField):
-                return field
-
-        # Fallback to output_schema
-        if context_op.output_schema:
-            field = context_op.output_schema.get_field(variable_name)
-            if isinstance(field, EntityField):
-                return field
-
-        # Recursive search through nested operators
-        # This handles cases where the entity is in a nested JoinOperator's input
-        if in_op is not None:
-            # Check if in_op is a JoinOperator with left/right operators
-            left_op = getattr(in_op, "left_operator", None)
-            right_op = getattr(in_op, "right_operator", None)
-            if left_op is not None:
-                result = self._find_entity_field(variable_name, left_op)
-                if result:
-                    return result
-            if right_op is not None:
-                result = self._find_entity_field(variable_name, right_op)
-                if result:
-                    return result
-            # Also recursively check in_op's in_operator chain
-            nested_in_op = getattr(in_op, "in_operator", None)
-            if nested_in_op is not None:
-                result = self._find_entity_field(variable_name, nested_in_op)
-                if result:
-                    return result
-
-        return None
+        return resolved_ref.full_sql_reference
 
     def _render_binary(
         self, expr: QueryExpressionBinary, context_op: LogicalOperator
@@ -3525,11 +3472,10 @@ class SQLRenderer:
                 else:
                     # Bare entity reference - the ID is projected under a different alias
                     entity_vars.add(expr.variable_name)
-                    entity_field = self._find_entity_field(expr.variable_name, op)
-                    if entity_field and entity_field.node_join_field:
-                        id_col = self._get_field_name(
-                            expr.variable_name, entity_field.node_join_field.field_alias
-                        )
+                    # Use resolution to get the ID column
+                    resolved_ref = self._get_resolved_ref(expr.variable_name, None, op)
+                    if resolved_ref:
+                        id_col = resolved_ref.sql_column_name
                         entity_id_columns[expr.variable_name] = id_col
                         # Note: We do NOT add this to already_projected because
                         # the projection aliases it as 'p', not '_gsql2rsql_p_id'

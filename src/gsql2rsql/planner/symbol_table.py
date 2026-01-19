@@ -240,12 +240,23 @@ class SymbolTable:
         Unlike define(), this allows redefining existing symbols.
         Useful for correlated subqueries where the same entity appears multiple times.
 
+        IMPORTANT: If this symbol was previously out-of-scope, remove it from
+        the out-of-scope list to avoid showing it in both available and
+        out-of-scope lists.
+
         Args:
             name: Variable name
             entry: Symbol entry with full metadata
         """
         entry.scope_level = self._current_level
         self._scopes[-1].symbols[name] = entry
+
+        # Remove from out-of-scope list if it was previously out-of-scope
+        # This prevents the symbol from appearing in both available and out-of-scope lists
+        self._out_of_scope = [
+            (sym, reason) for sym, reason in self._out_of_scope
+            if sym.name != name
+        ]
 
     def lookup(self, name: str) -> SymbolEntry | None:
         """Look up a symbol, searching from innermost to outermost scope.
