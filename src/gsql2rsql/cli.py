@@ -101,16 +101,15 @@ def transpile(
     # Transpile
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
-        from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
+        from gsql2rsql.planner.subquery_optimizer import optimize_plan
         from gsql2rsql.common.exceptions import ColumnResolutionError
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
         plan = LogicalPlan.process_query_tree(ast, graph_def)
 
-        # Apply subquery flattening optimization
-        optimizer = SubqueryFlatteningOptimizer(enabled=optimize)
-        optimizer.optimize(plan)
+        # Apply optimizations: predicate pushdown + subquery flattening
+        optimize_plan(plan, enabled=optimize, pushdown_enabled=optimize)
 
         # Perform column resolution (validates all references)
         if resolve:
