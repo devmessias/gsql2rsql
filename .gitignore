@@ -1,4 +1,3 @@
-src/gsql2rsql/parser/grammar
 tests/output
 out/
 # Byte-compiled / optimized / DLL files
