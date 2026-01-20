@@ -1,0 +1,4559 @@
+# Features Queries
+
+This page contains transpiled examples for **features queries** queries.
+
+Each example shows the original OpenCypher query and its corresponding Databricks SQL translation.
+
+---
+
+## 1. Simple node lookup - retrieve all nodes of a type
+
+**Application**: Features: Basic MATCH
+
+??? note "Notes"
+
+    The simplest query pattern - retrieves all nodes with a label.
+    
+    WHY USEFUL: Foundation of all graph queries. Start here to explore data.
+    
+    DATABRICKS COMPLEXITY: O(n) - single table scan
+    COST: Very low. Maps to: SELECT name, age FROM Person
+    Optimizations: Partition pruning if table is partitioned.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    RETURN p.name, p.age
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_p_age AS age
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+        ,name AS _gsql2rsql_p_name
+        ,age AS _gsql2rsql_p_age
+      FROM
+        catalog.demo.Person
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=2)
+        Projections: name=p.name, age=p.age
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 2. Property filter with WHERE clause
+
+**Application**: Features: WHERE filtering
+
+??? note "Notes"
+
+    Filters nodes by property values using boolean conditions.
+    
+    WHY USEFUL: Essential for narrowing results. Supports =, <>, <, >, <=, >=, AND, OR, NOT.
+    
+    DATABRICKS COMPLEXITY: O(n) without index, O(log n) with Delta index
+    COST: Low. WHERE pushdown to storage layer in Delta Lake.
+    TIP: Create Z-ORDER on frequently filtered columns.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    WHERE p.age > 30 AND p.active = true
+    RETURN p.name, p.age
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_p_age AS age
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+        ,name AS _gsql2rsql_p_name
+        ,age AS _gsql2rsql_p_age
+        ,active AS _gsql2rsql_p_active
+      FROM
+        catalog.demo.Person
+      WHERE (((age) > (30)) AND ((active) = (TRUE)))
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=3;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: ((p.age GT 30) AND (p.active EQ true))
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=3 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=3)
+        Projections: name=p.name, age=p.age
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 3. Property projection with aliases
+
+**Application**: Features: SELECT aliases
+
+??? note "Notes"
+
+    Projects specific properties with custom column names.
+    
+    WHY USEFUL: Control output schema, rename for clarity, reduce data transfer.
+    
+    DATABRICKS COMPLEXITY: O(n) - projection happens after scan
+    COST: Very low. Column pruning reduces I/O.
+    Note: Only requested columns are read from Delta Lake.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    RETURN p.name AS personName, p.age AS personAge, p.salary AS income
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS personName
+      ,_gsql2rsql_p_age AS personAge
+      ,_gsql2rsql_p_salary AS income
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+        ,name AS _gsql2rsql_p_name
+        ,age AS _gsql2rsql_p_age
+        ,salary AS _gsql2rsql_p_salary
+      FROM
+        catalog.demo.Person
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=2)
+        Projections: personName=p.name, personAge=p.age, income=p.salary
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 4. Pagination with ORDER BY, SKIP and LIMIT
+
+**Application**: Features: Pagination
+
+??? note "Notes"
+
+    Orders results and returns a specific page of data.
+    
+    WHY USEFUL: Implement pagination in APIs, get top-N results.
+    
+    DATABRICKS COMPLEXITY: O(n log n) for sorting
+    COST: Medium. Full sort before SKIP/LIMIT.
+    WARNING: SKIP without ORDER BY gives non-deterministic results.
+    TIP: For large offsets, consider keyset pagination instead.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    RETURN p.name, p.age
+    ORDER BY p.age DESC
+    SKIP 10 LIMIT 5
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_p_age AS age
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+        ,name AS _gsql2rsql_p_name
+        ,age AS _gsql2rsql_p_age
+      FROM
+        catalog.demo.Person
+    ) AS _proj
+    ORDER BY _gsql2rsql_p_age DESC
+    LIMIT 5
+    OFFSET 10
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=2)
+        Projections: name=p.name, age=p.age
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 5. COUNT aggregation without grouping
+
+**Application**: Features: COUNT
+
+??? note "Notes"
+
+    Counts all nodes matching the pattern.
+    
+    WHY USEFUL: Get cardinality metrics, validate data.
+    
+    DATABRICKS COMPLEXITY: O(n) - single pass
+    COST: Very low. COUNT(*) is highly optimized in Delta Lake.
+    Returns single row. NULL values are counted.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    RETURN COUNT(p) AS totalPeople
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       COUNT(_gsql2rsql_p_id) AS totalPeople
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+      FROM
+        catalog.demo.Person
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=2)
+        Projections: totalPeople=COUNT(p)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 6. GROUP BY with multiple aggregations
+
+**Application**: Features: GROUP BY
+
+??? note "Notes"
+
+    Groups by non-aggregated columns, computes multiple metrics per group.
+    
+    WHY USEFUL: Analytics dashboards, summary reports, KPIs.
+    
+    DATABRICKS COMPLEXITY: O(n) with hash aggregation
+    COST: Medium. Memory for hash table proportional to group count.
+    Cypher implicit GROUP BY: all non-aggregated RETURN columns become keys.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:LIVES_IN]->(c:City)
+    RETURN c.name AS city,
+           COUNT(p) AS population,
+           AVG(p.age) AS avgAge,
+           MIN(p.salary) AS minSalary,
+           MAX(p.salary) AS maxSalary
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_name AS city
+      ,COUNT(_gsql2rsql_p_id) AS population
+      ,AVG(CAST(_gsql2rsql_p_age AS DOUBLE)) AS avgAge
+      ,MIN(_gsql2rsql_p_salary) AS minSalary
+      ,MAX(_gsql2rsql_p_salary) AS maxSalary
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+        ,_left._gsql2rsql_p_salary AS _gsql2rsql_p_salary
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+          ,_left._gsql2rsql_p_salary AS _gsql2rsql_p_salary
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,age AS _gsql2rsql_p_age
+            ,salary AS _gsql2rsql_p_salary
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,city_id AS _gsql2rsql__anon1_city_id
+          FROM
+            catalog.demo.LivesIn
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_c_id
+          ,name AS _gsql2rsql_c_name
+        FROM
+          catalog.demo.City
+      ) AS _right ON
+        _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_city_id
+    ) AS _proj
+    GROUP BY _gsql2rsql_c_name
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:LIVES_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: c:City
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=6)
+        Projections: city=c.name, population=COUNT(p), avgAge=AVG(p.age), minSalary=MIN(p.salary), maxSalary=MAX(p.salary)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 7. Aggregation with ORDER BY on aggregated column
+
+**Application**: Features: ORDER BY aggregates
+
+??? note "Notes"
+
+    Orders grouped results by aggregated values.
+    
+    WHY USEFUL: Find top cities, worst performers, outliers.
+    
+    DATABRICKS COMPLEXITY: O(n) aggregate + O(g log g) sort where g = groups
+    COST: Medium. Sort happens after aggregation.
+    TIP: LIMIT reduces sort cost significantly.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:LIVES_IN]->(c:City)
+    RETURN c.name AS city, COUNT(p) AS population
+    ORDER BY population DESC
+    LIMIT 10
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_name AS city
+      ,COUNT(_gsql2rsql_p_id) AS population
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,city_id AS _gsql2rsql__anon1_city_id
+          FROM
+            catalog.demo.LivesIn
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_c_id
+          ,name AS _gsql2rsql_c_name
+        FROM
+          catalog.demo.City
+      ) AS _right ON
+        _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_city_id
+    ) AS _proj
+    GROUP BY _gsql2rsql_c_name
+    ORDER BY population DESC
+    LIMIT 10
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:LIVES_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: c:City
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=6)
+        Projections: city=c.name, population=COUNT(p)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 8. HAVING-style filter using WITH...WHERE
+
+**Application**: Features: HAVING filter
+
+??? note "Notes"
+
+    Filters aggregated results (SQL HAVING equivalent).
+    
+    WHY USEFUL: Filter groups by computed values. Find "cities with > 1000 people".
+    
+    DATABRICKS COMPLEXITY: O(n) aggregate + O(g) filter
+    COST: Low. Filter applied after aggregation, before final output.
+    Pattern: WITH creates intermediate result, WHERE filters it.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:LIVES_IN]->(c:City)
+    WITH c.name AS city, COUNT(p) AS population
+    WHERE population > 1000
+    RETURN city, population
+    ORDER BY population DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       city AS city
+      ,population AS population
+    FROM (
+      SELECT 
+         _gsql2rsql_c_name AS city
+        ,COUNT(_gsql2rsql_p_id) AS population
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+          ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_right._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_p_id
+            FROM
+              catalog.demo.Person
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               person_id AS _gsql2rsql__anon1_person_id
+              ,city_id AS _gsql2rsql__anon1_city_id
+            FROM
+              catalog.demo.LivesIn
+          ) AS _right ON
+            _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_c_id
+            ,name AS _gsql2rsql_c_name
+          FROM
+            catalog.demo.City
+        ) AS _right ON
+          _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_city_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_c_name
+      HAVING (population) > (1000)
+    ) AS _proj
+    ORDER BY population DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:LIVES_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: c:City
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=7;
+      ProjectionOperator(id=6)
+        Projections: city=c.name, population=COUNT(p)
+        Having: (population GT 1000)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=6; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: city=city, population=population
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 9. COLLECT aggregation into arrays
+
+**Application**: Features: COLLECT_LIST
+
+??? note "Notes"
+
+    Collects values into an array per group.
+    
+    WHY USEFUL: Denormalize data, create nested structures for JSON APIs.
+    
+    DATABRICKS COMPLEXITY: O(n) - single pass
+    COST: Medium-High. Memory for array construction.
+    Maps to COLLECT_LIST() in Databricks SQL.
+    WARNING: Large arrays can cause OOM. Consider LIMIT inside COLLECT.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:City)<-[:LIVES_IN]-(p:Person)
+    RETURN c.name AS city, COLLECT(p.name) AS residents
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_name AS city
+      ,COLLECT_LIST(_gsql2rsql_p_name) AS residents
+    FROM (
+      SELECT
+         _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        ,_right._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_right._gsql2rsql_p_name AS _gsql2rsql_p_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_c_id
+            ,name AS _gsql2rsql_c_name
+          FROM
+            catalog.demo.City
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,city_id AS _gsql2rsql__anon1_city_id
+          FROM
+            catalog.demo.LivesIn
+        ) AS _right ON
+          _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_city_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_p_id
+          ,name AS _gsql2rsql_p_name
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_p_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    GROUP BY _gsql2rsql_c_name
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: c:City
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:LIVES_IN]<-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=6)
+        Projections: city=c.name, residents=COLLECT(p.name)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 10. Directed relationship traversal
+
+**Application**: Features: Directed edges
+
+??? note "Notes"
+
+    Matches directed relationships from source to target.
+    
+    WHY USEFUL: Traverse graph edges in specific direction.
+    
+    DATABRICKS COMPLEXITY: O(n * m) worst case, O(n + e) with proper joins
+    COST: Medium. Translates to INNER JOIN.
+    TIP: Ensure foreign keys have indexes/Z-ORDER.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:ACTED_IN]->(m:Movie)
+    RETURN p.name AS actor, m.title AS movie
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS actor
+      ,_gsql2rsql_m_title AS movie
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+        ,_right._gsql2rsql_m_title AS _gsql2rsql_m_title
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,movie_id AS _gsql2rsql__anon1_movie_id
+          FROM
+            catalog.demo.ActedIn
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_m_id
+          ,title AS _gsql2rsql_m_title
+        FROM
+          catalog.demo.Movie
+      ) AS _right ON
+        _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_movie_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:ACTED_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: m:Movie
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=6)
+        Projections: actor=p.name, movie=m.title
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 11. Relationship with property filter
+
+**Application**: Features: Edge properties
+
+??? note "Notes"
+
+    Filters relationships by their properties.
+    
+    WHY USEFUL: Find "strong" relationships, recent connections.
+    
+    DATABRICKS COMPLEXITY: O(e) where e = edges
+    COST: Medium. Filter on edge table reduces join size.
+    Edge properties stored in edge table as columns.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[r:KNOWS]->(f:Person)
+    WHERE r.since > 2020 AND r.strength > 0.8
+    RETURN p.name AS person, f.name AS friend, r.since, r.strength
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS person
+      ,_gsql2rsql_f_name AS friend
+      ,_gsql2rsql_r_since AS since
+      ,_gsql2rsql_r_strength AS strength
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_r_person_id AS _gsql2rsql_r_person_id
+        ,_left._gsql2rsql_r_friend_id AS _gsql2rsql_r_friend_id
+        ,_left._gsql2rsql_r_since AS _gsql2rsql_r_since
+        ,_left._gsql2rsql_r_strength AS _gsql2rsql_r_strength
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql_r_person_id AS _gsql2rsql_r_person_id
+          ,_right._gsql2rsql_r_friend_id AS _gsql2rsql_r_friend_id
+          ,_right._gsql2rsql_r_since AS _gsql2rsql_r_since
+          ,_right._gsql2rsql_r_strength AS _gsql2rsql_r_strength
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql_r_person_id
+            ,friend_id AS _gsql2rsql_r_friend_id
+            ,since AS _gsql2rsql_r_since
+            ,strength AS _gsql2rsql_r_strength
+          FROM
+            catalog.demo.Knows
+          WHERE (((since) > (2020)) AND ((strength) > (0.8)))
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql_r_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql_r_friend_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [r:KNOWS]->
+        Filter: ((r.since GT 2020) AND (r.strength GT 0.8))
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=r Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: person=p.name, friend=f.name, since=r.since, strength=r.strength
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 12. Undirected relationship (both directions)
+
+**Application**: Features: Undirected edges
+
+??? note "Notes"
+
+    Matches relationships in both directions.
+    
+    WHY USEFUL: Social networks where direction doesn't matter.
+    
+    DATABRICKS COMPLEXITY: O(2e) - UNION of both directions
+    COST: Higher. Translates to UNION of forward and reverse joins.
+    May produce duplicates - use DISTINCT if needed.
+    
+    OPTIMIZATION: Predicate pushdown moves WHERE p.name = 'Alice' into
+    the Person table subquery BEFORE the join, dramatically reducing rows.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Alice'
+    RETURN DISTINCT f.name AS friend
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT DISTINCT 
+       _gsql2rsql_f_name AS friend
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+          WHERE ((name) = ('Alice'))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (p.name EQ 'Alice')
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: friend=f.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 13. Undirected with source filter pushdown
+
+**Application**: Features: Predicate Pushdown
+
+??? note "Notes"
+
+    Compound source-only filter is pushed into the Person subquery.
+    
+    OPTIMIZATION APPLIED:
+      BEFORE: Full Person scan → Full KNOWS scan → Full Person scan → Filter
+      AFTER:  Filtered Person (name='Alice' AND age>25) → KNOWS → Person
+    
+    WHY IT MATTERS: If Person table has 1M rows but only 1 Alice over 25,
+    we process 1 row instead of 1M in the initial joins.
+    
+    SQL Pattern (optimized):
+      FROM (SELECT ... FROM Person WHERE name='Alice' AND age>25) AS p
+      JOIN Knows ON (p.id = source_id OR p.id = target_id)
+      JOIN Person AS f ON ...
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Alice' AND p.age > 25
+    RETURN f.name AS friend, f.age AS friendAge
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_f_name AS friend
+      ,_gsql2rsql_f_age AS friendAge
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+        ,_right._gsql2rsql_f_age AS _gsql2rsql_f_age
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+            ,age AS _gsql2rsql_p_age
+          FROM
+            catalog.demo.Person
+          WHERE (((name) = ('Alice')) AND ((age) > (25)))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+          ,age AS _gsql2rsql_f_age
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: ((p.name EQ 'Alice') AND (p.age GT 25))
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: friend=f.name, friendAge=f.age
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 14. Undirected with target filter (not pushed)
+
+**Application**: Features: Filter Semantics
+
+??? note "Notes"
+
+    Target node filter cannot be pushed to source - stays after join.
+    
+    WHY NOT PUSHED: The filter references 'f' (target), which is only
+    known after traversing the relationship. The filter must remain
+    after the join to correctly filter matching targets.
+    
+    SQL Pattern:
+      FROM Person AS p
+      JOIN Knows ON ...
+      JOIN Person AS f ON ...
+      WHERE f.age > 30  -- Applied after all joins
+    
+    COST: Higher than source pushdown - full initial scans required.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE f.age > 30
+    RETURN p.name AS person, f.name AS olderFriend
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS person
+      ,_gsql2rsql_f_name AS olderFriend
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+        ,_right._gsql2rsql_f_age AS _gsql2rsql_f_age
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+          ,age AS _gsql2rsql_f_age
+        FROM
+          catalog.demo.Person
+        WHERE ((age) > (30))
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+        Filter: (f.age GT 30)
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: person=p.name, olderFriend=f.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 15. Undirected with mixed filters (partial pushdown)
+
+**Application**: Features: Filter Splitting
+
+??? note "Notes"
+
+    Source filters are pushed, target filter remains after join.
+    
+    FILTER ANALYSIS:
+      p.name = 'Alice'  → PUSHED (references only 'p')
+      p.active = true   → PUSHED (references only 'p')
+      f.age > 30        → NOT PUSHED (references 'f')
+    
+    SQL Pattern (optimized):
+      FROM (SELECT ... FROM Person WHERE name='Alice' AND active=true) AS p
+      JOIN Knows ON ...
+      JOIN Person AS f ON ...
+      WHERE f.age > 30  -- Target filter stays here
+    
+    BENEFIT: Source node filtering happens early, reducing join size.
+    Target filtering still required but on smaller intermediate result.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Alice' AND f.age > 30 AND p.active = true
+    RETURN f.name AS friend, f.age AS friendAge
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_f_name AS friend
+      ,_gsql2rsql_f_age AS friendAge
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_p_active AS _gsql2rsql_p_active
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+        ,_right._gsql2rsql_f_age AS _gsql2rsql_f_age
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_p_active AS _gsql2rsql_p_active
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+            ,active AS _gsql2rsql_p_active
+          FROM
+            catalog.demo.Person
+          WHERE (((name) = ('Alice')) AND ((active) = (TRUE)))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+          ,age AS _gsql2rsql_f_age
+        FROM
+          catalog.demo.Person
+        WHERE ((age) > (30))
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: ((p.name EQ 'Alice') AND (p.active EQ true))
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+        Filter: (f.age GT 30)
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: friend=f.name, friendAge=f.age
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 16. Undirected multi-hop with predicate pushdown
+
+**Application**: Features: Complex Traversal
+
+??? note "Notes"
+
+    Multi-hop undirected traversal with source filter pushdown.
+    
+    PATTERN: Alice's friends' friends (2-hop undirected)
+    
+    OPTIMIZATION: Filter p.name='Alice' is pushed into first Person scan.
+    Each hop doubles potential paths, so early filtering is critical.
+    
+    SQL Pattern:
+      FROM (SELECT ... FROM Person WHERE name='Alice') AS p
+      JOIN Knows k1 ON (p.id = k1.person_id OR p.id = k1.friend_id)
+      JOIN Person m ON (m.id = k1.person_id OR m.id = k1.friend_id)
+      JOIN Knows k2 ON (m.id = k2.person_id OR m.id = k2.friend_id)
+      JOIN Person f ON (f.id = k2.person_id OR f.id = k2.friend_id)
+    
+    DATABRICKS COMPLEXITY: O(k^2) where k = avg degree
+    COST: High, but pushdown prevents O(n * k^2) explosion.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(m:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Alice'
+    RETURN DISTINCT f.name AS friendOfFriend
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT DISTINCT 
+       _gsql2rsql_f_name AS friendOfFriend
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_left._gsql2rsql_m_id AS _gsql2rsql_m_id
+        ,_left._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+        ,_left._gsql2rsql__anon2_friend_id AS _gsql2rsql__anon2_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+          ,_left._gsql2rsql_m_id AS _gsql2rsql_m_id
+          ,_right._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+          ,_right._gsql2rsql__anon2_friend_id AS _gsql2rsql__anon2_friend_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+            ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+            ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+              ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+              ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+              ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_p_id
+                ,name AS _gsql2rsql_p_name
+              FROM
+                catalog.demo.Person
+              WHERE ((name) = ('Alice'))
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 person_id AS _gsql2rsql__anon1_person_id
+                ,friend_id AS _gsql2rsql__anon1_friend_id
+                ,since AS _gsql2rsql__anon1_since
+                ,strength AS _gsql2rsql__anon1_strength
+              FROM
+                catalog.demo.Knows
+              UNION ALL
+              SELECT
+                 friend_id AS _gsql2rsql__anon1_person_id
+                ,person_id AS _gsql2rsql__anon1_friend_id
+                ,since AS _gsql2rsql__anon1_since
+                ,strength AS _gsql2rsql__anon1_strength
+              FROM
+                catalog.demo.Knows
+            ) AS _right ON
+              _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_m_id
+            FROM
+              catalog.demo.Person
+          ) AS _right ON
+            _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_person_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon2_person_id
+            ,friend_id AS _gsql2rsql__anon2_friend_id
+            ,since AS _gsql2rsql__anon2_since
+            ,strength AS _gsql2rsql__anon2_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon2_person_id
+            ,person_id AS _gsql2rsql__anon2_friend_id
+            ,since AS _gsql2rsql__anon2_since
+            ,strength AS _gsql2rsql__anon2_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_m_id = _right._gsql2rsql__anon2_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon2_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (p.name EQ 'Alice')
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: m:Person
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:KNOWS]-
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon2 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon2 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=;
+      ProjectionOperator(id=11)
+        Projections: friendOfFriend=f.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 17. Undirected relationship with aggregation
+
+**Application**: Features: Aggregation + Pushdown
+
+??? note "Notes"
+
+    Aggregation over undirected relationships with source filter.
+    
+    USE CASE: "High earners and their social network metrics"
+    
+    OPTIMIZATION: p.salary > 100000 pushed to Person scan.
+    Only high earners participate in the aggregation joins.
+    
+    SQL Pattern:
+      SELECT p.name, COUNT(f.id), AVG(f.age)
+      FROM (SELECT ... FROM Person WHERE salary > 100000) AS p
+      JOIN Knows ON ...
+      JOIN Person AS f ON ...
+      GROUP BY p.id, p.name
+    
+    COST: Filter before aggregation = fewer GROUP BY operations.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[r:KNOWS]-(f:Person)
+    WHERE p.salary > 100000
+    RETURN p.name AS highEarner,
+           COUNT(f) AS friendCount,
+           AVG(f.age) AS avgFriendAge
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS highEarner
+      ,COUNT(_gsql2rsql_f_id) AS friendCount
+      ,AVG(CAST(_gsql2rsql_f_age AS DOUBLE)) AS avgFriendAge
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_p_salary AS _gsql2rsql_p_salary
+        ,_left._gsql2rsql_r_person_id AS _gsql2rsql_r_person_id
+        ,_left._gsql2rsql_r_friend_id AS _gsql2rsql_r_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_age AS _gsql2rsql_f_age
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_p_salary AS _gsql2rsql_p_salary
+          ,_right._gsql2rsql_r_person_id AS _gsql2rsql_r_person_id
+          ,_right._gsql2rsql_r_friend_id AS _gsql2rsql_r_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+            ,salary AS _gsql2rsql_p_salary
+          FROM
+            catalog.demo.Person
+          WHERE ((salary) > (100000))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql_r_person_id
+            ,friend_id AS _gsql2rsql_r_friend_id
+            ,since AS _gsql2rsql_r_since
+            ,strength AS _gsql2rsql_r_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql_r_person_id
+            ,person_id AS _gsql2rsql_r_friend_id
+            ,since AS _gsql2rsql_r_since
+            ,strength AS _gsql2rsql_r_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql_r_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,age AS _gsql2rsql_f_age
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql_r_person_id
+    ) AS _proj
+    GROUP BY _gsql2rsql_p_name
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (p.salary GT 100000)
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [r:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=r Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=r Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: highEarner=p.name, friendCount=COUNT(f), avgFriendAge=AVG(f.age)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 18. OPTIONAL MATCH (left join semantics)
+
+**Application**: Features: OPTIONAL MATCH
+
+??? note "Notes"
+
+    Returns all people, with movies if they exist (NULL otherwise).
+    
+    WHY USEFUL: Include all entities even without relationships.
+    
+    DATABRICKS COMPLEXITY: O(n + e) - LEFT JOIN
+    COST: Medium. LEFT JOIN preserves all left-side rows.
+    CRITICAL: Uses LEFT JOIN, not INNER JOIN.
+    NULL values appear where no relationship exists.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    OPTIONAL MATCH (p)-[:ACTED_IN]->(m:Movie)
+    RETURN p.name, m.title
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_m_title AS title
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_right._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+        ,_right._gsql2rsql_m_title AS _gsql2rsql_m_title
+      FROM (
+        SELECT
+           id AS _gsql2rsql_p_id
+          ,name AS _gsql2rsql_p_name
+        FROM
+          catalog.demo.Person
+      ) AS _left
+      LEFT JOIN (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_left._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+          ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+          ,_right._gsql2rsql_m_title AS _gsql2rsql_m_title
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+            ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_right._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_p_id
+              ,name AS _gsql2rsql_p_name
+            FROM
+              catalog.demo.Person
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               person_id AS _gsql2rsql__anon1_person_id
+              ,movie_id AS _gsql2rsql__anon1_movie_id
+            FROM
+              catalog.demo.ActedIn
+          ) AS _right ON
+            _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_m_id
+            ,title AS _gsql2rsql_m_title
+          FROM
+            catalog.demo.Movie
+        ) AS _right ON
+          _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_movie_id
+      ) AS _right ON
+        _left._gsql2rsql_p_id = _right._gsql2rsql_p_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=2)
+        DataSource: p:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: [_anon1:ACTED_IN]->
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=4)
+        DataSource: m:Movie
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=2,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=5,4; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=1,6; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: LEFT
+        Joins: JoinPair: Node=p RelOrNode=p Type=NODE_ID
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: name=p.name, title=m.title
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 19. Variable-length path traversal (1 to 3 hops)
+
+**Application**: Features: Recursive paths
+
+??? note "Notes"
+
+    Finds all people reachable within 1-3 hops.
+    
+    WHY USEFUL: Friend-of-friend queries, network analysis, influence propagation.
+    
+    DATABRICKS COMPLEXITY: O(k^d) where k=avg degree, d=max depth
+    COST: HIGH. Uses WITH RECURSIVE CTE.
+    Includes cycle detection to prevent infinite loops.
+    
+    SQL Pattern:
+    WITH RECURSIVE paths AS (
+      -- base case
+      UNION ALL
+      -- recursive case with depth < max_depth
+    )
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS*1..3]->(f:Person)
+    WHERE p.name = 'Alice'
+    RETURN DISTINCT f.name AS reachable
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+        JOIN catalog.demo.Person src ON src.id = e.person_id
+        WHERE (src.name) = ('Alice')
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 3
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT DISTINCT 
+       _gsql2rsql_f_name AS reachable
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_f_id
+        ,sink.name AS _gsql2rsql_f_name
+        ,sink.age AS _gsql2rsql_f_age
+        ,sink.nickname AS _gsql2rsql_f_nickname
+        ,sink.salary AS _gsql2rsql_f_salary
+        ,sink.active AS _gsql2rsql_f_active
+        ,source.id AS _gsql2rsql_p_id
+        ,source.name AS _gsql2rsql_p_name
+        ,source.age AS _gsql2rsql_p_age
+        ,source.nickname AS _gsql2rsql_p_nickname
+        ,source.salary AS _gsql2rsql_p_salary
+        ,source.active AS _gsql2rsql_p_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 1 AND p.depth <= 3
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*1..3)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: reachable=f.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 20. Variable-length path with zero-length (includes self)
+
+**Application**: Features: Zero-length paths
+
+??? note "Notes"
+
+    Includes the starting node (depth=0) plus 1-2 hop neighbors.
+    
+    WHY USEFUL: Include self in results, optional relationship matching.
+    
+    DATABRICKS COMPLEXITY: O(1 + k + k^2) - identity + 1-hop + 2-hop
+    COST: HIGH. Recursive CTE with special depth=0 base case.
+    Depth 0 = no joins, just the starting node.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS*0..2]->(f:Person)
+    WHERE p.name = 'Alice'
+    RETURN DISTINCT f.name AS reachable
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: Zero-length paths (depth = 0)
+        SELECT
+          n.id AS start_node,
+          n.id AS end_node,
+          0 AS depth,
+          ARRAY(n.id) AS path,
+          ARRAY() AS visited
+        FROM catalog.demo.Person n
+        WHERE (n.name) = ('Alice')
+    
+        UNION ALL
+    
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+        JOIN catalog.demo.Person src ON src.id = e.person_id
+        WHERE (src.name) = ('Alice')
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 2
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT DISTINCT 
+       _gsql2rsql_f_name AS reachable
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_f_id
+        ,sink.name AS _gsql2rsql_f_name
+        ,sink.age AS _gsql2rsql_f_age
+        ,sink.nickname AS _gsql2rsql_f_nickname
+        ,sink.salary AS _gsql2rsql_f_salary
+        ,sink.active AS _gsql2rsql_f_active
+        ,source.id AS _gsql2rsql_p_id
+        ,source.name AS _gsql2rsql_p_name
+        ,source.age AS _gsql2rsql_p_age
+        ,source.nickname AS _gsql2rsql_p_nickname
+        ,source.salary AS _gsql2rsql_p_salary
+        ,source.active AS _gsql2rsql_p_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 0 AND p.depth <= 2
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*0..2)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: reachable=f.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 21. CASE expression for conditional values
+
+**Application**: Features: CASE WHEN
+
+??? note "Notes"
+
+    Evaluates conditions sequentially, returns first match.
+    
+    WHY USEFUL: Categorize data, compute derived fields, business logic.
+    
+    DATABRICKS COMPLEXITY: O(n) - evaluated per row
+    COST: Very low. Direct translation to SQL CASE.
+    First matching WHEN wins. ELSE is optional (defaults to NULL).
+    Can be used in WHERE, ORDER BY, GROUP BY.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    RETURN p.name,
+           CASE
+             WHEN p.age < 18 THEN 'minor'
+             WHEN p.age < 65 THEN 'adult'
+             ELSE 'senior'
+           END AS ageGroup
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,CASE WHEN (_gsql2rsql_p_age) < (18) THEN 'minor' WHEN (_gsql2rsql_p_age) < (65) THEN 'adult' ELSE 'senior' END AS ageGroup
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+        ,name AS _gsql2rsql_p_name
+        ,age AS _gsql2rsql_p_age
+      FROM
+        catalog.demo.Person
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=2)
+        Projections: name=p.name, ageGroup=CASE WHEN (p.age LT 18) THEN 'minor' WHEN (p.age LT 65) THEN 'adult' ELSE 'senior' END
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 22. COALESCE for null-safe default values
+
+**Application**: Features: COALESCE
+
+??? note "Notes"
+
+    Returns first non-NULL value from the argument list.
+    
+    WHY USEFUL: Handle missing data, provide defaults.
+    
+    DATABRICKS COMPLEXITY: O(n) - evaluated per row
+    COST: Very low. Native Databricks function.
+    Left-to-right evaluation with short-circuit.
+    COALESCE(a, b, c) = first non-NULL of a, b, c.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)
+    RETURN COALESCE(p.nickname, p.name) AS displayName,
+           COALESCE(p.salary, 0) AS salary
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       COALESCE(_gsql2rsql_p_nickname, _gsql2rsql_p_name) AS displayName
+      ,COALESCE(_gsql2rsql_p_salary, 0) AS salary
+    FROM (
+      SELECT
+         id AS _gsql2rsql_p_id
+        ,name AS _gsql2rsql_p_name
+        ,nickname AS _gsql2rsql_p_nickname
+        ,salary AS _gsql2rsql_p_salary
+      FROM
+        catalog.demo.Person
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=ProjectionOperator; InOpIds=1; OutOpIds=;
+      ProjectionOperator(id=2)
+        Projections: displayName=COALESCE(p.nickname, p.name), salary=COALESCE(p.salary, 0)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 23. DISTINCT for deduplication
+
+**Application**: Features: DISTINCT
+
+??? note "Notes"
+
+    Removes duplicate rows from results.
+    
+    WHY USEFUL: Get unique values, eliminate duplicates from traversals.
+    
+    DATABRICKS COMPLEXITY: O(n log n) or O(n) with hash
+    COST: Medium. Requires sorting or hashing.
+    NULL is treated as a distinct value.
+    Compares ALL returned columns for uniqueness.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:ACTED_IN]->(m:Movie)
+    RETURN DISTINCT m.genre
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT DISTINCT 
+       _gsql2rsql_m_genre AS genre
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+        ,_right._gsql2rsql_m_genre AS _gsql2rsql_m_genre
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,movie_id AS _gsql2rsql__anon1_movie_id
+          FROM
+            catalog.demo.ActedIn
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_m_id
+          ,genre AS _gsql2rsql_m_genre
+        FROM
+          catalog.demo.Movie
+      ) AS _right ON
+        _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_movie_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:ACTED_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: m:Movie
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=6)
+        Projections: genre=m.genre
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 24. UNION to combine query results
+
+**Application**: Features: UNION
+
+??? note "Notes"
+
+    Combines results from two queries, removes duplicates.
+    
+    WHY USEFUL: Merge different query paths, find "actors OR directors".
+    
+    DATABRICKS COMPLEXITY: O(n + m + (n+m) log(n+m)) for dedup
+    COST: High. UNION requires deduplication.
+    Both queries must have same column count and compatible types.
+    Use UNION ALL if duplicates are OK (faster).
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:ACTED_IN]->(m:Movie)
+    RETURN p.name AS name
+    UNION
+    MATCH (d:Person)-[:DIRECTED]->(m:Movie)
+    RETURN d.name AS name
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,movie_id AS _gsql2rsql__anon1_movie_id
+          FROM
+            catalog.demo.ActedIn
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_m_id
+        FROM
+          catalog.demo.Movie
+      ) AS _right ON
+        _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_movie_id
+    ) AS _proj
+    UNION
+    SELECT 
+       _gsql2rsql_d_name AS name
+    FROM (
+      SELECT
+         _left._gsql2rsql_d_id AS _gsql2rsql_d_id
+        ,_left._gsql2rsql_d_name AS _gsql2rsql_d_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+      FROM (
+        SELECT
+           _left._gsql2rsql_d_id AS _gsql2rsql_d_id
+          ,_left._gsql2rsql_d_name AS _gsql2rsql_d_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_movie_id AS _gsql2rsql__anon1_movie_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_d_id
+            ,name AS _gsql2rsql_d_name
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,movie_id AS _gsql2rsql__anon1_movie_id
+          FROM
+            catalog.demo.Directed
+        ) AS _right ON
+          _left._gsql2rsql_d_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_m_id
+        FROM
+          catalog.demo.Movie
+      ) AS _right ON
+        _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_movie_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:ACTED_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: m:Movie
+    *
+    OpId=7 Op=DataSourceOperator; InOpIds=; OutOpIds=10;
+      DataSourceOperator(id=7)
+        DataSource: d:Person
+    *
+    OpId=8 Op=DataSourceOperator; InOpIds=; OutOpIds=10;
+      DataSourceOperator(id=8)
+        DataSource: [_anon1:DIRECTED]->
+    *
+    OpId=9 Op=DataSourceOperator; InOpIds=; OutOpIds=11;
+      DataSourceOperator(id=9)
+        DataSource: m:Movie
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    OpId=10 Op=JoinOperator; InOpIds=7,8; OutOpIds=11;
+      JoinOperator(id=10)
+        JoinType: INNER
+        Joins: JoinPair: Node=d RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=SINK
+    *
+    OpId=11 Op=JoinOperator; InOpIds=10,9; OutOpIds=12;
+      JoinOperator(id=11)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=13;
+      ProjectionOperator(id=6)
+        Projections: name=p.name
+    *
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=13;
+      ProjectionOperator(id=12)
+        Projections: name=d.name
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=13 Op=SetOperator; InOpIds=6,12; OutOpIds=;
+      SetOperator(id=13)
+        SetOp: UNION
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 25. Multi-hop path with intermediate filtering
+
+**Application**: Features: Chained patterns
+
+??? note "Notes"
+
+    Matches multiple relationship patterns from the same node.
+    
+    WHY USEFUL: Complex entity queries with multiple constraints.
+    
+    DATABRICKS COMPLEXITY: O(n * j1 * j2) worst case
+    COST: Medium-High. Multiple JOINs.
+    Comma-separated patterns share the same variable scope.
+    Filter pushdown optimizes join order.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:LIVES_IN]->(c:City),
+          (p)-[:WORKS_AT]->(co:Company)
+    WHERE c.country = 'USA' AND co.industry = 'Tech'
+    RETURN p.name, c.name AS city, co.name AS company
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_c_name AS city
+      ,_gsql2rsql_co_name AS company
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+        ,_left._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_left._gsql2rsql_c_country AS _gsql2rsql_c_country
+        ,_left._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+        ,_left._gsql2rsql__anon2_company_id AS _gsql2rsql__anon2_company_id
+        ,_right._gsql2rsql_co_id AS _gsql2rsql_co_id
+        ,_right._gsql2rsql_co_name AS _gsql2rsql_co_name
+        ,_right._gsql2rsql_co_industry AS _gsql2rsql_co_industry
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+          ,_left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_country AS _gsql2rsql_c_country
+          ,_right._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+          ,_right._gsql2rsql__anon2_company_id AS _gsql2rsql__anon2_company_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+            ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+            ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_right._gsql2rsql_c_country AS _gsql2rsql_c_country
+          FROM (
+            SELECT
+               _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+              ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+              ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+              ,_right._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_p_id
+                ,name AS _gsql2rsql_p_name
+              FROM
+                catalog.demo.Person
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 person_id AS _gsql2rsql__anon1_person_id
+                ,city_id AS _gsql2rsql__anon1_city_id
+              FROM
+                catalog.demo.LivesIn
+            ) AS _right ON
+              _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_c_id
+              ,name AS _gsql2rsql_c_name
+              ,country AS _gsql2rsql_c_country
+            FROM
+              catalog.demo.City
+            WHERE ((country) = ('USA'))
+          ) AS _right ON
+            _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_city_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon2_person_id
+            ,company_id AS _gsql2rsql__anon2_company_id
+          FROM
+            catalog.demo.WorksAt
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon2_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_co_id
+          ,name AS _gsql2rsql_co_name
+          ,industry AS _gsql2rsql_co_industry
+        FROM
+          catalog.demo.Company
+        WHERE ((industry) = ('Tech'))
+      ) AS _right ON
+        _right._gsql2rsql_co_id = _left._gsql2rsql__anon2_company_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:LIVES_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: c:City
+        Filter: (c.country EQ 'USA')
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:WORKS_AT]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: co:Company
+        Filter: (co.industry EQ 'Tech')
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=co RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=;
+      ProjectionOperator(id=11)
+        Projections: name=p.name, city=c.name, company=co.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 26. Chained WITH for multi-stage computation
+
+**Application**: Features: WITH chaining
+
+??? note "Notes"
+
+    Chains multiple WITH clauses for staged computation.
+    
+    WHY USEFUL: Break complex queries into steps, compute derived values.
+    
+    DATABRICKS COMPLEXITY: O(n) per stage
+    COST: Medium. Each WITH creates a logical stage.
+    Variables from previous WITH are available in next stage.
+    Useful for aggregation → filtering → transformation pipelines.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:LIVES_IN]->(c:City)
+    WITH c, COUNT(p) AS pop
+    WHERE pop > 100
+    WITH c.name AS city, pop, pop * 1.0 / 1000 AS popK
+    RETURN city, popK
+    ORDER BY popK DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       city AS city
+      ,popK AS popK
+    FROM (
+      SELECT 
+         _gsql2rsql_c_name AS city
+        ,pop AS pop
+        ,((pop) * (1.0)) / (1000) AS popK
+      FROM (
+        SELECT 
+           _gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,COUNT(_gsql2rsql_p_id) AS pop
+          ,_gsql2rsql_c_country AS _gsql2rsql_c_country
+          ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_gsql2rsql_c_population AS _gsql2rsql_c_population
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_left._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+            ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_right._gsql2rsql_c_population AS _gsql2rsql_c_population
+            ,_right._gsql2rsql_c_country AS _gsql2rsql_c_country
+          FROM (
+            SELECT
+               _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+              ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+              ,_right._gsql2rsql__anon1_city_id AS _gsql2rsql__anon1_city_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_p_id
+              FROM
+                catalog.demo.Person
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 person_id AS _gsql2rsql__anon1_person_id
+                ,city_id AS _gsql2rsql__anon1_city_id
+              FROM
+                catalog.demo.LivesIn
+            ) AS _right ON
+              _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_c_id
+              ,name AS _gsql2rsql_c_name
+              ,population AS _gsql2rsql_c_population
+              ,country AS _gsql2rsql_c_country
+            FROM
+              catalog.demo.City
+          ) AS _right ON
+            _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_city_id
+        ) AS _proj
+        GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_country, _gsql2rsql_c_name, _gsql2rsql_c_population
+        HAVING (pop) > (100)
+      ) AS _proj
+    ) AS _proj
+    ORDER BY popK DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:LIVES_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: c:City
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=7;
+      ProjectionOperator(id=6)
+        Projections: c=c, pop=COUNT(p)
+        Having: (pop GT 100)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=6; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: city=c.name, pop=pop, popK=((pop MULTIPLY 1.0) DIVIDE 1000)
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: city=city, popK=popK
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 27. Simplest sink filter pushdown
+
+**Application**: Features: Sink Filter Pushdown
+
+??? note "Notes"
+
+    Minimal example: filter on sink node b is pushed into recursive join.
+    
+    SQL: WHERE p.depth >= 1 AND p.depth <= 2 AND (sink.age) > (30)
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Person)-[:KNOWS*1..2]->(b:Person)
+    WHERE b.age > 30
+    RETURN a.name, b.name
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 2
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT 
+       _gsql2rsql_a_name AS name
+      ,_gsql2rsql_b_name AS name
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_b_id
+        ,sink.name AS _gsql2rsql_b_name
+        ,sink.age AS _gsql2rsql_b_age
+        ,sink.nickname AS _gsql2rsql_b_nickname
+        ,sink.salary AS _gsql2rsql_b_salary
+        ,sink.active AS _gsql2rsql_b_active
+        ,source.id AS _gsql2rsql_a_id
+        ,source.name AS _gsql2rsql_a_name
+        ,source.age AS _gsql2rsql_a_age
+        ,source.nickname AS _gsql2rsql_a_nickname
+        ,source.salary AS _gsql2rsql_a_salary
+        ,source.active AS _gsql2rsql_a_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 1 AND p.depth <= 2 AND (sink.age) > (30)
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: b:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*1..2)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: name=a.name, name=b.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 28. Variable-length path with sink filter pushdown
+
+**Application**: Features: Recursive Sink Filter Pushdown
+
+??? note "Notes"
+
+    Filter on sink node (b.age > 50) is pushed into the recursive join.
+    
+    OPTIMIZATION APPLIED:
+      BEFORE: CTE → JOIN sink → JOIN source → depth filter → OUTER sink filter
+      AFTER:  CTE → JOIN sink → JOIN source → WHERE depth AND sink.age > 50
+    
+    WHY IT MATTERS: Instead of filtering 1000 paths after all joins complete,
+    we filter during the join and only keep paths ending at older people.
+    
+    SQL Pattern (optimized):
+      FROM paths_1 p
+      JOIN Person sink ON sink.id = p.end_node
+      JOIN Person source ON source.id = p.start_node
+      WHERE p.depth >= 2 AND p.depth <= 4 AND (sink.age) > (50)
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (a:Person)-[:KNOWS*2..4]->(b:Person)
+    WHERE b.age > 50
+    RETURN a.id, b.id, LENGTH(path) AS chain_length
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 4
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_b_id AS id
+      ,(SIZE(_gsql2rsql_path_id) - 1) AS chain_length
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_b_id
+        ,sink.name AS _gsql2rsql_b_name
+        ,sink.age AS _gsql2rsql_b_age
+        ,sink.nickname AS _gsql2rsql_b_nickname
+        ,sink.salary AS _gsql2rsql_b_salary
+        ,sink.active AS _gsql2rsql_b_active
+        ,source.id AS _gsql2rsql_a_id
+        ,source.name AS _gsql2rsql_a_name
+        ,source.age AS _gsql2rsql_a_age
+        ,source.nickname AS _gsql2rsql_a_nickname
+        ,source.salary AS _gsql2rsql_a_salary
+        ,source.active AS _gsql2rsql_a_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path AS _gsql2rsql_path_id
+        ,p.path_edges AS _gsql2rsql_path_edges
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 2 AND p.depth <= 4 AND (sink.age) > (50)
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: b:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*2..4, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: id=a.id, id=b.id, chain_length=LENGTH(path)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 29. Variable-length with source AND sink filter pushdown
+
+**Application**: Features: Dual Filter Pushdown
+
+??? note "Notes"
+
+    Both source and sink filters are optimized:
+      - Source filter (a.age > 30) → pushed into CTE base case
+      - Sink filter (b.age > 50) → pushed into recursive join
+    
+    BENEFIT: Maximum optimization for path queries between filtered nodes.
+    We only explore paths starting from people over 30 (source filter)
+    and only keep paths ending at people over 50 (sink filter).
+    
+    SQL Pattern:
+      Base case: ... JOIN Person src ON ... WHERE (src.age) > (30)
+      Join: ... WHERE depth_bounds AND (sink.age) > (50)
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (a:Person)-[:KNOWS*2..4]->(b:Person)
+    WHERE a.age > 30 AND b.age > 50
+    RETURN a.id, b.id
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+        JOIN catalog.demo.Person src ON src.id = e.person_id
+        WHERE (src.age) > (30)
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 4
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_b_id AS id
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_b_id
+        ,sink.name AS _gsql2rsql_b_name
+        ,sink.age AS _gsql2rsql_b_age
+        ,sink.nickname AS _gsql2rsql_b_nickname
+        ,sink.salary AS _gsql2rsql_b_salary
+        ,sink.active AS _gsql2rsql_b_active
+        ,source.id AS _gsql2rsql_a_id
+        ,source.name AS _gsql2rsql_a_name
+        ,source.age AS _gsql2rsql_a_age
+        ,source.nickname AS _gsql2rsql_a_nickname
+        ,source.salary AS _gsql2rsql_a_salary
+        ,source.active AS _gsql2rsql_a_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path AS _gsql2rsql_path_id
+        ,p.path_edges AS _gsql2rsql_path_edges
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 2 AND p.depth <= 4 AND (sink.age) > (50)
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: b:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*2..4, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: id=a.id, id=b.id
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 30. Variable-length with compound sink filter
+
+**Application**: Features: Compound Sink Filter Pushdown
+
+??? note "Notes"
+
+    Compound sink filter (AND of two conditions) is pushed together.
+    
+    OPTIMIZATION: Both conditions are applied in the recursive join WHERE:
+      WHERE p.depth >= 1 AND ((sink.age) > (40) AND sink.active = true)
+    
+    USE CASE: Find chains of connections ending at active people over 40.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (a:Person)-[:KNOWS*1..3]->(b:Person)
+    WHERE b.age > 40 AND b.active = true
+    RETURN a.id, b.id, [n IN nodes(path) | n.id] AS path_nodes
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 3
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_b_id AS id
+      ,_gsql2rsql_path_id AS path_nodes
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_b_id
+        ,sink.name AS _gsql2rsql_b_name
+        ,sink.age AS _gsql2rsql_b_age
+        ,sink.nickname AS _gsql2rsql_b_nickname
+        ,sink.salary AS _gsql2rsql_b_salary
+        ,sink.active AS _gsql2rsql_b_active
+        ,source.id AS _gsql2rsql_a_id
+        ,source.name AS _gsql2rsql_a_name
+        ,source.age AS _gsql2rsql_a_age
+        ,source.nickname AS _gsql2rsql_a_nickname
+        ,source.salary AS _gsql2rsql_a_salary
+        ,source.active AS _gsql2rsql_a_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path AS _gsql2rsql_path_id
+        ,p.path_edges AS _gsql2rsql_path_edges
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 1 AND p.depth <= 3 AND ((sink.age) > (40)) AND ((sink.active) = (TRUE))
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: b:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*1..3, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: id=a.id, id=b.id, path_nodes=[n IN NODES(path) | n.id]
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 31. Variable-length with sink filter and edge predicate
+
+**Application**: Features: Combined Optimizations
+
+??? note "Notes"
+
+    Combines multiple optimizations:
+      1. Edge predicate (since > 2010) pushed into CTE base and recursive cases
+      2. Sink filter (age > 60) pushed into recursive join
+    
+    USE CASE: Find chains of recent connections ending at seniors.
+    Only explores paths where EVERY connection was made after 2010.
+    
+    SQL Pattern:
+      Base case: WHERE (e.since) > (2010)
+      Recursive: WHERE depth < 5 AND (e.since) > (2010)
+      Join: WHERE depth_bounds AND (sink.age) > (60)
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (a:Person)-[:KNOWS*2..5]->(b:Person)
+    WHERE b.age > 60
+      AND ALL(k IN relationships(path) WHERE k.since > 2010)
+    RETURN a.id, b.id, LENGTH(path) AS hops
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+        WHERE (e.since) > (2010)
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('person_id', e.person_id, 'friend_id', e.friend_id, 'since', e.since, 'strength', e.strength)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 5
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+          AND (e.since) > (2010)
+      )
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_b_id AS id
+      ,(SIZE(_gsql2rsql_path_id) - 1) AS hops
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_b_id
+        ,sink.name AS _gsql2rsql_b_name
+        ,sink.age AS _gsql2rsql_b_age
+        ,sink.nickname AS _gsql2rsql_b_nickname
+        ,sink.salary AS _gsql2rsql_b_salary
+        ,sink.active AS _gsql2rsql_b_active
+        ,source.id AS _gsql2rsql_a_id
+        ,source.name AS _gsql2rsql_a_name
+        ,source.age AS _gsql2rsql_a_age
+        ,source.nickname AS _gsql2rsql_a_nickname
+        ,source.salary AS _gsql2rsql_a_salary
+        ,source.active AS _gsql2rsql_a_active
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path AS _gsql2rsql_path_id
+        ,p.path_edges AS _gsql2rsql_path_edges
+      FROM paths_1 p
+      JOIN catalog.demo.Person sink
+        ON sink.id = p.end_node
+      JOIN catalog.demo.Person source
+        ON source.id = p.start_node
+      WHERE p.depth >= 2 AND p.depth <= 5 AND (sink.age) > (60)
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: b:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*2..5, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: id=a.id, id=b.id, hops=LENGTH(path)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 32. Undirected both filters pushdown - split AND to both sources
+
+**Application**: Features: Conjunction Splitting Pushdown
+
+??? note "Notes"
+
+    BEFORE optimization (suboptimal):
+      Selection(p.name='Alice' AND f.age>30) sits AFTER the join
+      → Joins ALL Person rows, then filters.
+    
+    AFTER optimization (with conjunction splitting):
+      - p.name = 'Alice' → pushed to DataSource(p)
+      - f.age > 30 → pushed to DataSource(f)
+      → Both filters applied BEFORE the join!
+    
+    SQL Pattern (optimized):
+      FROM (SELECT ... FROM Person WHERE name = 'Alice') AS _left
+      JOIN ...
+      JOIN (SELECT ... FROM Person WHERE age > 30) AS _right
+    
+    PERFORMANCE: Dramatically reduces join cardinality.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Alice' AND f.age > 30
+    RETURN p.name, f.name, f.age
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_f_name AS name
+      ,_gsql2rsql_f_age AS age
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+        ,_right._gsql2rsql_f_age AS _gsql2rsql_f_age
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+          WHERE ((name) = ('Alice'))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+          ,age AS _gsql2rsql_f_age
+        FROM
+          catalog.demo.Person
+        WHERE ((age) > (30))
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (p.name EQ 'Alice')
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+        Filter: (f.age GT 30)
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: name=p.name, name=f.name, age=f.age
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 33. Undirected partial pushdown - one pushed, one cross-variable
+
+**Application**: Features: Partial Conjunction Pushdown
+
+??? note "Notes"
+
+    The optimizer splits the AND conjunction:
+      - p.age > 25 → PUSHED to DataSource(p) (single-variable)
+      - p.name = f.name → KEPT in Selection (cross-variable, cannot push!)
+    
+    BENEFIT: Even partial pushdown reduces join input size.
+    The cross-variable predicate (p.name = f.name) must be evaluated
+    after the join because it compares values from both sides.
+    
+    SQL Pattern:
+      FROM (SELECT ... FROM Person WHERE age > 25) AS _left  -- PUSHED
+      JOIN ...
+      WHERE p.name = f.name  -- KEPT (cross-variable)
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.age > 25 AND p.name = f.name
+    RETURN p.name, f.name
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_f_name AS name
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+            ,age AS _gsql2rsql_p_age
+          FROM
+            catalog.demo.Person
+          WHERE ((age) > (25))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    WHERE (_gsql2rsql_p_name) = (_gsql2rsql_f_name)
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (p.age GT 25)
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: name=p.name, name=f.name
+        Filter: (p.name EQ f.name)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 34. Undirected multiple same-variable predicates combined
+
+**Application**: Features: Predicate Combination
+
+??? note "Notes"
+
+    Multiple predicates for the same variable are combined with AND:
+      - p: (name='Bob' AND age>18 AND active=true) → pushed to DataSource(p)
+      - f: (salary>50000) → pushed to DataSource(f)
+    
+    OPTIMIZATION: All predicates pushed, SelectionOperator removed entirely!
+    
+    SQL Pattern:
+      FROM (SELECT ... FROM Person WHERE name='Bob' AND age>18 AND active=true) AS _left
+      JOIN ...
+      JOIN (SELECT ... FROM Person WHERE salary > 50000) AS _right
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Bob' AND p.age > 18 AND p.active = true AND f.salary > 50000
+    RETURN p.id, f.id
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_id AS id
+      ,_gsql2rsql_f_id AS id
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+        ,_left._gsql2rsql_p_active AS _gsql2rsql_p_active
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_salary AS _gsql2rsql_f_salary
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+          ,_left._gsql2rsql_p_active AS _gsql2rsql_p_active
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+            ,age AS _gsql2rsql_p_age
+            ,active AS _gsql2rsql_p_active
+          FROM
+            catalog.demo.Person
+          WHERE ((((name) = ('Bob')) AND ((age) > (18))) AND ((active) = (TRUE)))
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,salary AS _gsql2rsql_f_salary
+        FROM
+          catalog.demo.Person
+        WHERE ((salary) > (50000))
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (((p.name EQ 'Bob') AND (p.age GT 18)) AND (p.active EQ true))
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+        Filter: (f.salary GT 50000)
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: id=p.id, id=f.id
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 35. Undirected with OR predicate - cannot split
+
+**Application**: Features: OR Predicate Handling
+
+??? note "Notes"
+
+    OR predicates CANNOT be split! This is algebraically unsafe:
+      σ_{p(A) ∨ q(B)}(A ⋈ B) ≢ σ_{p(A)}(A) ⋈ σ_{q(B)}(B)
+    
+    If we pushed, we'd miss rows where:
+      - p.name != 'Alice' but f.age > 30
+    
+    RESULT: Entire predicate stays in Selection (no pushdown).
+    
+    TODO: Future optimization could rewrite as UNION:
+      (MATCH ... WHERE p.name='Alice')
+      UNION
+      (MATCH ... WHERE f.age > 30)
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)
+    WHERE p.name = 'Alice' OR f.age > 30
+    RETURN p.name, f.name
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_f_name AS name
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+        ,_right._gsql2rsql_f_age AS _gsql2rsql_f_age
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        FROM (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,name AS _gsql2rsql_p_name
+          FROM
+            catalog.demo.Person
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,friend_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+          UNION ALL
+          SELECT
+             friend_id AS _gsql2rsql__anon1_person_id
+            ,person_id AS _gsql2rsql__anon1_friend_id
+            ,since AS _gsql2rsql__anon1_since
+            ,strength AS _gsql2rsql__anon1_strength
+          FROM
+            catalog.demo.Knows
+        ) AS _right ON
+          _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_f_id
+          ,name AS _gsql2rsql_f_name
+          ,age AS _gsql2rsql_f_age
+        FROM
+          catalog.demo.Person
+      ) AS _right ON
+        _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+    ) AS _proj
+    WHERE ((_gsql2rsql_p_name) = ('Alice')) OR ((_gsql2rsql_f_age) > (30))
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: name=p.name, name=f.name
+        Filter: ((p.name EQ 'Alice') OR (f.age GT 30))
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 36. Undirected three-way mixed filters
+
+**Application**: Features: Complex Conjunction Splitting
+
+??? note "Notes"
+
+    Three-way join with filters on all three entities:
+      - p.age > 25 → pushed to DataSource(p)
+      - f.salary > 50000 → pushed to DataSource(f)
+      - c.industry = 'Tech' → pushed to DataSource(c)
+    
+    BENEFIT: All three table scans are filtered before any joins!
+    The SelectionOperator is completely removed.
+    
+    SQL Pattern:
+      FROM (SELECT ... FROM Person WHERE age > 25) AS p
+      JOIN ...
+      JOIN (SELECT ... FROM Person WHERE salary > 50000) AS f
+      JOIN ...
+      JOIN (SELECT ... FROM Company WHERE industry = 'Tech') AS c
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS]-(f:Person)-[:WORKS_AT]->(c:Company)
+    WHERE p.age > 25 AND f.salary > 50000 AND c.industry = 'Tech'
+    RETURN p.name, f.name, c.name
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_f_name AS name
+      ,_gsql2rsql_c_name AS name
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+        ,_left._gsql2rsql_f_id AS _gsql2rsql_f_id
+        ,_left._gsql2rsql_f_name AS _gsql2rsql_f_name
+        ,_left._gsql2rsql_f_salary AS _gsql2rsql_f_salary
+        ,_left._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+        ,_left._gsql2rsql__anon2_company_id AS _gsql2rsql__anon2_company_id
+        ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_right._gsql2rsql_c_industry AS _gsql2rsql_c_industry
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+          ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+          ,_left._gsql2rsql_f_id AS _gsql2rsql_f_id
+          ,_left._gsql2rsql_f_name AS _gsql2rsql_f_name
+          ,_left._gsql2rsql_f_salary AS _gsql2rsql_f_salary
+          ,_right._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+          ,_right._gsql2rsql__anon2_company_id AS _gsql2rsql__anon2_company_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+            ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+            ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_left._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+            ,_right._gsql2rsql_f_id AS _gsql2rsql_f_id
+            ,_right._gsql2rsql_f_name AS _gsql2rsql_f_name
+            ,_right._gsql2rsql_f_salary AS _gsql2rsql_f_salary
+          FROM (
+            SELECT
+               _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+              ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+              ,_left._gsql2rsql_p_age AS _gsql2rsql_p_age
+              ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+              ,_right._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_p_id
+                ,name AS _gsql2rsql_p_name
+                ,age AS _gsql2rsql_p_age
+              FROM
+                catalog.demo.Person
+              WHERE ((age) > (25))
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 person_id AS _gsql2rsql__anon1_person_id
+                ,friend_id AS _gsql2rsql__anon1_friend_id
+                ,since AS _gsql2rsql__anon1_since
+                ,strength AS _gsql2rsql__anon1_strength
+              FROM
+                catalog.demo.Knows
+              UNION ALL
+              SELECT
+                 friend_id AS _gsql2rsql__anon1_person_id
+                ,person_id AS _gsql2rsql__anon1_friend_id
+                ,since AS _gsql2rsql__anon1_since
+                ,strength AS _gsql2rsql__anon1_strength
+              FROM
+                catalog.demo.Knows
+            ) AS _right ON
+              _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_person_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_f_id
+              ,name AS _gsql2rsql_f_name
+              ,salary AS _gsql2rsql_f_salary
+            FROM
+              catalog.demo.Person
+            WHERE ((salary) > (50000))
+          ) AS _right ON
+            _right._gsql2rsql_f_id = _left._gsql2rsql__anon1_person_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon2_person_id
+            ,company_id AS _gsql2rsql__anon2_company_id
+          FROM
+            catalog.demo.WorksAt
+        ) AS _right ON
+          _left._gsql2rsql_f_id = _right._gsql2rsql__anon2_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_c_id
+          ,name AS _gsql2rsql_c_name
+          ,industry AS _gsql2rsql_c_industry
+        FROM
+          catalog.demo.Company
+        WHERE ((industry) = ('Tech'))
+      ) AS _right ON
+        _right._gsql2rsql_c_id = _left._gsql2rsql__anon2_company_id
+    ) AS _proj
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+        Filter: (p.age GT 25)
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:KNOWS]-
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: f:Person
+        Filter: (f.salary GT 50000)
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:WORKS_AT]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: c:Company
+        Filter: (c.industry EQ 'Tech')
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon1 Type=EITHER
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=f RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=;
+      ProjectionOperator(id=11)
+        Projections: name=p.name, name=f.name, name=c.name
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 37. Variable-length paths with multi-hop traversal and aggregation
+
+**Application**: Features: Complex graph traversal with aggregation
+
+??? note "Notes"
+
+    This query demonstrates a powerful combination of features:
+      1. Variable-length path: KNOWS*1..3 (1 to 3 hops)
+      2. Pattern continuation after varlen path
+      3. Filter on final relationship target
+      4. Aggregation with COUNT(DISTINCT)
+      5. Ordering by aggregated column
+    
+    REAL-WORLD USE: Find people with the most connections to tech workers.
+    Used in professional networking, talent acquisition, and social graph analysis.
+    
+    OPTIMIZATION: Filter on c.industry pushed down before joins.
+    
+    COMPLEXITY: O(n^3) for 3-hop traversal, but filtered early.
+    Result deduplication via DISTINCT crucial for accurate counts.
+    
+    SQL Pattern:
+      WITH RECURSIVE path AS (...)  -- Variable-length expansion
+      SELECT p.name, COUNT(DISTINCT friend_id) AS tech_connections
+      FROM path
+      JOIN WorksAt ON ...
+      JOIN (SELECT ... FROM Company WHERE industry = 'Technology') AS c
+      GROUP BY p.name
+      ORDER BY tech_connections DESC
+      LIMIT 10
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:Person)-[:KNOWS*1..3]-(friend:Person)-[:WORKS_AT]->(c:Company)
+    WHERE c.industry = 'Technology'
+    RETURN p.name, COUNT(DISTINCT friend) AS tech_connections
+    ORDER BY tech_connections DESC
+    LIMIT 10
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.person_id AS start_node,
+          e.friend_id AS end_node,
+          1 AS depth,
+          ARRAY(e.person_id, e.friend_id) AS path,
+          ARRAY(e.person_id) AS visited
+        FROM catalog.demo.Knows e
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.friend_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.friend_id)) AS path,
+          CONCAT(p.visited, ARRAY(e.person_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.demo.Knows e
+          ON p.end_node = e.person_id
+        WHERE p.depth < 3
+          AND NOT ARRAY_CONTAINS(p.visited, e.friend_id)
+      )
+    SELECT 
+       _gsql2rsql_p_name AS name
+      ,COUNT(DISTINCT _gsql2rsql_friend_id) AS tech_connections
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_left._gsql2rsql_friend_id AS _gsql2rsql_friend_id
+        ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+        ,_left._gsql2rsql__anon1_company_id AS _gsql2rsql__anon1_company_id
+        ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_right._gsql2rsql_c_industry AS _gsql2rsql_c_industry
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_left._gsql2rsql_friend_id AS _gsql2rsql_friend_id
+          ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_right._gsql2rsql__anon1_company_id AS _gsql2rsql__anon1_company_id
+        FROM (
+          SELECT
+             sink.id AS _gsql2rsql_friend_id
+            ,sink.name AS _gsql2rsql_friend_name
+            ,sink.age AS _gsql2rsql_friend_age
+            ,sink.nickname AS _gsql2rsql_friend_nickname
+            ,sink.salary AS _gsql2rsql_friend_salary
+            ,sink.active AS _gsql2rsql_friend_active
+            ,source.id AS _gsql2rsql_p_id
+            ,source.name AS _gsql2rsql_p_name
+            ,source.age AS _gsql2rsql_p_age
+            ,source.nickname AS _gsql2rsql_p_nickname
+            ,source.salary AS _gsql2rsql_p_salary
+            ,source.active AS _gsql2rsql_p_active
+            ,p.start_node
+            ,p.end_node
+            ,p.depth
+            ,p.path
+          FROM paths_1 p
+          JOIN catalog.demo.Person sink
+            ON sink.id = p.end_node
+          JOIN catalog.demo.Person source
+            ON source.id = p.start_node
+          WHERE p.depth >= 1 AND p.depth <= 3
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             person_id AS _gsql2rsql__anon1_person_id
+            ,company_id AS _gsql2rsql__anon1_company_id
+          FROM
+            catalog.demo.WorksAt
+        ) AS _right ON
+          _left._gsql2rsql_friend_id = _right._gsql2rsql__anon1_person_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_c_id
+          ,industry AS _gsql2rsql_c_industry
+        FROM
+          catalog.demo.Company
+      ) AS _right ON
+        _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_company_id
+    ) AS _proj
+    WHERE (_gsql2rsql_c_industry) = ('Technology')
+    GROUP BY _gsql2rsql_p_name
+    ORDER BY tech_connections DESC
+    LIMIT 10
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: p:Person
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: friend:Person
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=5)
+        DataSource: [_anon1:WORKS_AT]->
+    *
+    OpId=7 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=7)
+        DataSource: c:Company
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*1..3)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=6;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=friend RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=4,5; OutOpIds=8;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=friend RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=6,7; OutOpIds=10;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=10 Op=ProjectionOperator; InOpIds=8; OutOpIds=;
+      ProjectionOperator(id=10)
+        Projections: name=p.name, tech_connections=COUNT(DISTINCT friend)
+        Filter: (c.industry EQ 'Technology')
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---

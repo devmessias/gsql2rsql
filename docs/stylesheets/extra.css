@@ -1,0 +1,17 @@
+/* Custom styles for gsql2rsql documentation */
+
+/* Add custom styles here as needed */
+
+/* Example: Custom code block styling */
+.highlight .language-cypher {
+    background-color: var(--md-code-bg-color);
+}
+
+/* Example: Custom admonition colors */
+.md-typeset .admonition.query-example {
+    border-color: #00acc1;
+}
+
+.md-typeset .admonition.query-example > .admonition-title {
+    background-color: rgba(0, 172, 193, 0.1);
+}

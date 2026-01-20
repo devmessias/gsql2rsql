@@ -1,0 +1,3510 @@
+# Fraud Queries
+
+This page contains transpiled examples for **fraud queries** queries.
+
+Each example shows the original OpenCypher query and its corresponding Databricks SQL translation.
+
+---
+
+## 1. Detect co-shopper fraud rings via shared transaction paths
+
+**Application**: Fraud: Co-shopper detection
+
+??? note "Notes"
+
+    Finds pairs of accounts that share transactions at the same merchant.
+    High shared transaction counts may indicate coordinated fraud or account sharing.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:TRANSACTION]->(m:Merchant)<-[:TRANSACTION]-(b:Account)
+    WHERE a.id <> b.id
+    RETURN a.id, b.id, m.name, COUNT(*) AS shared_transactions
+    ORDER BY shared_transactions DESC
+    LIMIT 10
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_b_id AS id
+      ,_gsql2rsql_m_name AS name
+      ,COUNT(*) AS shared_transactions
+    FROM (
+      SELECT
+         _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+        ,_left._gsql2rsql__anon1_merchant_id AS _gsql2rsql__anon1_merchant_id
+        ,_left._gsql2rsql_m_id AS _gsql2rsql_m_id
+        ,_left._gsql2rsql_m_name AS _gsql2rsql_m_name
+        ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+        ,_left._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+        ,_right._gsql2rsql_b_id AS _gsql2rsql_b_id
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_merchant_id AS _gsql2rsql__anon1_merchant_id
+          ,_left._gsql2rsql_m_id AS _gsql2rsql_m_id
+          ,_left._gsql2rsql_m_name AS _gsql2rsql_m_name
+          ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_right._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql__anon1_merchant_id AS _gsql2rsql__anon1_merchant_id
+            ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+            ,_right._gsql2rsql_m_name AS _gsql2rsql_m_name
+          FROM (
+            SELECT
+               _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_right._gsql2rsql__anon1_merchant_id AS _gsql2rsql__anon1_merchant_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_a_id
+              FROM
+                catalog.fraud.Account
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 account_id AS _gsql2rsql__anon1_account_id
+                ,merchant_id AS _gsql2rsql__anon1_merchant_id
+              FROM
+                catalog.fraud.AccountTransaction
+            ) AS _right ON
+              _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_m_id
+              ,name AS _gsql2rsql_m_name
+            FROM
+              catalog.fraud.Merchant
+          ) AS _right ON
+            _right._gsql2rsql_m_id = _left._gsql2rsql__anon1_merchant_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             account_id AS _gsql2rsql__anon2_account_id
+            ,merchant_id AS _gsql2rsql__anon2_merchant_id
+          FROM
+            catalog.fraud.AccountTransaction
+        ) AS _right ON
+          _left._gsql2rsql_m_id = _right._gsql2rsql__anon2_merchant_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_b_id
+        FROM
+          catalog.fraud.Account
+      ) AS _right ON
+        _right._gsql2rsql_b_id = _left._gsql2rsql__anon2_account_id
+    ) AS _proj
+    WHERE (_gsql2rsql_a_id) != (_gsql2rsql_b_id)
+    GROUP BY _gsql2rsql_a_id, _gsql2rsql_b_id, _gsql2rsql_m_name
+    ORDER BY shared_transactions DESC
+    LIMIT 10
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: m:Merchant
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TRANSACTION]<-
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: b:Account
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=;
+      ProjectionOperator(id=11)
+        Projections: id=a.id, id=b.id, name=m.name, shared_transactions=COUNT(*)
+        Filter: (a.id NEQ b.id)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 2. Identify camouflage patterns with hidden relationship chains
+
+**Application**: Fraud: Camouflage detection
+
+??? note "Notes"
+
+    Detects indirect transfer chains between high-risk accounts.
+    Fraudsters often use intermediary accounts to obscure direct connections.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (a:Account)-[:TRANSFER*2..4]->(b:Account)
+    WHERE a.risk_score > 70 AND b.risk_score > 70
+    RETURN a.id, b.id, LENGTH(path) AS chain_length,
+           [node IN nodes(path) | node.id] AS path_nodes
+    ORDER BY chain_length DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.source_account_id AS start_node,
+          e.target_account_id AS end_node,
+          1 AS depth,
+          ARRAY(e.source_account_id, e.target_account_id) AS path,
+          ARRAY(NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          ARRAY(e.source_account_id) AS visited
+        FROM catalog.fraud.Transfer e
+        JOIN catalog.fraud.Account src ON src.id = e.source_account_id
+        WHERE (src.risk_score) > (70)
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.target_account_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.target_account_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.source_account_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.fraud.Transfer e
+          ON p.end_node = e.source_account_id
+        WHERE p.depth < 4
+          AND NOT ARRAY_CONTAINS(p.visited, e.target_account_id)
+      )
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_b_id AS id
+      ,(SIZE(_gsql2rsql_path_id) - 1) AS chain_length
+      ,_gsql2rsql_path_id AS path_nodes
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_b_id
+        ,sink.holder_name AS _gsql2rsql_b_holder_name
+        ,sink.risk_score AS _gsql2rsql_b_risk_score
+        ,sink.status AS _gsql2rsql_b_status
+        ,sink.default_date AS _gsql2rsql_b_default_date
+        ,sink.home_country AS _gsql2rsql_b_home_country
+        ,sink.kyc_status AS _gsql2rsql_b_kyc_status
+        ,sink.days_since_creation AS _gsql2rsql_b_days_since_creation
+        ,source.id AS _gsql2rsql_a_id
+        ,source.holder_name AS _gsql2rsql_a_holder_name
+        ,source.risk_score AS _gsql2rsql_a_risk_score
+        ,source.status AS _gsql2rsql_a_status
+        ,source.default_date AS _gsql2rsql_a_default_date
+        ,source.home_country AS _gsql2rsql_a_home_country
+        ,source.kyc_status AS _gsql2rsql_a_kyc_status
+        ,source.days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,p.start_node
+        ,p.end_node
+        ,p.depth
+        ,p.path AS _gsql2rsql_path_id
+        ,p.path_edges AS _gsql2rsql_path_edges
+      FROM paths_1 p
+      JOIN catalog.fraud.Account sink
+        ON sink.id = p.end_node
+      JOIN catalog.fraud.Account source
+        ON source.id = p.start_node
+      WHERE p.depth >= 2 AND p.depth <= 4 AND (sink.risk_score) > (70)
+    ) AS _proj
+    ORDER BY chain_length DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: b:Account
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(TRANSFER*2..4, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=b RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=;
+      ProjectionOperator(id=5)
+        Projections: id=a.id, id=b.id, chain_length=LENGTH(path), path_nodes=[node IN NODES(path) | node.id]
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 3. Find high-risk POS machines with suspicious transaction patterns
+
+**Application**: Fraud: High-risk device monitoring
+
+??? note "Notes"
+
+    Monitors POS machines already flagged as high-risk for ongoing suspicious activity.
+    Filters by vertex metadata (risk_status, flagged) to focus on known problem devices.
+    Total volume and transaction counts help prioritize investigation.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p:POS)-[:PROCESSED]->(t:Transaction)
+    WHERE p.risk_status = 'high_risk' OR p.flagged = true
+    WITH p,
+         COUNT(t) AS total_transactions,
+         SUM(t.amount) AS total_volume,
+         AVG(t.amount) AS avg_amount,
+         STDDEV(t.amount) AS stddev_amount
+    WHERE total_transactions > 50
+    RETURN p.id, p.location, p.risk_status,
+           total_transactions, total_volume, avg_amount, stddev_amount
+    ORDER BY total_volume DESC
+    LIMIT 20
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_p_id AS id
+      ,_gsql2rsql_p_location AS location
+      ,_gsql2rsql_p_risk_status AS risk_status
+      ,total_transactions AS total_transactions
+      ,total_volume AS total_volume
+      ,avg_amount AS avg_amount
+      ,stddev_amount AS stddev_amount
+    FROM (
+      SELECT 
+         _gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,COUNT(_gsql2rsql_t_id) AS total_transactions
+        ,SUM(_gsql2rsql_t_amount) AS total_volume
+        ,AVG(CAST(_gsql2rsql_t_amount AS DOUBLE)) AS avg_amount
+        ,STDDEV(_gsql2rsql_t_amount) AS stddev_amount
+        ,_gsql2rsql_p_flagged AS _gsql2rsql_p_flagged
+        ,_gsql2rsql_p_location AS _gsql2rsql_p_location
+        ,_gsql2rsql_p_risk_status AS _gsql2rsql_p_risk_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_location AS _gsql2rsql_p_location
+          ,_left._gsql2rsql_p_risk_status AS _gsql2rsql_p_risk_status
+          ,_left._gsql2rsql_p_flagged AS _gsql2rsql_p_flagged
+          ,_left._gsql2rsql__anon1_pos_id AS _gsql2rsql__anon1_pos_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+        FROM (
+          SELECT
+             _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql_p_location AS _gsql2rsql_p_location
+            ,_left._gsql2rsql_p_risk_status AS _gsql2rsql_p_risk_status
+            ,_left._gsql2rsql_p_flagged AS _gsql2rsql_p_flagged
+            ,_right._gsql2rsql__anon1_pos_id AS _gsql2rsql__anon1_pos_id
+            ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_p_id
+              ,location AS _gsql2rsql_p_location
+              ,risk_status AS _gsql2rsql_p_risk_status
+              ,flagged AS _gsql2rsql_p_flagged
+            FROM
+              catalog.fraud.POS
+            WHERE (((risk_status) = ('high_risk')) OR ((flagged) = (TRUE)))
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               pos_id AS _gsql2rsql__anon1_pos_id
+              ,transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM
+              catalog.fraud.POSTransaction
+          ) AS _right ON
+            _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_pos_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+          FROM
+            catalog.fraud.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_p_id, _gsql2rsql_p_flagged, _gsql2rsql_p_location, _gsql2rsql_p_risk_status
+      HAVING (total_transactions) > (50)
+    ) AS _proj
+    ORDER BY total_volume DESC
+    LIMIT 20
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: p:POS
+        Filter: ((p.risk_status EQ 'high_risk') OR (p.flagged EQ true))
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:PROCESSED]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: p=p, total_transactions=COUNT(t), total_volume=SUM(t.amount), avg_amount=AVG(t.amount), stddev_amount=STDEV(t.amount)
+        Having: (total_transactions GT 50)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=p.id, location=p.location, risk_status=p.risk_status, total_transactions=total_transactions, total_volume=total_volume, avg_amount=avg_amount, stddev_amount=stddev_amount
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 4. Detect synthetic identity networks via shared attributes
+
+**Application**: Fraud: Synthetic identity detection
+
+??? note "Notes"
+
+    Finds addresses associated with multiple recently created accounts.
+    May indicate synthetic identities or identity fabrication rings.
+    Uses WITH...WHERE pattern for HAVING-like filtering on aggregated columns.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (p1:Person)-[:HAS_ADDRESS]->(addr:Address)<-[:HAS_ADDRESS]-(p2:Person)
+    WHERE p1.id <> p2.id AND p1.creation_date > DATE('2023-01-01')
+    WITH addr.street AS street, addr.city AS city, COUNT(DISTINCT p1.id) AS person_count
+    WHERE person_count > 5
+    RETURN street, city, person_count
+    ORDER BY person_count DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       street AS street
+      ,city AS city
+      ,person_count AS person_count
+    FROM (
+      SELECT 
+         _gsql2rsql_addr_street AS street
+        ,_gsql2rsql_addr_city AS city
+        ,COUNT(DISTINCT _gsql2rsql_p1_id) AS person_count
+      FROM (
+        SELECT
+           _left._gsql2rsql_p1_id AS _gsql2rsql_p1_id
+          ,_left._gsql2rsql_p1_creation_date AS _gsql2rsql_p1_creation_date
+          ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+          ,_left._gsql2rsql__anon1_address_id AS _gsql2rsql__anon1_address_id
+          ,_left._gsql2rsql_addr_id AS _gsql2rsql_addr_id
+          ,_left._gsql2rsql_addr_street AS _gsql2rsql_addr_street
+          ,_left._gsql2rsql_addr_city AS _gsql2rsql_addr_city
+          ,_left._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+          ,_left._gsql2rsql__anon2_address_id AS _gsql2rsql__anon2_address_id
+          ,_right._gsql2rsql_p2_id AS _gsql2rsql_p2_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_p1_id AS _gsql2rsql_p1_id
+            ,_left._gsql2rsql_p1_creation_date AS _gsql2rsql_p1_creation_date
+            ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+            ,_left._gsql2rsql__anon1_address_id AS _gsql2rsql__anon1_address_id
+            ,_left._gsql2rsql_addr_id AS _gsql2rsql_addr_id
+            ,_left._gsql2rsql_addr_street AS _gsql2rsql_addr_street
+            ,_left._gsql2rsql_addr_city AS _gsql2rsql_addr_city
+            ,_right._gsql2rsql__anon2_person_id AS _gsql2rsql__anon2_person_id
+            ,_right._gsql2rsql__anon2_address_id AS _gsql2rsql__anon2_address_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_p1_id AS _gsql2rsql_p1_id
+              ,_left._gsql2rsql_p1_creation_date AS _gsql2rsql_p1_creation_date
+              ,_left._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+              ,_left._gsql2rsql__anon1_address_id AS _gsql2rsql__anon1_address_id
+              ,_right._gsql2rsql_addr_id AS _gsql2rsql_addr_id
+              ,_right._gsql2rsql_addr_street AS _gsql2rsql_addr_street
+              ,_right._gsql2rsql_addr_city AS _gsql2rsql_addr_city
+            FROM (
+              SELECT
+                 _left._gsql2rsql_p1_id AS _gsql2rsql_p1_id
+                ,_left._gsql2rsql_p1_creation_date AS _gsql2rsql_p1_creation_date
+                ,_right._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
+                ,_right._gsql2rsql__anon1_address_id AS _gsql2rsql__anon1_address_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_p1_id
+                  ,creation_date AS _gsql2rsql_p1_creation_date
+                FROM
+                  catalog.fraud.Person
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   person_id AS _gsql2rsql__anon1_person_id
+                  ,address_id AS _gsql2rsql__anon1_address_id
+                FROM
+                  catalog.fraud.PersonAddress
+              ) AS _right ON
+                _left._gsql2rsql_p1_id = _right._gsql2rsql__anon1_person_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_addr_id
+                ,street AS _gsql2rsql_addr_street
+                ,city AS _gsql2rsql_addr_city
+              FROM
+                catalog.fraud.Address
+            ) AS _right ON
+              _right._gsql2rsql_addr_id = _left._gsql2rsql__anon1_address_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               person_id AS _gsql2rsql__anon2_person_id
+              ,address_id AS _gsql2rsql__anon2_address_id
+            FROM
+              catalog.fraud.PersonAddress
+          ) AS _right ON
+            _left._gsql2rsql_addr_id = _right._gsql2rsql__anon2_address_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_p2_id
+          FROM
+            catalog.fraud.Person
+        ) AS _right ON
+          _right._gsql2rsql_p2_id = _left._gsql2rsql__anon2_person_id
+      ) AS _proj
+      WHERE ((_gsql2rsql_p1_id) != (_gsql2rsql_p2_id)) AND ((_gsql2rsql_p1_creation_date) > (TO_DATE('2023-01-01')))
+      GROUP BY _gsql2rsql_addr_street, _gsql2rsql_addr_city
+      HAVING (person_count) > (5)
+    ) AS _proj
+    ORDER BY person_count DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: p1:Person
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ADDRESS]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: addr:Address
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:HAS_ADDRESS]<-
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: p2:Person
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=p1 RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=addr RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=addr RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=p2 RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: street=addr.street, city=addr.city, person_count=COUNT(DISTINCT p1.id)
+        Filter: ((p1.id NEQ p2.id) AND (p1.creation_date GT DATE('2023-01-01')))
+        Having: (person_count GT 5)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: street=street, city=city, person_count=person_count
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 5. Identify card testing patterns with small probe transactions
+
+**Application**: Fraud: Card testing
+
+??? note "Notes"
+
+    Detects cards with many small-value transactions in a short time.
+    Common pattern for fraudsters testing stolen card validity.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Card)-[:USED_IN]->(t:Transaction)
+    WHERE t.amount < 1.00 AND t.timestamp > TIMESTAMP() - DURATION('P1D')
+    WITH c, COUNT(t) AS small_tx_count, COLLECT(t.merchant_id) AS merchants
+    WHERE small_tx_count > 10
+    RETURN c.number, small_tx_count, SIZE(merchants) AS merchant_count
+    ORDER BY small_tx_count DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_number AS number
+      ,small_tx_count AS small_tx_count
+      ,SIZE(merchants) AS merchant_count
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,COUNT(_gsql2rsql_t_id) AS small_tx_count
+        ,COLLECT_LIST(_gsql2rsql_t_merchant_id) AS merchants
+        ,_gsql2rsql_c_number AS _gsql2rsql_c_number
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_number AS _gsql2rsql_c_number
+          ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+          ,_right._gsql2rsql_t_merchant_id AS _gsql2rsql_t_merchant_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_number AS _gsql2rsql_c_number
+            ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_c_id
+              ,number AS _gsql2rsql_c_number
+            FROM
+              catalog.fraud.Card
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               card_id AS _gsql2rsql__anon1_card_id
+              ,transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM
+              catalog.fraud.CardTransaction
+          ) AS _right ON
+            _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_card_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+            ,merchant_id AS _gsql2rsql_t_merchant_id
+          FROM
+            catalog.fraud.Transaction
+          WHERE ((amount) < (1.0))
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 1 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_number
+      HAVING (small_tx_count) > (10)
+    ) AS _proj
+    ORDER BY small_tx_count DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: c:Card
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:USED_IN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+        Filter: (t.amount LT 1.0)
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: c=c, small_tx_count=COUNT(t), merchants=COLLECT(t.merchant_id)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P1D')))
+        Having: (small_tx_count GT 10)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: number=c.number, small_tx_count=small_tx_count, merchant_count=SIZE(merchants)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 6. Find collusion networks via coordinated transaction timing
+
+**Application**: Fraud: Collusion detection
+
+??? note "Notes"
+
+    Identifies accounts making synchronized transactions at the same merchant.
+    May indicate coordinated fraud or collusion rings.
+    Uses WITH...WHERE pattern for HAVING-like filtering on aggregated columns.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a1:Account)-[:HAS_TRANSACTION]->(t1:Transaction),
+          (a2:Account)-[:HAS_TRANSACTION]->(t2:Transaction)
+    WHERE a1.id < a2.id
+      AND ABS(t1.timestamp - t2.timestamp) < DURATION('PT5M')
+      AND t1.merchant_id = t2.merchant_id
+    WITH a1.id AS a1_id, a2.id AS a2_id, t1.merchant_id AS merchant_id, COUNT(*) AS coordinated_count
+    WHERE coordinated_count > 5
+    RETURN a1_id, a2_id, merchant_id, coordinated_count
+    ORDER BY coordinated_count DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       a1_id AS a1_id
+      ,a2_id AS a2_id
+      ,merchant_id AS merchant_id
+      ,coordinated_count AS coordinated_count
+    FROM (
+      SELECT 
+         _gsql2rsql_a1_id AS a1_id
+        ,_gsql2rsql_a2_id AS a2_id
+        ,_gsql2rsql_t1_merchant_id AS merchant_id
+        ,COUNT(*) AS coordinated_count
+      FROM (
+        SELECT
+           _left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_left._gsql2rsql_t1_id AS _gsql2rsql_t1_id
+          ,_left._gsql2rsql_t1_timestamp AS _gsql2rsql_t1_timestamp
+          ,_left._gsql2rsql_t1_merchant_id AS _gsql2rsql_t1_merchant_id
+          ,_left._gsql2rsql_a2_id AS _gsql2rsql_a2_id
+          ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t2_id AS _gsql2rsql_t2_id
+          ,_right._gsql2rsql_t2_timestamp AS _gsql2rsql_t2_timestamp
+          ,_right._gsql2rsql_t2_merchant_id AS _gsql2rsql_t2_merchant_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+            ,_left._gsql2rsql_t1_id AS _gsql2rsql_t1_id
+            ,_left._gsql2rsql_t1_timestamp AS _gsql2rsql_t1_timestamp
+            ,_left._gsql2rsql_t1_merchant_id AS _gsql2rsql_t1_merchant_id
+            ,_left._gsql2rsql_a2_id AS _gsql2rsql_a2_id
+            ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+              ,_left._gsql2rsql_t1_id AS _gsql2rsql_t1_id
+              ,_left._gsql2rsql_t1_timestamp AS _gsql2rsql_t1_timestamp
+              ,_left._gsql2rsql_t1_merchant_id AS _gsql2rsql_t1_merchant_id
+              ,_right._gsql2rsql_a2_id AS _gsql2rsql_a2_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+                ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+                ,_right._gsql2rsql_t1_id AS _gsql2rsql_t1_id
+                ,_right._gsql2rsql_t1_timestamp AS _gsql2rsql_t1_timestamp
+                ,_right._gsql2rsql_t1_merchant_id AS _gsql2rsql_t1_merchant_id
+              FROM (
+                SELECT
+                   _left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+                  ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                  ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+                FROM (
+                  SELECT
+                     id AS _gsql2rsql_a1_id
+                  FROM
+                    catalog.fraud.Account
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     account_id AS _gsql2rsql__anon1_account_id
+                    ,transaction_id AS _gsql2rsql__anon1_transaction_id
+                  FROM
+                    catalog.fraud.AccountTx
+                ) AS _right ON
+                  _left._gsql2rsql_a1_id = _right._gsql2rsql__anon1_account_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   id AS _gsql2rsql_t1_id
+                  ,timestamp AS _gsql2rsql_t1_timestamp
+                  ,merchant_id AS _gsql2rsql_t1_merchant_id
+                FROM
+                  catalog.fraud.Transaction
+              ) AS _right ON
+                _right._gsql2rsql_t1_id = _left._gsql2rsql__anon1_transaction_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_a2_id
+              FROM
+                catalog.fraud.Account
+            ) AS _right ON
+              TRUE
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon2_account_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.fraud.AccountTx
+          ) AS _right ON
+            _left._gsql2rsql_a2_id = _right._gsql2rsql__anon2_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t2_id
+            ,timestamp AS _gsql2rsql_t2_timestamp
+            ,merchant_id AS _gsql2rsql_t2_merchant_id
+          FROM
+            catalog.fraud.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t2_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (((_gsql2rsql_a1_id) < (_gsql2rsql_a2_id)) AND ((ABS((UNIX_TIMESTAMP(_gsql2rsql_t1_timestamp) - UNIX_TIMESTAMP(_gsql2rsql_t2_timestamp)))) < (300))) AND ((_gsql2rsql_t1_merchant_id) = (_gsql2rsql_t2_merchant_id))
+      GROUP BY _gsql2rsql_a1_id, _gsql2rsql_a2_id, _gsql2rsql_t1_merchant_id
+      HAVING (coordinated_count) > (5)
+    ) AS _proj
+    ORDER BY coordinated_count DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=1)
+        DataSource: a1:Account
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=3)
+        DataSource: t1:Transaction
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=4)
+        DataSource: a2:Account
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=10;
+      DataSourceOperator(id=5)
+        DataSource: [_anon2:HAS_TRANSACTION]->
+    *
+    OpId=6 Op=DataSourceOperator; InOpIds=; OutOpIds=11;
+      DataSourceOperator(id=6)
+        DataSource: t2:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=1,2; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=a1 RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,3; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=t1 RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,4; OutOpIds=10;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: 
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=10 Op=JoinOperator; InOpIds=9,5; OutOpIds=11;
+      JoinOperator(id=10)
+        JoinType: INNER
+        Joins: JoinPair: Node=a2 RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=JoinOperator; InOpIds=10,6; OutOpIds=13;
+      JoinOperator(id=11)
+        JoinType: INNER
+        Joins: JoinPair: Node=t2 RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=13 Op=ProjectionOperator; InOpIds=11; OutOpIds=14;
+      ProjectionOperator(id=13)
+        Projections: a1_id=a1.id, a2_id=a2.id, merchant_id=t1.merchant_id, coordinated_count=COUNT(*)
+        Filter: (((a1.id LT a2.id) AND (ABS((t1.timestamp MINUS t2.timestamp)) LT DURATION('PT5M'))) AND (t1.merchant_id EQ t2.merchant_id))
+        Having: (coordinated_count GT 5)
+    *
+    ----------------------------------------------------------------------
+    Level 7:
+    ----------------------------------------------------------------------
+    OpId=14 Op=ProjectionOperator; InOpIds=13; OutOpIds=;
+      ProjectionOperator(id=14)
+        Projections: a1_id=a1_id, a2_id=a2_id, merchant_id=merchant_id, coordinated_count=coordinated_count
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 7. Trace money mule networks with rapid transfer chains
+
+**Application**: Fraud: Money mule detection
+
+??? note "Notes"
+
+    Finds multi-hop transfer chains moving large amounts quickly.
+    Classic pattern for money laundering via mule accounts.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (source:Account)-[:TRANSFER*3..6]->(sink:Account)
+    WHERE ALL(rel IN relationships(path) WHERE rel.timestamp > TIMESTAMP() - DURATION('P7D'))
+      AND ALL(rel IN relationships(path) WHERE rel.amount > 1000)
+    WITH source, sink, path,
+         REDUCE(total = 0, rel IN relationships(path) | total + rel.amount) AS total_amount
+    RETURN source.id, sink.id, LENGTH(path) AS hops, total_amount
+    ORDER BY total_amount DESC
+    LIMIT 15
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.source_account_id AS start_node,
+          e.target_account_id AS end_node,
+          1 AS depth,
+          ARRAY(e.source_account_id, e.target_account_id) AS path,
+          ARRAY(NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          ARRAY(e.source_account_id) AS visited
+        FROM catalog.fraud.Transfer e
+        WHERE ((e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY))) AND ((e.amount) > (1000))
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.target_account_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.target_account_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.source_account_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.fraud.Transfer e
+          ON p.end_node = e.source_account_id
+        WHERE p.depth < 6
+          AND NOT ARRAY_CONTAINS(p.visited, e.target_account_id)
+          AND ((e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY))) AND ((e.amount) > (1000))
+      )
+    SELECT 
+       _gsql2rsql_source_id AS id
+      ,_gsql2rsql_sink_id AS id
+      ,(SIZE(_gsql2rsql_path_id) - 1) AS hops
+      ,total_amount AS total_amount
+    FROM (
+      SELECT 
+         _gsql2rsql_source_id AS _gsql2rsql_source_id
+        ,_gsql2rsql_sink_id AS _gsql2rsql_sink_id
+        ,_gsql2rsql_path_id AS _gsql2rsql_path_id
+        ,AGGREGATE(_gsql2rsql_path_edges, CAST(0 AS DOUBLE), (total, rel) -> (total) + (rel.amount)) AS total_amount
+        ,_gsql2rsql_sink_days_since_creation AS _gsql2rsql_sink_days_since_creation
+        ,_gsql2rsql_sink_default_date AS _gsql2rsql_sink_default_date
+        ,_gsql2rsql_sink_holder_name AS _gsql2rsql_sink_holder_name
+        ,_gsql2rsql_sink_home_country AS _gsql2rsql_sink_home_country
+        ,_gsql2rsql_sink_kyc_status AS _gsql2rsql_sink_kyc_status
+        ,_gsql2rsql_sink_risk_score AS _gsql2rsql_sink_risk_score
+        ,_gsql2rsql_sink_status AS _gsql2rsql_sink_status
+        ,_gsql2rsql_source_days_since_creation AS _gsql2rsql_source_days_since_creation
+        ,_gsql2rsql_source_default_date AS _gsql2rsql_source_default_date
+        ,_gsql2rsql_source_holder_name AS _gsql2rsql_source_holder_name
+        ,_gsql2rsql_source_home_country AS _gsql2rsql_source_home_country
+        ,_gsql2rsql_source_kyc_status AS _gsql2rsql_source_kyc_status
+        ,_gsql2rsql_source_risk_score AS _gsql2rsql_source_risk_score
+        ,_gsql2rsql_source_status AS _gsql2rsql_source_status
+      FROM (
+        SELECT
+           sink.id AS _gsql2rsql_sink_id
+          ,sink.holder_name AS _gsql2rsql_sink_holder_name
+          ,sink.risk_score AS _gsql2rsql_sink_risk_score
+          ,sink.status AS _gsql2rsql_sink_status
+          ,sink.default_date AS _gsql2rsql_sink_default_date
+          ,sink.home_country AS _gsql2rsql_sink_home_country
+          ,sink.kyc_status AS _gsql2rsql_sink_kyc_status
+          ,sink.days_since_creation AS _gsql2rsql_sink_days_since_creation
+          ,source.id AS _gsql2rsql_source_id
+          ,source.holder_name AS _gsql2rsql_source_holder_name
+          ,source.risk_score AS _gsql2rsql_source_risk_score
+          ,source.status AS _gsql2rsql_source_status
+          ,source.default_date AS _gsql2rsql_source_default_date
+          ,source.home_country AS _gsql2rsql_source_home_country
+          ,source.kyc_status AS _gsql2rsql_source_kyc_status
+          ,source.days_since_creation AS _gsql2rsql_source_days_since_creation
+          ,p.start_node
+          ,p.end_node
+          ,p.depth
+          ,p.path AS _gsql2rsql_path_id
+          ,p.path_edges AS _gsql2rsql_path_edges
+        FROM paths_1 p
+        JOIN catalog.fraud.Account sink
+          ON sink.id = p.end_node
+        JOIN catalog.fraud.Account source
+          ON source.id = p.start_node
+        WHERE p.depth >= 3 AND p.depth <= 6
+      ) AS _proj
+    ) AS _proj
+    ORDER BY total_amount DESC
+    LIMIT 15
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: source:Account
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: sink:Account
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(TRANSFER*3..6, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=sink RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=5 Op=ProjectionOperator; InOpIds=4; OutOpIds=6;
+      ProjectionOperator(id=5)
+        Projections: source=source, sink=sink, path=path, total_amount=REDUCE(total = 0, rel IN RELATIONSHIPS(path) | (total PLUS rel.amount))
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=;
+      ProjectionOperator(id=6)
+        Projections: id=source.id, id=sink.id, hops=LENGTH(path), total_amount=total_amount
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 8. Calculate customer similarity via shared card usage patterns
+
+**Application**: Fraud: Customer similarity clustering
+
+??? note "Notes"
+
+    Measures similarity between customers based on shared cards and merchants.
+    High similarity scores may indicate card sharing, family fraud, or organized rings.
+    Combines multiple metrics for more accurate clustering.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c1:Customer)-[:HAS_CARD]->(card:Card)<-[:HAS_CARD]-(c2:Customer)
+    WHERE c1.id < c2.id
+    WITH c1, c2, COUNT(DISTINCT card) AS shared_cards
+    WHERE shared_cards > 0
+    MATCH (c1)-[:HAS_CARD]->(card1:Card)-[:USED_AT]->(m:Merchant)
+    MATCH (c2)-[:HAS_CARD]->(card2:Card)-[:USED_AT]->(m)
+    WITH c1, c2, shared_cards,
+         COUNT(DISTINCT m) AS shared_merchants,
+         shared_cards * 1.0 / (shared_cards + shared_merchants) AS similarity_score
+    WHERE similarity_score > 0.3
+    RETURN c1.id, c2.id, shared_cards, shared_merchants, similarity_score
+    ORDER BY similarity_score DESC
+    LIMIT 50
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH
+    agg_boundary_1 AS (
+      SELECT
+        _gsql2rsql_c1_id AS `c1`,
+        _gsql2rsql_c2_id AS `c2`,
+        COUNT(DISTINCT _gsql2rsql_card_id) AS `shared_cards`
+      FROM (
+      SELECT *
+      FROM (
+        SELECT
+           _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+          ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+          ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+          ,_left._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+          ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+          ,_right._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+          ,_right._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+          ,_right._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+        FROM (
+          SELECT
+             _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+            ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+            ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+            ,_right._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+            ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+              ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+              ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              ,_right._gsql2rsql_card_id AS _gsql2rsql_card_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c1_id
+                  ,name AS _gsql2rsql_c1_name
+                  ,status AS _gsql2rsql_c1_status
+                FROM
+                  catalog.fraud.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,card_id AS _gsql2rsql__anon1_card_id
+                FROM
+                  catalog.fraud.CustomerCard
+              ) AS _right ON
+                _left._gsql2rsql_c1_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_card_id
+              FROM
+                catalog.fraud.Card
+            ) AS _right ON
+              _right._gsql2rsql_card_id = _left._gsql2rsql__anon1_card_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               customer_id AS _gsql2rsql__anon2_customer_id
+              ,card_id AS _gsql2rsql__anon2_card_id
+            FROM
+              catalog.fraud.CustomerCard
+          ) AS _right ON
+            _left._gsql2rsql_card_id = _right._gsql2rsql__anon2_card_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_c2_id
+            ,name AS _gsql2rsql_c2_name
+            ,status AS _gsql2rsql_c2_status
+          FROM
+            catalog.fraud.Customer
+        ) AS _right ON
+          _right._gsql2rsql_c2_id = _left._gsql2rsql__anon2_customer_id
+      ) AS _filter
+      WHERE (_gsql2rsql_c1_id) < (_gsql2rsql_c2_id)
+      ) AS _agg_input
+      GROUP BY _gsql2rsql_c1_id, _gsql2rsql_c2_id
+      HAVING (shared_cards) > (0)
+    )
+    SELECT 
+       _gsql2rsql_c1_id AS id
+      ,_gsql2rsql_c2_id AS id
+      ,shared_cards AS shared_cards
+      ,shared_merchants AS shared_merchants
+      ,similarity_score AS similarity_score
+    FROM (
+      SELECT 
+         _gsql2rsql_c1_id AS _gsql2rsql_c1_id
+        ,_gsql2rsql_c2_id AS _gsql2rsql_c2_id
+        ,shared_cards AS shared_cards
+        ,COUNT(DISTINCT _gsql2rsql_m_id) AS shared_merchants
+        ,((shared_cards) * (1.0)) / ((shared_cards) + (shared_merchants)) AS similarity_score
+        ,_gsql2rsql_c1_name AS _gsql2rsql_c1_name
+        ,_gsql2rsql_c1_status AS _gsql2rsql_c1_status
+        ,_gsql2rsql_c2_name AS _gsql2rsql_c2_name
+        ,_gsql2rsql_c2_status AS _gsql2rsql_c2_status
+      FROM (
+        SELECT
+           _left.c1 AS c1
+          ,_left.c2 AS c2
+          ,_left.shared_cards AS shared_cards
+          ,_left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+          ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+          ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_left._gsql2rsql_card1_id AS _gsql2rsql_card1_id
+          ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+          ,_left._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+          ,_left._gsql2rsql_m_id AS _gsql2rsql_m_id
+          ,_right._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+          ,_right._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+          ,_right._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+          ,_right._gsql2rsql_card2_id AS _gsql2rsql_card2_id
+        FROM (
+          SELECT
+             _left.`c1` AS `c1`
+            ,_left.`c2` AS `c2`
+            ,_left.`shared_cards` AS `shared_cards`
+            ,_right._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+            ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+            ,_right._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+            ,_right._gsql2rsql_card1_id AS _gsql2rsql_card1_id
+            ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_right._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+            ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+            ,_right._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+          FROM (
+            SELECT
+               `c1`
+              ,`c2`
+              ,`shared_cards`
+            FROM agg_boundary_1
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+              ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+              ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              ,_left._gsql2rsql_card1_id AS _gsql2rsql_card1_id
+              ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+              ,_left._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+              ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+                ,_left._gsql2rsql_card1_id AS _gsql2rsql_card1_id
+                ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+                ,_right._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+              FROM (
+                SELECT
+                   _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                  ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                  ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                  ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                  ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+                  ,_right._gsql2rsql_card1_id AS _gsql2rsql_card1_id
+                FROM (
+                  SELECT
+                     _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                    ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                    ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                    ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                    ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+                  FROM (
+                    SELECT
+                       id AS _gsql2rsql_c1_id
+                      ,name AS _gsql2rsql_c1_name
+                      ,status AS _gsql2rsql_c1_status
+                    FROM
+                      catalog.fraud.Customer
+                  ) AS _left
+                  INNER JOIN (
+                    SELECT
+                       customer_id AS _gsql2rsql__anon1_customer_id
+                      ,card_id AS _gsql2rsql__anon1_card_id
+                    FROM
+                      catalog.fraud.CustomerCard
+                  ) AS _right ON
+                    _left._gsql2rsql_c1_id = _right._gsql2rsql__anon1_customer_id
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     id AS _gsql2rsql_card1_id
+                  FROM
+                    catalog.fraud.Card
+                ) AS _right ON
+                  _right._gsql2rsql_card1_id = _left._gsql2rsql__anon1_card_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   card_id AS _gsql2rsql__anon2_card_id
+                  ,merchant_id AS _gsql2rsql__anon2_merchant_id
+                FROM
+                  catalog.fraud.CardMerchant
+              ) AS _right ON
+                _left._gsql2rsql_card1_id = _right._gsql2rsql__anon2_card_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_m_id
+              FROM
+                catalog.fraud.Merchant
+            ) AS _right ON
+              _right._gsql2rsql_m_id = _left._gsql2rsql__anon2_merchant_id
+          ) AS _right ON
+            _left.`c1` = _right._gsql2rsql_c1_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             _left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+            ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+            ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_left._gsql2rsql_card2_id AS _gsql2rsql_card2_id
+            ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+            ,_left._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+            ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+              ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+              ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              ,_left._gsql2rsql_card2_id AS _gsql2rsql_card2_id
+              ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+              ,_right._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+                ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+                ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+                ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+                ,_right._gsql2rsql_card2_id AS _gsql2rsql_card2_id
+              FROM (
+                SELECT
+                   _left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+                  ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+                  ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+                  ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                  ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+                FROM (
+                  SELECT
+                     id AS _gsql2rsql_c2_id
+                    ,name AS _gsql2rsql_c2_name
+                    ,status AS _gsql2rsql_c2_status
+                  FROM
+                    catalog.fraud.Customer
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     customer_id AS _gsql2rsql__anon1_customer_id
+                    ,card_id AS _gsql2rsql__anon1_card_id
+                  FROM
+                    catalog.fraud.CustomerCard
+                ) AS _right ON
+                  _left._gsql2rsql_c2_id = _right._gsql2rsql__anon1_customer_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   id AS _gsql2rsql_card2_id
+                FROM
+                  catalog.fraud.Card
+              ) AS _right ON
+                _right._gsql2rsql_card2_id = _left._gsql2rsql__anon1_card_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 card_id AS _gsql2rsql__anon2_card_id
+                ,merchant_id AS _gsql2rsql__anon2_merchant_id
+              FROM
+                catalog.fraud.CardMerchant
+            ) AS _right ON
+              _left._gsql2rsql_card2_id = _right._gsql2rsql__anon2_card_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_m_id
+            FROM
+              catalog.fraud.Merchant
+          ) AS _right ON
+            _right._gsql2rsql_m_id = _left._gsql2rsql__anon2_merchant_id
+        ) AS _right ON
+          _left._gsql2rsql_m_id = _right._gsql2rsql_m_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_c1_id, _gsql2rsql_c2_id, shared_cards, _gsql2rsql_c1_name, _gsql2rsql_c1_status, _gsql2rsql_c2_name, _gsql2rsql_c2_status
+      HAVING (similarity_score) > (0.3)
+    ) AS _proj
+    ORDER BY similarity_score DESC
+    LIMIT 50
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c1:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_CARD]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: card:Card
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:HAS_CARD]<-
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: c2:Customer
+    *
+    OpId=12 Op=DataSourceOperator; InOpIds=; OutOpIds=17;
+      DataSourceOperator(id=12)
+        DataSource: c1:Customer
+    *
+    OpId=13 Op=DataSourceOperator; InOpIds=; OutOpIds=17;
+      DataSourceOperator(id=13)
+        DataSource: [_anon1:HAS_CARD]->
+    *
+    OpId=14 Op=DataSourceOperator; InOpIds=; OutOpIds=18;
+      DataSourceOperator(id=14)
+        DataSource: card1:Card
+    *
+    OpId=15 Op=DataSourceOperator; InOpIds=; OutOpIds=19;
+      DataSourceOperator(id=15)
+        DataSource: [_anon2:USED_AT]->
+    *
+    OpId=16 Op=DataSourceOperator; InOpIds=; OutOpIds=20;
+      DataSourceOperator(id=16)
+        DataSource: m:Merchant
+    *
+    OpId=22 Op=DataSourceOperator; InOpIds=; OutOpIds=27;
+      DataSourceOperator(id=22)
+        DataSource: c2:Customer
+    *
+    OpId=23 Op=DataSourceOperator; InOpIds=; OutOpIds=27;
+      DataSourceOperator(id=23)
+        DataSource: [_anon1:HAS_CARD]->
+    *
+    OpId=24 Op=DataSourceOperator; InOpIds=; OutOpIds=28;
+      DataSourceOperator(id=24)
+        DataSource: card2:Card
+    *
+    OpId=25 Op=DataSourceOperator; InOpIds=; OutOpIds=29;
+      DataSourceOperator(id=25)
+        DataSource: [_anon2:USED_AT]->
+    *
+    OpId=26 Op=DataSourceOperator; InOpIds=; OutOpIds=30;
+      DataSourceOperator(id=26)
+        DataSource: m:Merchant
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c1 RelOrNode=_anon1 Type=SOURCE
+    *
+    OpId=17 Op=JoinOperator; InOpIds=12,13; OutOpIds=18;
+      JoinOperator(id=17)
+        JoinType: INNER
+        Joins: JoinPair: Node=c1 RelOrNode=_anon1 Type=SOURCE
+    *
+    OpId=27 Op=JoinOperator; InOpIds=22,23; OutOpIds=28;
+      JoinOperator(id=27)
+        JoinType: INNER
+        Joins: JoinPair: Node=c2 RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon1 Type=SINK
+    *
+    OpId=18 Op=JoinOperator; InOpIds=17,14; OutOpIds=19;
+      JoinOperator(id=18)
+        JoinType: INNER
+        Joins: JoinPair: Node=card1 RelOrNode=_anon1 Type=SINK
+    *
+    OpId=28 Op=JoinOperator; InOpIds=27,24; OutOpIds=29;
+      JoinOperator(id=28)
+        JoinType: INNER
+        Joins: JoinPair: Node=card2 RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon2 Type=SINK
+    *
+    OpId=19 Op=JoinOperator; InOpIds=18,15; OutOpIds=20;
+      JoinOperator(id=19)
+        JoinType: INNER
+        Joins: JoinPair: Node=card1 RelOrNode=_anon2 Type=SOURCE
+    *
+    OpId=29 Op=JoinOperator; InOpIds=28,25; OutOpIds=30;
+      JoinOperator(id=29)
+        JoinType: INNER
+        Joins: JoinPair: Node=card2 RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=10;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=c2 RelOrNode=_anon2 Type=SOURCE
+    *
+    OpId=20 Op=JoinOperator; InOpIds=19,16; OutOpIds=21;
+      JoinOperator(id=20)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon2 Type=SINK
+    *
+    OpId=30 Op=JoinOperator; InOpIds=29,26; OutOpIds=31;
+      JoinOperator(id=30)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=10 Op=SelectionOperator; InOpIds=9; OutOpIds=11;
+      SelectionOperator(id=10)
+        Filter: (c1.id LT c2.id)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=11 Op=AggregationBoundaryOperator; InOpIds=10; OutOpIds=21;
+      AggregationBoundaryOperator(id=11)
+        GroupBy: [c1, c2]
+        Aggregates: [shared_cards]
+        Having: (shared_cards GT 0)
+    *
+    ----------------------------------------------------------------------
+    Level 7:
+    ----------------------------------------------------------------------
+    OpId=21 Op=JoinOperator; InOpIds=11,20; OutOpIds=31;
+      JoinOperator(id=21)
+        JoinType: INNER
+        Joins: JoinPair: Node=c1 RelOrNode=agg_boundary_1 Type=NODE_ID
+    *
+    ----------------------------------------------------------------------
+    Level 8:
+    ----------------------------------------------------------------------
+    OpId=31 Op=JoinOperator; InOpIds=21,30; OutOpIds=32;
+      JoinOperator(id=31)
+        JoinType: INNER
+        Joins: JoinPair: Node=c2 RelOrNode=agg_boundary_1 Type=NODE_ID, JoinPair: Node=m RelOrNode=m Type=NODE_ID
+    *
+    ----------------------------------------------------------------------
+    Level 9:
+    ----------------------------------------------------------------------
+    OpId=32 Op=ProjectionOperator; InOpIds=31; OutOpIds=33;
+      ProjectionOperator(id=32)
+        Projections: c1=c1, c2=c2, shared_cards=shared_cards, shared_merchants=COUNT(DISTINCT m), similarity_score=((shared_cards MULTIPLY 1.0) DIVIDE (shared_cards PLUS shared_merchants))
+        Having: (similarity_score GT 0.3)
+    *
+    ----------------------------------------------------------------------
+    Level 10:
+    ----------------------------------------------------------------------
+    OpId=33 Op=ProjectionOperator; InOpIds=32; OutOpIds=;
+      ProjectionOperator(id=33)
+        Projections: id=c1.id, id=c2.id, shared_cards=shared_cards, shared_merchants=shared_merchants, similarity_score=similarity_score
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 9. Find velocity abuse patterns with high-frequency transactions
+
+**Application**: Fraud: Velocity abuse
+
+??? note "Notes"
+
+    Detects accounts with abnormally high transaction frequency.
+    May indicate automated fraud, account compromise, or velocity attacks.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('PT1H')
+    WITH a, COUNT(t) AS tx_per_hour, SUM(t.amount) AS total_amount
+    WHERE tx_per_hour > 20
+    RETURN a.id, a.holder_name, tx_per_hour, total_amount
+    ORDER BY tx_per_hour DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_a_holder_name AS holder_name
+      ,tx_per_hour AS tx_per_hour
+      ,total_amount AS total_amount
+    FROM (
+      SELECT 
+         _gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,COUNT(_gsql2rsql_t_id) AS tx_per_hour
+        ,SUM(_gsql2rsql_t_amount) AS total_amount
+        ,_gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,_gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+        ,_gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+        ,_gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+        ,_gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+        ,_gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+        ,_gsql2rsql_a_status AS _gsql2rsql_a_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+          ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+          ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+          ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+          ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+          ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+          ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+            ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+            ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+            ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+            ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+            ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+            ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+            ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_a_id
+              ,holder_name AS _gsql2rsql_a_holder_name
+              ,risk_score AS _gsql2rsql_a_risk_score
+              ,status AS _gsql2rsql_a_status
+              ,default_date AS _gsql2rsql_a_default_date
+              ,home_country AS _gsql2rsql_a_home_country
+              ,kyc_status AS _gsql2rsql_a_kyc_status
+              ,days_since_creation AS _gsql2rsql_a_days_since_creation
+            FROM
+              catalog.fraud.Account
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon1_account_id
+              ,transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM
+              catalog.fraud.AccountTx
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.fraud.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 1 HOUR))
+      GROUP BY _gsql2rsql_a_id, _gsql2rsql_a_days_since_creation, _gsql2rsql_a_default_date, _gsql2rsql_a_holder_name, _gsql2rsql_a_home_country, _gsql2rsql_a_kyc_status, _gsql2rsql_a_risk_score, _gsql2rsql_a_status
+      HAVING (tx_per_hour) > (20)
+    ) AS _proj
+    ORDER BY tx_per_hour DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: a=a, tx_per_hour=COUNT(t), total_amount=SUM(t.amount)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('PT1H')))
+        Having: (tx_per_hour GT 20)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=a.id, holder_name=a.holder_name, tx_per_hour=tx_per_hour, total_amount=total_amount
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 10. Identify return fraud patterns with high return rates
+
+**Application**: Fraud: Return fraud
+
+??? note "Notes"
+
+    Finds customers with suspiciously high return rates.
+    May indicate wardrobing, receipt fraud, or return fraud schemes.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:MADE_PURCHASE]->(p:Purchase)-[:RETURNED]->(r:Return)
+    WITH c, COUNT(p) AS total_purchases, COUNT(r) AS total_returns
+    WHERE total_purchases > 10
+    WITH c, total_purchases, total_returns,
+         (total_returns * 1.0 / total_purchases) AS return_rate
+    WHERE return_rate > 0.5
+    RETURN c.id, c.name, total_purchases, total_returns, return_rate
+    ORDER BY return_rate DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,total_purchases AS total_purchases
+      ,total_returns AS total_returns
+      ,return_rate AS return_rate
+    FROM (
+      SELECT *
+      FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,total_purchases AS total_purchases
+        ,total_returns AS total_returns
+        ,((total_returns) * (1.0)) / (total_purchases) AS return_rate
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT 
+           _gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,COUNT(_gsql2rsql_p_id) AS total_purchases
+          ,COUNT(_gsql2rsql_r_id) AS total_returns
+          ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_purchase_id AS _gsql2rsql__anon1_purchase_id
+            ,_left._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_left._gsql2rsql__anon2_purchase_id AS _gsql2rsql__anon2_purchase_id
+            ,_left._gsql2rsql__anon2_return_id AS _gsql2rsql__anon2_return_id
+            ,_right._gsql2rsql_r_id AS _gsql2rsql_r_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_purchase_id AS _gsql2rsql__anon1_purchase_id
+              ,_left._gsql2rsql_p_id AS _gsql2rsql_p_id
+              ,_right._gsql2rsql__anon2_purchase_id AS _gsql2rsql__anon2_purchase_id
+              ,_right._gsql2rsql__anon2_return_id AS _gsql2rsql__anon2_return_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_left._gsql2rsql__anon1_purchase_id AS _gsql2rsql__anon1_purchase_id
+                ,_right._gsql2rsql_p_id AS _gsql2rsql_p_id
+              FROM (
+                SELECT
+                   _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                  ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                  ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                  ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                  ,_right._gsql2rsql__anon1_purchase_id AS _gsql2rsql__anon1_purchase_id
+                FROM (
+                  SELECT
+                     id AS _gsql2rsql_c_id
+                    ,name AS _gsql2rsql_c_name
+                    ,status AS _gsql2rsql_c_status
+                  FROM
+                    catalog.fraud.Customer
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     customer_id AS _gsql2rsql__anon1_customer_id
+                    ,purchase_id AS _gsql2rsql__anon1_purchase_id
+                  FROM
+                    catalog.fraud.CustomerPurchase
+                ) AS _right ON
+                  _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   id AS _gsql2rsql_p_id
+                FROM
+                  catalog.fraud.Purchase
+              ) AS _right ON
+                _right._gsql2rsql_p_id = _left._gsql2rsql__anon1_purchase_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 purchase_id AS _gsql2rsql__anon2_purchase_id
+                ,return_id AS _gsql2rsql__anon2_return_id
+              FROM
+                catalog.fraud.PurchaseReturn
+            ) AS _right ON
+              _left._gsql2rsql_p_id = _right._gsql2rsql__anon2_purchase_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_r_id
+            FROM
+              catalog.fraud.Return
+          ) AS _right ON
+            _right._gsql2rsql_r_id = _left._gsql2rsql__anon2_return_id
+        ) AS _proj
+        GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+        HAVING (total_purchases) > (10)
+      ) AS _proj
+      ) AS _filter
+      WHERE (return_rate) > (0.5)
+    ) AS _proj
+    ORDER BY return_rate DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:MADE_PURCHASE]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: p:Purchase
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:RETURNED]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: r:Return
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=10;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=r RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=10 Op=ProjectionOperator; InOpIds=9; OutOpIds=11;
+      ProjectionOperator(id=10)
+        Projections: c=c, total_purchases=COUNT(p), total_returns=COUNT(r)
+        Having: (total_purchases GT 10)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=10; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, total_purchases=total_purchases, total_returns=total_returns, return_rate=((total_returns MULTIPLY 1.0) DIVIDE total_purchases)
+        Having: (return_rate GT 0.5)
+    *
+    ----------------------------------------------------------------------
+    Level 7:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, name=c.name, total_purchases=total_purchases, total_returns=total_returns, return_rate=return_rate
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 11. Detect bust-out fraud with sudden spending spikes before default
+
+**Application**: Fraud: Bust-out fraud
+
+??? note "Notes"
+
+    Identifies accounts with sudden spending increases before defaulting.
+    Classic bust-out fraud pattern where fraudsters max out credit before disappearing.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)
+    WHERE a.status = 'defaulted' AND t.timestamp > a.default_date - DURATION('P30D')
+    WITH a,
+         SUM(CASE WHEN t.timestamp > a.default_date - DURATION('P7D') THEN t.amount ELSE 0 END) AS last_week,
+         SUM(CASE WHEN t.timestamp <= a.default_date - DURATION('P7D') THEN t.amount ELSE 0 END) AS prior_weeks
+    WHERE prior_weeks > 0 AND (last_week / prior_weeks) > 5.0
+    RETURN a.id, last_week, prior_weeks, (last_week / prior_weeks) AS spike_ratio
+    ORDER BY spike_ratio DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,last_week AS last_week
+      ,prior_weeks AS prior_weeks
+      ,(last_week) / (prior_weeks) AS spike_ratio
+    FROM (
+      SELECT 
+         _gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,SUM(CASE WHEN (_gsql2rsql_t_timestamp) > ((_gsql2rsql_a_default_date) - (INTERVAL 7 DAY)) THEN _gsql2rsql_t_amount ELSE 0 END) AS last_week
+        ,SUM(CASE WHEN (_gsql2rsql_t_timestamp) <= ((_gsql2rsql_a_default_date) - (INTERVAL 7 DAY)) THEN _gsql2rsql_t_amount ELSE 0 END) AS prior_weeks
+        ,_gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,_gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+        ,_gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+        ,_gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+        ,_gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+        ,_gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+        ,_gsql2rsql_a_status AS _gsql2rsql_a_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+          ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+          ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+          ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+          ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+          ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+          ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+            ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+            ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+            ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+            ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+            ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+            ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+            ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_a_id
+              ,holder_name AS _gsql2rsql_a_holder_name
+              ,risk_score AS _gsql2rsql_a_risk_score
+              ,status AS _gsql2rsql_a_status
+              ,default_date AS _gsql2rsql_a_default_date
+              ,home_country AS _gsql2rsql_a_home_country
+              ,kyc_status AS _gsql2rsql_a_kyc_status
+              ,days_since_creation AS _gsql2rsql_a_days_since_creation
+            FROM
+              catalog.fraud.Account
+            WHERE ((status) = ('defaulted'))
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon1_account_id
+              ,transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM
+              catalog.fraud.AccountTx
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.fraud.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((_gsql2rsql_a_default_date) - (INTERVAL 30 DAY))
+      GROUP BY _gsql2rsql_a_id, _gsql2rsql_a_days_since_creation, _gsql2rsql_a_default_date, _gsql2rsql_a_holder_name, _gsql2rsql_a_home_country, _gsql2rsql_a_kyc_status, _gsql2rsql_a_risk_score, _gsql2rsql_a_status
+      HAVING ((prior_weeks) > (0)) AND (((last_week) / (prior_weeks)) > (5.0))
+    ) AS _proj
+    ORDER BY spike_ratio DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+        Filter: (a.status EQ 'defaulted')
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: a=a, last_week=SUM(CASE WHEN (t.timestamp GT (a.default_date MINUS DURATION('P7D'))) THEN t.amount ELSE 0 END), prior_weeks=SUM(CASE WHEN (t.timestamp LEQ (a.default_date MINUS DURATION('P7D'))) THEN t.amount ELSE 0 END)
+        Filter: (t.timestamp GT (a.default_date MINUS DURATION('P30D')))
+        Having: ((prior_weeks GT 0) AND ((last_week DIVIDE prior_weeks) GT 5.0))
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=a.id, last_week=last_week, prior_weeks=prior_weeks, spike_ratio=(last_week DIVIDE prior_weeks)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 12. Find circular payment patterns indicating money laundering
+
+**Application**: Fraud: Circular payment detection
+
+??? note "Notes"
+
+    Detects circular money flows where funds return to origin account.
+    Strong indicator of structuring or layering in money laundering.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (a:Account)-[:TRANSFER*4..8]->(a)
+    WHERE ALL(rel IN relationships(path) WHERE rel.amount > 500)
+      AND LENGTH(path) >= 4
+    WITH path, REDUCE(total = 0, rel IN relationships(path) | total + rel.amount) AS cycle_amount
+    RETURN [node IN nodes(path) | node.id] AS cycle_accounts,
+           LENGTH(path) AS cycle_length,
+           cycle_amount
+    ORDER BY cycle_amount DESC
+    LIMIT 10
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.source_account_id AS start_node,
+          e.target_account_id AS end_node,
+          1 AS depth,
+          ARRAY(e.source_account_id, e.target_account_id) AS path,
+          ARRAY(NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          ARRAY(e.source_account_id) AS visited
+        FROM catalog.fraud.Transfer e
+        WHERE (e.amount) > (500)
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.target_account_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.target_account_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.source_account_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.fraud.Transfer e
+          ON p.end_node = e.source_account_id
+        WHERE p.depth < 8
+          AND NOT ARRAY_CONTAINS(p.visited, e.target_account_id)
+          AND (e.amount) > (500)
+      )
+    SELECT 
+       _gsql2rsql_path_id AS cycle_accounts
+      ,(SIZE(_gsql2rsql_path_id) - 1) AS cycle_length
+      ,cycle_amount AS cycle_amount
+    FROM (
+      SELECT 
+         _gsql2rsql_path_id AS _gsql2rsql_path_id
+        ,AGGREGATE(_gsql2rsql_path_edges, CAST(0 AS DOUBLE), (total, rel) -> (total) + (rel.amount)) AS cycle_amount
+      FROM (
+        SELECT
+           sink.id AS _gsql2rsql_a_id
+          ,sink.holder_name AS _gsql2rsql_a_holder_name
+          ,sink.risk_score AS _gsql2rsql_a_risk_score
+          ,sink.status AS _gsql2rsql_a_status
+          ,sink.default_date AS _gsql2rsql_a_default_date
+          ,sink.home_country AS _gsql2rsql_a_home_country
+          ,sink.kyc_status AS _gsql2rsql_a_kyc_status
+          ,sink.days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,p.start_node
+          ,p.end_node
+          ,p.depth
+          ,p.path AS _gsql2rsql_path_id
+          ,p.path_edges AS _gsql2rsql_path_edges
+        FROM paths_1 p
+        JOIN catalog.fraud.Account sink
+          ON sink.id = p.end_node
+        JOIN catalog.fraud.Account source
+          ON source.id = p.start_node
+        WHERE p.depth >= 4 AND p.depth <= 8 AND p.start_node = p.end_node
+      ) AS _proj
+      WHERE ((SIZE(_gsql2rsql_path_id) - 1)) >= (4)
+    ) AS _proj
+    ORDER BY cycle_amount DESC
+    LIMIT 10
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(TRANSFER*4..8, path=path, circular=True)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=6;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=4; OutOpIds=7;
+      ProjectionOperator(id=6)
+        Projections: path=path, cycle_amount=REDUCE(total = 0, rel IN RELATIONSHIPS(path) | (total PLUS rel.amount))
+        Filter: (LENGTH(path) GEQ 4)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=6; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: cycle_accounts=[node IN NODES(path) | node.id], cycle_length=LENGTH(path), cycle_amount=cycle_amount
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 13. Identify anomalous cross-border transaction patterns
+
+**Application**: Fraud: Cross-border anomaly
+
+??? note "Notes"
+
+    Finds accounts with high-value cross-border transaction activity.
+    May indicate trade-based money laundering or sanctions evasion.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)-[:TO_COUNTRY]->(c:Country)
+    WHERE c.code <> a.home_country AND t.amount > 10000
+    WITH a, c, COUNT(t) AS cross_border_count, SUM(t.amount) AS total_amount
+    WHERE cross_border_count > 5
+    RETURN a.id, c.name AS destination_country, cross_border_count, total_amount
+    ORDER BY total_amount DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_c_name AS destination_country
+      ,cross_border_count AS cross_border_count
+      ,total_amount AS total_amount
+    FROM (
+      SELECT 
+         _gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,_gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,COUNT(_gsql2rsql_t_id) AS cross_border_count
+        ,SUM(_gsql2rsql_t_amount) AS total_amount
+        ,_gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,_gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+        ,_gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+        ,_gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+        ,_gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+        ,_gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+        ,_gsql2rsql_a_status AS _gsql2rsql_a_status
+        ,_gsql2rsql_c_code AS _gsql2rsql_c_code
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+          ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+          ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+          ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+          ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+          ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+          ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_left._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_left._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_left._gsql2rsql__anon2_country_id AS _gsql2rsql__anon2_country_id
+          ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_right._gsql2rsql_c_code AS _gsql2rsql_c_code
+          ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+            ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+            ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+            ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+            ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+            ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+            ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+            ,_left._gsql2rsql_t_id AS _gsql2rsql_t_id
+            ,_left._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+            ,_right._gsql2rsql__anon2_country_id AS _gsql2rsql__anon2_country_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+              ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+              ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+              ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+              ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+              ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+              ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+              ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+              ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+            FROM (
+              SELECT
+                 _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+                ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+                ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+                ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+                ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+                ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+                ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+                ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_a_id
+                  ,holder_name AS _gsql2rsql_a_holder_name
+                  ,risk_score AS _gsql2rsql_a_risk_score
+                  ,status AS _gsql2rsql_a_status
+                  ,default_date AS _gsql2rsql_a_default_date
+                  ,home_country AS _gsql2rsql_a_home_country
+                  ,kyc_status AS _gsql2rsql_a_kyc_status
+                  ,days_since_creation AS _gsql2rsql_a_days_since_creation
+                FROM
+                  catalog.fraud.Account
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   account_id AS _gsql2rsql__anon1_account_id
+                  ,transaction_id AS _gsql2rsql__anon1_transaction_id
+                FROM
+                  catalog.fraud.AccountTx
+              ) AS _right ON
+                _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_t_id
+                ,amount AS _gsql2rsql_t_amount
+              FROM
+                catalog.fraud.Transaction
+              WHERE ((amount) > (10000))
+            ) AS _right ON
+              _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               transaction_id AS _gsql2rsql__anon2_transaction_id
+              ,country_id AS _gsql2rsql__anon2_country_id
+            FROM
+              catalog.fraud.TransactionCountry
+          ) AS _right ON
+            _left._gsql2rsql_t_id = _right._gsql2rsql__anon2_transaction_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_c_id
+            ,code AS _gsql2rsql_c_code
+            ,name AS _gsql2rsql_c_name
+          FROM
+            catalog.fraud.Country
+        ) AS _right ON
+          _right._gsql2rsql_c_id = _left._gsql2rsql__anon2_country_id
+      ) AS _proj
+      WHERE (_gsql2rsql_c_code) != (_gsql2rsql_a_home_country)
+      GROUP BY _gsql2rsql_a_id, _gsql2rsql_c_id, _gsql2rsql_a_days_since_creation, _gsql2rsql_a_default_date, _gsql2rsql_a_holder_name, _gsql2rsql_a_home_country, _gsql2rsql_a_kyc_status, _gsql2rsql_a_risk_score, _gsql2rsql_a_status, _gsql2rsql_c_code, _gsql2rsql_c_name
+      HAVING (cross_border_count) > (5)
+    ) AS _proj
+    ORDER BY total_amount DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+        Filter: (t.amount GT 10000)
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TO_COUNTRY]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: c:Country
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: a=a, c=c, cross_border_count=COUNT(t), total_amount=SUM(t.amount)
+        Filter: (c.code NEQ a.home_country)
+        Having: (cross_border_count GT 5)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=a.id, destination_country=c.name, cross_border_count=cross_border_count, total_amount=total_amount
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 14. Detect account takeover via sudden behavioral changes
+
+**Application**: Fraud: Account takeover
+
+??? note "Notes"
+
+    Identifies accounts with dramatic changes in transaction patterns.
+    Sudden increases may indicate account takeover by fraudsters.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)
+    WITH a,
+         AVG(CASE WHEN t.timestamp < TIMESTAMP() - DURATION('P30D') THEN t.amount END) AS avg_30d_ago,
+         AVG(CASE WHEN t.timestamp >= TIMESTAMP() - DURATION('P7D') THEN t.amount END) AS avg_recent
+    WHERE avg_30d_ago IS NOT NULL AND avg_recent > avg_30d_ago * 3
+    RETURN a.id, avg_30d_ago, avg_recent, (avg_recent / avg_30d_ago) AS behavior_change_ratio
+    ORDER BY behavior_change_ratio DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,avg_30d_ago AS avg_30d_ago
+      ,avg_recent AS avg_recent
+      ,(avg_recent) / (avg_30d_ago) AS behavior_change_ratio
+    FROM (
+      SELECT 
+         _gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,AVG(CAST(CASE WHEN (_gsql2rsql_t_timestamp) < ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY)) THEN _gsql2rsql_t_amount END AS DOUBLE)) AS avg_30d_ago
+        ,AVG(CAST(CASE WHEN (_gsql2rsql_t_timestamp) >= ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY)) THEN _gsql2rsql_t_amount END AS DOUBLE)) AS avg_recent
+        ,_gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,_gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+        ,_gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+        ,_gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+        ,_gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+        ,_gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+        ,_gsql2rsql_a_status AS _gsql2rsql_a_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+          ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+          ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+          ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+          ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+          ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+          ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+            ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+            ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+            ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+            ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+            ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+            ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+            ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_a_id
+              ,holder_name AS _gsql2rsql_a_holder_name
+              ,risk_score AS _gsql2rsql_a_risk_score
+              ,status AS _gsql2rsql_a_status
+              ,default_date AS _gsql2rsql_a_default_date
+              ,home_country AS _gsql2rsql_a_home_country
+              ,kyc_status AS _gsql2rsql_a_kyc_status
+              ,days_since_creation AS _gsql2rsql_a_days_since_creation
+            FROM
+              catalog.fraud.Account
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon1_account_id
+              ,transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM
+              catalog.fraud.AccountTx
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.fraud.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_a_id, _gsql2rsql_a_days_since_creation, _gsql2rsql_a_default_date, _gsql2rsql_a_holder_name, _gsql2rsql_a_home_country, _gsql2rsql_a_kyc_status, _gsql2rsql_a_risk_score, _gsql2rsql_a_status
+      HAVING ((avg_30d_ago) IS NOT NULL) AND ((avg_recent) > ((avg_30d_ago) * (3)))
+    ) AS _proj
+    ORDER BY behavior_change_ratio DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=6;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=5; OutOpIds=7;
+      ProjectionOperator(id=6)
+        Projections: a=a, avg_30d_ago=AVG(CASE WHEN (t.timestamp LT (DATETIME() MINUS DURATION('P30D'))) THEN t.amount END), avg_recent=AVG(CASE WHEN (t.timestamp GEQ (DATETIME() MINUS DURATION('P7D'))) THEN t.amount END)
+        Having: (IS_NOT_NULL(avg_30d_ago) AND (avg_recent GT (avg_30d_ago MULTIPLY 3)))
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=6; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: id=a.id, avg_30d_ago=avg_30d_ago, avg_recent=avg_recent, behavior_change_ratio=(avg_recent DIVIDE avg_30d_ago)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 15. Find smurfing patterns with structured deposits below reporting thresholds
+
+**Application**: Fraud: Structuring/Smurfing
+
+??? note "Notes"
+
+    Detects multiple deposits just under regulatory reporting thresholds.
+    Classic smurfing/structuring pattern to avoid currency transaction reports.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:DEPOSIT]->(d:Transaction)
+    WHERE d.amount > 9000 AND d.amount < 10000
+      AND d.timestamp > TIMESTAMP() - DURATION('P30D')
+    WITH a, COUNT(d) AS deposit_count, SUM(d.amount) AS total_deposits
+    WHERE deposit_count > 5
+    RETURN a.id, deposit_count, total_deposits, (total_deposits / deposit_count) AS avg_deposit
+    ORDER BY deposit_count DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,deposit_count AS deposit_count
+      ,total_deposits AS total_deposits
+      ,(total_deposits) / (deposit_count) AS avg_deposit
+    FROM (
+      SELECT 
+         _gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,COUNT(_gsql2rsql_d_id) AS deposit_count
+        ,SUM(_gsql2rsql_d_amount) AS total_deposits
+        ,_gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,_gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+        ,_gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+        ,_gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+        ,_gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+        ,_gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+        ,_gsql2rsql_a_status AS _gsql2rsql_a_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+          ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+          ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+          ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+          ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+          ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+          ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_right._gsql2rsql_d_id AS _gsql2rsql_d_id
+          ,_right._gsql2rsql_d_amount AS _gsql2rsql_d_amount
+          ,_right._gsql2rsql_d_timestamp AS _gsql2rsql_d_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+            ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+            ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+            ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+            ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+            ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+            ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+            ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_a_id
+              ,holder_name AS _gsql2rsql_a_holder_name
+              ,risk_score AS _gsql2rsql_a_risk_score
+              ,status AS _gsql2rsql_a_status
+              ,default_date AS _gsql2rsql_a_default_date
+              ,home_country AS _gsql2rsql_a_home_country
+              ,kyc_status AS _gsql2rsql_a_kyc_status
+              ,days_since_creation AS _gsql2rsql_a_days_since_creation
+            FROM
+              catalog.fraud.Account
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon1_account_id
+              ,transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM
+              catalog.fraud.AccountDeposit
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_d_id
+            ,amount AS _gsql2rsql_d_amount
+            ,timestamp AS _gsql2rsql_d_timestamp
+          FROM
+            catalog.fraud.Transaction
+          WHERE (((amount) > (9000)) AND ((amount) < (10000)))
+        ) AS _right ON
+          _right._gsql2rsql_d_id = _left._gsql2rsql__anon1_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_d_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY))
+      GROUP BY _gsql2rsql_a_id, _gsql2rsql_a_days_since_creation, _gsql2rsql_a_default_date, _gsql2rsql_a_holder_name, _gsql2rsql_a_home_country, _gsql2rsql_a_kyc_status, _gsql2rsql_a_risk_score, _gsql2rsql_a_status
+      HAVING (deposit_count) > (5)
+    ) AS _proj
+    ORDER BY deposit_count DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:DEPOSIT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: d:Transaction
+        Filter: ((d.amount GT 9000) AND (d.amount LT 10000))
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=d RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: a=a, deposit_count=COUNT(d), total_deposits=SUM(d.amount)
+        Filter: (d.timestamp GT (DATETIME() MINUS DURATION('P30D')))
+        Having: (deposit_count GT 5)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=a.id, deposit_count=deposit_count, total_deposits=total_deposits, avg_deposit=(total_deposits DIVIDE deposit_count)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 16. Analyze transaction volumes by merchant category for suspicious accounts
+
+**Application**: Fraud: Category-based volume analysis
+
+??? note "Notes"
+
+    Filters accounts by metadata (KYC status, account age) to focus on risky profiles.
+    Aggregates transaction volumes by merchant category to identify unusual spending patterns.
+    New accounts with high volumes in specific categories (e.g., electronics, gift cards) are red flags.
+    Combines vertex filtering with edge aggregation for comprehensive risk assessment.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (a:Account)-[:HAS_TRANSACTION]->(t:Transaction)-[:AT_MERCHANT]->(m:Merchant)
+    WHERE a.kyc_status = 'incomplete' OR a.days_since_creation < 30
+    WITH a,
+         m.category AS merchant_category,
+         COUNT(t) AS transaction_count,
+         SUM(t.amount) AS total_volume,
+         AVG(t.amount) AS avg_transaction
+    WHERE transaction_count > 10
+    RETURN a.id,
+           a.kyc_status,
+           a.days_since_creation,
+           merchant_category,
+           transaction_count,
+           total_volume,
+           avg_transaction
+    ORDER BY total_volume DESC
+    LIMIT 100
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_a_id AS id
+      ,_gsql2rsql_a_kyc_status AS kyc_status
+      ,_gsql2rsql_a_days_since_creation AS days_since_creation
+      ,merchant_category AS merchant_category
+      ,transaction_count AS transaction_count
+      ,total_volume AS total_volume
+      ,avg_transaction AS avg_transaction
+    FROM (
+      SELECT 
+         _gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,_gsql2rsql_m_category AS merchant_category
+        ,COUNT(_gsql2rsql_t_id) AS transaction_count
+        ,SUM(_gsql2rsql_t_amount) AS total_volume
+        ,AVG(CAST(_gsql2rsql_t_amount AS DOUBLE)) AS avg_transaction
+        ,_gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+        ,_gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+        ,_gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+        ,_gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+        ,_gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+        ,_gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+        ,_gsql2rsql_a_status AS _gsql2rsql_a_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+          ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+          ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+          ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+          ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+          ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+          ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+          ,_left._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_left._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_left._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+          ,_right._gsql2rsql_m_id AS _gsql2rsql_m_id
+          ,_right._gsql2rsql_m_category AS _gsql2rsql_m_category
+        FROM (
+          SELECT
+             _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+            ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+            ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+            ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+            ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+            ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+            ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+            ,_left._gsql2rsql_t_id AS _gsql2rsql_t_id
+            ,_left._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+            ,_right._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+              ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+              ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+              ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+              ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+              ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+              ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+              ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+              ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+            FROM (
+              SELECT
+                 _left._gsql2rsql_a_id AS _gsql2rsql_a_id
+                ,_left._gsql2rsql_a_holder_name AS _gsql2rsql_a_holder_name
+                ,_left._gsql2rsql_a_risk_score AS _gsql2rsql_a_risk_score
+                ,_left._gsql2rsql_a_status AS _gsql2rsql_a_status
+                ,_left._gsql2rsql_a_default_date AS _gsql2rsql_a_default_date
+                ,_left._gsql2rsql_a_home_country AS _gsql2rsql_a_home_country
+                ,_left._gsql2rsql_a_kyc_status AS _gsql2rsql_a_kyc_status
+                ,_left._gsql2rsql_a_days_since_creation AS _gsql2rsql_a_days_since_creation
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_a_id
+                  ,holder_name AS _gsql2rsql_a_holder_name
+                  ,risk_score AS _gsql2rsql_a_risk_score
+                  ,status AS _gsql2rsql_a_status
+                  ,default_date AS _gsql2rsql_a_default_date
+                  ,home_country AS _gsql2rsql_a_home_country
+                  ,kyc_status AS _gsql2rsql_a_kyc_status
+                  ,days_since_creation AS _gsql2rsql_a_days_since_creation
+                FROM
+                  catalog.fraud.Account
+                WHERE (((kyc_status) = ('incomplete')) OR ((days_since_creation) < (30)))
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   account_id AS _gsql2rsql__anon1_account_id
+                  ,transaction_id AS _gsql2rsql__anon1_transaction_id
+                FROM
+                  catalog.fraud.AccountTx
+              ) AS _right ON
+                _left._gsql2rsql_a_id = _right._gsql2rsql__anon1_account_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_t_id
+                ,amount AS _gsql2rsql_t_amount
+              FROM
+                catalog.fraud.Transaction
+            ) AS _right ON
+              _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               transaction_id AS _gsql2rsql__anon2_transaction_id
+              ,merchant_id AS _gsql2rsql__anon2_merchant_id
+            FROM
+              catalog.fraud.TransactionMerchant
+          ) AS _right ON
+            _left._gsql2rsql_t_id = _right._gsql2rsql__anon2_transaction_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_m_id
+            ,category AS _gsql2rsql_m_category
+          FROM
+            catalog.fraud.Merchant
+        ) AS _right ON
+          _right._gsql2rsql_m_id = _left._gsql2rsql__anon2_merchant_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_a_id, _gsql2rsql_m_category, _gsql2rsql_a_days_since_creation, _gsql2rsql_a_default_date, _gsql2rsql_a_holder_name, _gsql2rsql_a_home_country, _gsql2rsql_a_kyc_status, _gsql2rsql_a_risk_score, _gsql2rsql_a_status
+      HAVING (transaction_count) > (10)
+    ) AS _proj
+    ORDER BY total_volume DESC
+    LIMIT 100
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: a:Account
+        Filter: ((a.kyc_status EQ 'incomplete') OR (a.days_since_creation LT 30))
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_TRANSACTION]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: t:Transaction
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:AT_MERCHANT]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: m:Merchant
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=m RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: a=a, merchant_category=m.category, transaction_count=COUNT(t), total_volume=SUM(t.amount), avg_transaction=AVG(t.amount)
+        Having: (transaction_count GT 10)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=a.id, kyc_status=a.kyc_status, days_since_creation=a.days_since_creation, merchant_category=merchant_category, transaction_count=transaction_count, total_volume=total_volume, avg_transaction=avg_transaction
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 17. Detect shared card usage across blacklisted and verified customers
+
+**Application**: Fraud: Card contamination tracking
+
+??? note "Notes"
+
+    Identifies cards shared between blacklisted and verified customers (contamination).
+    Uses customer status metadata to filter and categorize relationships.
+    Calculates total transaction metrics to assess card usage impact.
+    Critical for identifying compromised cards or insider fraud networks.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (blacklisted:Customer)-[:HAS_CARD]->(card:Card)<-[:HAS_CARD]-(verified:Customer)
+    WHERE blacklisted.status = 'blacklisted' AND verified.status = 'verified'
+    WITH card,
+         COLLECT(DISTINCT blacklisted.id) AS blacklisted_customers,
+         COLLECT(DISTINCT verified.id) AS verified_customers
+    MATCH (card)-[:USED_IN]->(t:Transaction)
+    WITH card,
+         blacklisted_customers,
+         verified_customers,
+         COUNT(t) AS total_transactions,
+         SUM(t.amount) AS total_amount
+    RETURN card.number,
+           SIZE(blacklisted_customers) AS blacklisted_count,
+           SIZE(verified_customers) AS verified_count,
+           total_transactions,
+           total_amount,
+           blacklisted_customers,
+           verified_customers
+    ORDER BY total_amount DESC
+    LIMIT 25
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH
+    agg_boundary_1 AS (
+      SELECT
+        _gsql2rsql_card_id AS `card`,
+        COLLECT_LIST(DISTINCT _gsql2rsql_blacklisted_id) AS `blacklisted_customers`,
+        COLLECT_LIST(DISTINCT _gsql2rsql_verified_id) AS `verified_customers`
+      FROM (
+      SELECT
+         _left._gsql2rsql_blacklisted_id AS _gsql2rsql_blacklisted_id
+        ,_left._gsql2rsql_blacklisted_status AS _gsql2rsql_blacklisted_status
+        ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+        ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+        ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+        ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+        ,_left._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+        ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+        ,_right._gsql2rsql_verified_id AS _gsql2rsql_verified_id
+        ,_right._gsql2rsql_verified_status AS _gsql2rsql_verified_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_blacklisted_id AS _gsql2rsql_blacklisted_id
+          ,_left._gsql2rsql_blacklisted_status AS _gsql2rsql_blacklisted_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+          ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+          ,_right._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+          ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+        FROM (
+          SELECT
+             _left._gsql2rsql_blacklisted_id AS _gsql2rsql_blacklisted_id
+            ,_left._gsql2rsql_blacklisted_status AS _gsql2rsql_blacklisted_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_right._gsql2rsql_card_id AS _gsql2rsql_card_id
+            ,_right._gsql2rsql_card_number AS _gsql2rsql_card_number
+          FROM (
+            SELECT
+               _left._gsql2rsql_blacklisted_id AS _gsql2rsql_blacklisted_id
+              ,_left._gsql2rsql_blacklisted_status AS _gsql2rsql_blacklisted_status
+              ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_blacklisted_id
+                ,status AS _gsql2rsql_blacklisted_status
+              FROM
+                catalog.fraud.Customer
+              WHERE ((status) = ('blacklisted'))
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 customer_id AS _gsql2rsql__anon1_customer_id
+                ,card_id AS _gsql2rsql__anon1_card_id
+              FROM
+                catalog.fraud.CustomerCard
+            ) AS _right ON
+              _left._gsql2rsql_blacklisted_id = _right._gsql2rsql__anon1_customer_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_card_id
+              ,number AS _gsql2rsql_card_number
+            FROM
+              catalog.fraud.Card
+          ) AS _right ON
+            _right._gsql2rsql_card_id = _left._gsql2rsql__anon1_card_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             customer_id AS _gsql2rsql__anon2_customer_id
+            ,card_id AS _gsql2rsql__anon2_card_id
+          FROM
+            catalog.fraud.CustomerCard
+        ) AS _right ON
+          _left._gsql2rsql_card_id = _right._gsql2rsql__anon2_card_id
+      ) AS _left
+      INNER JOIN (
+        SELECT
+           id AS _gsql2rsql_verified_id
+          ,status AS _gsql2rsql_verified_status
+        FROM
+          catalog.fraud.Customer
+        WHERE ((status) = ('verified'))
+      ) AS _right ON
+        _right._gsql2rsql_verified_id = _left._gsql2rsql__anon2_customer_id
+      ) AS _agg_input
+      GROUP BY _gsql2rsql_card_id
+    )
+    SELECT 
+       _gsql2rsql_card_number AS number
+      ,SIZE(blacklisted_customers) AS blacklisted_count
+      ,SIZE(verified_customers) AS verified_count
+      ,total_transactions AS total_transactions
+      ,total_amount AS total_amount
+      ,blacklisted_customers AS blacklisted_customers
+      ,verified_customers AS verified_customers
+    FROM (
+      SELECT 
+         _gsql2rsql_card_id AS _gsql2rsql_card_id
+        ,blacklisted_customers AS blacklisted_customers
+        ,verified_customers AS verified_customers
+        ,COUNT(_gsql2rsql_t_id) AS total_transactions
+        ,SUM(_gsql2rsql_t_amount) AS total_amount
+        ,_gsql2rsql_card_number AS _gsql2rsql_card_number
+      FROM (
+        SELECT
+           _left.`card` AS `card`
+          ,_left.`blacklisted_customers` AS `blacklisted_customers`
+          ,_left.`verified_customers` AS `verified_customers`
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_card_id AS _gsql2rsql_card_id
+          ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_right._gsql2rsql_card_number AS _gsql2rsql_card_number
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+        FROM (
+          SELECT
+             `card`
+            ,`blacklisted_customers`
+            ,`verified_customers`
+          FROM agg_boundary_1
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             _left._gsql2rsql_card_id AS _gsql2rsql_card_id
+            ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+            ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_left._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+            ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+            ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          FROM (
+            SELECT
+               _left._gsql2rsql_card_id AS _gsql2rsql_card_id
+              ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+              ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              ,_right._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
+            FROM (
+              SELECT
+                 id AS _gsql2rsql_card_id
+                ,number AS _gsql2rsql_card_number
+              FROM
+                catalog.fraud.Card
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 card_id AS _gsql2rsql__anon1_card_id
+                ,transaction_id AS _gsql2rsql__anon1_transaction_id
+              FROM
+                catalog.fraud.CardTransaction
+            ) AS _right ON
+              _left._gsql2rsql_card_id = _right._gsql2rsql__anon1_card_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_t_id
+              ,amount AS _gsql2rsql_t_amount
+            FROM
+              catalog.fraud.Transaction
+          ) AS _right ON
+            _right._gsql2rsql_t_id = _left._gsql2rsql__anon1_transaction_id
+        ) AS _right ON
+          _left.`card` = _right._gsql2rsql_card_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_card_id, blacklisted_customers, verified_customers, _gsql2rsql_card_number
+    ) AS _proj
+    ORDER BY total_amount DESC
+    LIMIT 25
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: blacklisted:Customer
+        Filter: (blacklisted.status EQ 'blacklisted')
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_CARD]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: card:Card
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:HAS_CARD]<-
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: verified:Customer
+        Filter: (verified.status EQ 'verified')
+    *
+    OpId=12 Op=DataSourceOperator; InOpIds=; OutOpIds=15;
+      DataSourceOperator(id=12)
+        DataSource: card:Card
+    *
+    OpId=13 Op=DataSourceOperator; InOpIds=; OutOpIds=15;
+      DataSourceOperator(id=13)
+        DataSource: [_anon1:USED_IN]->
+    *
+    OpId=14 Op=DataSourceOperator; InOpIds=; OutOpIds=16;
+      DataSourceOperator(id=14)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=blacklisted RelOrNode=_anon1 Type=SOURCE
+    *
+    OpId=15 Op=JoinOperator; InOpIds=12,13; OutOpIds=16;
+      JoinOperator(id=15)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon1 Type=SINK
+    *
+    OpId=16 Op=JoinOperator; InOpIds=15,14; OutOpIds=17;
+      JoinOperator(id=16)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=verified RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=AggregationBoundaryOperator; InOpIds=9; OutOpIds=17;
+      AggregationBoundaryOperator(id=11)
+        GroupBy: [card]
+        Aggregates: [blacklisted_customers, verified_customers]
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=17 Op=JoinOperator; InOpIds=11,16; OutOpIds=18;
+      JoinOperator(id=17)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=agg_boundary_1 Type=NODE_ID
+    *
+    ----------------------------------------------------------------------
+    Level 7:
+    ----------------------------------------------------------------------
+    OpId=18 Op=ProjectionOperator; InOpIds=17; OutOpIds=19;
+      ProjectionOperator(id=18)
+        Projections: card=card, blacklisted_customers=blacklisted_customers, verified_customers=verified_customers, total_transactions=COUNT(t), total_amount=SUM(t.amount)
+    *
+    ----------------------------------------------------------------------
+    Level 8:
+    ----------------------------------------------------------------------
+    OpId=19 Op=ProjectionOperator; InOpIds=18; OutOpIds=;
+      ProjectionOperator(id=19)
+        Projections: number=card.number, blacklisted_count=SIZE(blacklisted_customers), verified_count=SIZE(verified_customers), total_transactions=total_transactions, total_amount=total_amount, blacklisted_customers=blacklisted_customers, verified_customers=verified_customers
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---

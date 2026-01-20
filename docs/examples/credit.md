@@ -1,0 +1,3187 @@
+# Credit Queries
+
+This page contains transpiled examples for **credit queries** queries.
+
+Each example shows the original OpenCypher query and its corresponding Databricks SQL translation.
+
+---
+
+## 1. Calculate credit risk scores based on transaction history
+
+**Application**: Credit: Risk scoring
+
+??? note "Notes"
+
+    Analyzes recent transaction patterns to assess credit risk.
+    High overdraft rates indicate elevated default risk.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('P90D')
+    WITH c, a,
+         COUNT(t) AS tx_count,
+         AVG(t.amount) AS avg_transaction,
+         SUM(CASE WHEN t.type = 'overdraft' THEN 1 ELSE 0 END) AS overdraft_count
+    RETURN c.id, c.name,
+           tx_count,
+           avg_transaction,
+           overdraft_count,
+           (overdraft_count * 1.0 / tx_count) AS overdraft_rate
+    ORDER BY overdraft_rate DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,tx_count AS tx_count
+      ,avg_transaction AS avg_transaction
+      ,overdraft_count AS overdraft_count
+      ,((overdraft_count) * (1.0)) / (tx_count) AS overdraft_rate
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,COUNT(_gsql2rsql_t_id) AS tx_count
+        ,AVG(CAST(_gsql2rsql_t_amount AS DOUBLE)) AS avg_transaction
+        ,SUM(CASE WHEN (_gsql2rsql_t_type) = ('overdraft') THEN 1 ELSE 0 END) AS overdraft_count
+        ,_gsql2rsql_a_balance AS _gsql2rsql_a_balance
+        ,_gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+          ,_left._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+          ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+          ,_right._gsql2rsql_t_type AS _gsql2rsql_t_type
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+            ,_left._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+            ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_right._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_right._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+              ,_right._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,account_id AS _gsql2rsql__anon1_account_id
+                FROM
+                  catalog.credit.CustomerAccount
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_a_id
+                ,balance AS _gsql2rsql_a_balance
+                ,customer_id AS _gsql2rsql_a_customer_id
+              FROM
+                catalog.credit.Account
+            ) AS _right ON
+              _right._gsql2rsql_a_id = _left._gsql2rsql__anon1_account_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon2_account_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.AccountTransaction
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon2_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+            ,type AS _gsql2rsql_t_type
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 90 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_a_id, _gsql2rsql_a_balance, _gsql2rsql_a_customer_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+    ) AS _proj
+    ORDER BY overdraft_rate DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, a=a, tx_count=COUNT(t), avg_transaction=AVG(t.amount), overdraft_count=SUM(CASE WHEN (t.type EQ 'overdraft') THEN 1 ELSE 0 END)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P90D')))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, name=c.name, tx_count=tx_count, avg_transaction=avg_transaction, overdraft_count=overdraft_count, overdraft_rate=((overdraft_count MULTIPLY 1.0) DIVIDE tx_count)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 2. Identify credit-worthy customers via payment consistency
+
+**Application**: Credit: Payment reliability assessment
+
+??? note "Notes"
+
+    Finds customers with excellent payment history for credit line increases.
+    High on-time rates indicate low default probability.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)-[:PAYMENT]->(p:Payment)
+    WHERE l.status = 'active'
+    WITH c, l,
+         COUNT(p) AS total_payments,
+         SUM(CASE WHEN p.on_time = true THEN 1 ELSE 0 END) AS on_time_payments
+    WHERE total_payments > 6
+    WITH c, l, total_payments, on_time_payments,
+         (on_time_payments * 1.0 / total_payments) AS on_time_rate
+    WHERE on_time_rate > 0.95
+    RETURN c.id, c.name, l.amount, on_time_rate, total_payments
+    ORDER BY l.amount DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,_gsql2rsql_l_amount AS amount
+      ,on_time_rate AS on_time_rate
+      ,total_payments AS total_payments
+    FROM (
+      SELECT *
+      FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_l_id AS _gsql2rsql_l_id
+        ,total_payments AS total_payments
+        ,on_time_payments AS on_time_payments
+        ,((on_time_payments) * (1.0)) / (total_payments) AS on_time_rate
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+        ,_gsql2rsql_l_amount AS _gsql2rsql_l_amount
+        ,_gsql2rsql_l_balance AS _gsql2rsql_l_balance
+        ,_gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+        ,_gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+        ,_gsql2rsql_l_status AS _gsql2rsql_l_status
+      FROM (
+        SELECT 
+           _gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_gsql2rsql_l_id AS _gsql2rsql_l_id
+          ,COUNT(_gsql2rsql_p_id) AS total_payments
+          ,SUM(CASE WHEN (_gsql2rsql_p_on_time) = (TRUE) THEN 1 ELSE 0 END) AS on_time_payments
+          ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_gsql2rsql_l_amount AS _gsql2rsql_l_amount
+          ,_gsql2rsql_l_balance AS _gsql2rsql_l_balance
+          ,_gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+          ,_gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+          ,_gsql2rsql_l_status AS _gsql2rsql_l_status
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+            ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+            ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+            ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+            ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+            ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+            ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+            ,_left._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+            ,_left._gsql2rsql__anon2_payment_id AS _gsql2rsql__anon2_payment_id
+            ,_right._gsql2rsql_p_id AS _gsql2rsql_p_id
+            ,_right._gsql2rsql_p_on_time AS _gsql2rsql_p_on_time
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+              ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+              ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+              ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+              ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+              ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+              ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+              ,_right._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+              ,_right._gsql2rsql__anon2_payment_id AS _gsql2rsql__anon2_payment_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+                ,_right._gsql2rsql_l_id AS _gsql2rsql_l_id
+                ,_right._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+                ,_right._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+                ,_right._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+                ,_right._gsql2rsql_l_status AS _gsql2rsql_l_status
+                ,_right._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+              FROM (
+                SELECT
+                   _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                  ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                  ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                  ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                  ,_right._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+                FROM (
+                  SELECT
+                     id AS _gsql2rsql_c_id
+                    ,name AS _gsql2rsql_c_name
+                    ,status AS _gsql2rsql_c_status
+                  FROM
+                    catalog.credit.Customer
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     customer_id AS _gsql2rsql__anon1_customer_id
+                    ,loan_id AS _gsql2rsql__anon1_loan_id
+                  FROM
+                    catalog.credit.CustomerLoan
+                ) AS _right ON
+                  _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   id AS _gsql2rsql_l_id
+                  ,amount AS _gsql2rsql_l_amount
+                  ,balance AS _gsql2rsql_l_balance
+                  ,interest_rate AS _gsql2rsql_l_interest_rate
+                  ,status AS _gsql2rsql_l_status
+                  ,origination_date AS _gsql2rsql_l_origination_date
+                FROM
+                  catalog.credit.Loan
+                WHERE ((status) = ('active'))
+              ) AS _right ON
+                _right._gsql2rsql_l_id = _left._gsql2rsql__anon1_loan_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 loan_id AS _gsql2rsql__anon2_loan_id
+                ,payment_id AS _gsql2rsql__anon2_payment_id
+              FROM
+                catalog.credit.LoanPayment
+            ) AS _right ON
+              _left._gsql2rsql_l_id = _right._gsql2rsql__anon2_loan_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_p_id
+              ,on_time AS _gsql2rsql_p_on_time
+            FROM
+              catalog.credit.Payment
+          ) AS _right ON
+            _right._gsql2rsql_p_id = _left._gsql2rsql__anon2_payment_id
+        ) AS _proj
+        GROUP BY _gsql2rsql_c_id, _gsql2rsql_l_id, _gsql2rsql_c_name, _gsql2rsql_c_status, _gsql2rsql_l_amount, _gsql2rsql_l_balance, _gsql2rsql_l_interest_rate, _gsql2rsql_l_origination_date, _gsql2rsql_l_status
+        HAVING (total_payments) > (6)
+      ) AS _proj
+      ) AS _filter
+      WHERE (on_time_rate) > (0.95)
+    ) AS _proj
+    ORDER BY _gsql2rsql_l_amount DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_LOAN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: l:Loan
+        Filter: (l.status EQ 'active')
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:PAYMENT]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: p:Payment
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, l=l, total_payments=COUNT(p), on_time_payments=SUM(CASE WHEN (p.on_time EQ true) THEN 1 ELSE 0 END)
+        Having: (total_payments GT 6)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=13;
+      ProjectionOperator(id=12)
+        Projections: c=c, l=l, total_payments=total_payments, on_time_payments=on_time_payments, on_time_rate=((on_time_payments MULTIPLY 1.0) DIVIDE total_payments)
+        Having: (on_time_rate GT 0.95)
+    *
+    ----------------------------------------------------------------------
+    Level 7:
+    ----------------------------------------------------------------------
+    OpId=13 Op=ProjectionOperator; InOpIds=12; OutOpIds=;
+      ProjectionOperator(id=13)
+        Projections: id=c.id, name=c.name, amount=l.amount, on_time_rate=on_time_rate, total_payments=total_payments
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 3. Trace debt consolidation opportunities via multiple loan analysis
+
+**Application**: Credit: Debt consolidation
+
+??? note "Notes"
+
+    Identifies customers with multiple active loans suitable for consolidation.
+    Can improve customer retention and reduce default risk.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)
+    WHERE l.status = 'active'
+    WITH c, COUNT(l) AS active_loans, SUM(l.balance) AS total_debt, AVG(l.interest_rate) AS avg_rate
+    WHERE active_loans >= 3 AND total_debt > 10000
+    RETURN c.id, c.name, active_loans, total_debt, avg_rate
+    ORDER BY total_debt DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,active_loans AS active_loans
+      ,total_debt AS total_debt
+      ,avg_rate AS avg_rate
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,COUNT(_gsql2rsql_l_id) AS active_loans
+        ,SUM(_gsql2rsql_l_balance) AS total_debt
+        ,AVG(CAST(_gsql2rsql_l_interest_rate AS DOUBLE)) AS avg_rate
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          ,_right._gsql2rsql_l_id AS _gsql2rsql_l_id
+          ,_right._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+          ,_right._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+          ,_right._gsql2rsql_l_status AS _gsql2rsql_l_status
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_right._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_c_id
+              ,name AS _gsql2rsql_c_name
+              ,status AS _gsql2rsql_c_status
+            FROM
+              catalog.credit.Customer
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               customer_id AS _gsql2rsql__anon1_customer_id
+              ,loan_id AS _gsql2rsql__anon1_loan_id
+            FROM
+              catalog.credit.CustomerLoan
+          ) AS _right ON
+            _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_l_id
+            ,balance AS _gsql2rsql_l_balance
+            ,interest_rate AS _gsql2rsql_l_interest_rate
+            ,status AS _gsql2rsql_l_status
+          FROM
+            catalog.credit.Loan
+          WHERE ((status) = ('active'))
+        ) AS _right ON
+          _right._gsql2rsql_l_id = _left._gsql2rsql__anon1_loan_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING ((active_loans) >= (3)) AND ((total_debt) > (10000))
+    ) AS _proj
+    ORDER BY total_debt DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_LOAN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: l:Loan
+        Filter: (l.status EQ 'active')
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: c=c, active_loans=COUNT(l), total_debt=SUM(l.balance), avg_rate=AVG(l.interest_rate)
+        Having: ((active_loans GEQ 3) AND (total_debt GT 10000))
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=c.id, name=c.name, active_loans=active_loans, total_debt=total_debt, avg_rate=avg_rate
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 4. Predict default probability using behavioral patterns
+
+**Application**: Credit: Default prediction
+
+??? note "Notes"
+
+    Combines multiple risk indicators to predict default probability.
+    NSF fees and late payments are strong default predictors.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('P60D')
+    WITH c, a,
+         COUNT(CASE WHEN t.type = 'NSF' THEN 1 END) AS nsf_count,
+         COUNT(CASE WHEN t.type = 'late_fee' THEN 1 END) AS late_fee_count,
+         MIN(a.balance) AS min_balance
+    WHERE nsf_count > 2 OR late_fee_count > 3 OR min_balance < 0
+    RETURN c.id, c.name, nsf_count, late_fee_count, min_balance,
+           (nsf_count + late_fee_count * 2) AS default_risk_score
+    ORDER BY default_risk_score DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,nsf_count AS nsf_count
+      ,late_fee_count AS late_fee_count
+      ,min_balance AS min_balance
+      ,(nsf_count) + ((late_fee_count) * (2)) AS default_risk_score
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,COUNT(CASE WHEN (_gsql2rsql_t_type) = ('NSF') THEN 1 END) AS nsf_count
+        ,COUNT(CASE WHEN (_gsql2rsql_t_type) = ('late_fee') THEN 1 END) AS late_fee_count
+        ,MIN(_gsql2rsql_a_balance) AS min_balance
+        ,_gsql2rsql_a_balance AS _gsql2rsql_a_balance
+        ,_gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+          ,_left._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+          ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+          ,_right._gsql2rsql_t_type AS _gsql2rsql_t_type
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+            ,_left._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+            ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_right._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_right._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+              ,_right._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,account_id AS _gsql2rsql__anon1_account_id
+                FROM
+                  catalog.credit.CustomerAccount
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_a_id
+                ,balance AS _gsql2rsql_a_balance
+                ,customer_id AS _gsql2rsql_a_customer_id
+              FROM
+                catalog.credit.Account
+            ) AS _right ON
+              _right._gsql2rsql_a_id = _left._gsql2rsql__anon1_account_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon2_account_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.AccountTransaction
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon2_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,timestamp AS _gsql2rsql_t_timestamp
+            ,type AS _gsql2rsql_t_type
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 60 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_a_id, _gsql2rsql_a_balance, _gsql2rsql_a_customer_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING (((nsf_count) > (2)) OR ((late_fee_count) > (3))) OR ((min_balance) < (0))
+    ) AS _proj
+    ORDER BY default_risk_score DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, a=a, nsf_count=COUNT(CASE WHEN (t.type EQ 'NSF') THEN 1 END), late_fee_count=COUNT(CASE WHEN (t.type EQ 'late_fee') THEN 1 END), min_balance=MIN(a.balance)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P60D')))
+        Having: (((nsf_count GT 2) OR (late_fee_count GT 3)) OR (min_balance LT 0))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, name=c.name, nsf_count=nsf_count, late_fee_count=late_fee_count, min_balance=min_balance, default_risk_score=(nsf_count PLUS (late_fee_count MULTIPLY 2))
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 5. Analyze transaction chains to assess liquidity patterns
+
+**Application**: Credit: Liquidity assessment
+
+??? note "Notes"
+
+    Examines internal transfer patterns to understand liquidity management.
+    Frequent internal transfers may indicate cash flow stress.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH path = (source:Account)-[:TRANSFER*1..3]->(sink:Account)
+    WHERE source.customer_id = sink.customer_id
+      AND ALL(rel IN relationships(path) WHERE rel.timestamp > TIMESTAMP() - DURATION('P30D'))
+    WITH source.customer_id AS customer_id,
+         COUNT(DISTINCT path) AS transfer_chains,
+         AVG(LENGTH(path)) AS avg_chain_length
+    RETURN customer_id, transfer_chains, avg_chain_length
+    ORDER BY transfer_chains DESC
+    LIMIT 20
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.source_account_id AS start_node,
+          e.target_account_id AS end_node,
+          1 AS depth,
+          ARRAY(e.source_account_id, e.target_account_id) AS path,
+          ARRAY(NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          ARRAY(e.source_account_id) AS visited
+        FROM catalog.credit.Transfer e
+        WHERE (e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY))
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.target_account_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.target_account_id)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('source_account_id', e.source_account_id, 'target_account_id', e.target_account_id, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.source_account_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.credit.Transfer e
+          ON p.end_node = e.source_account_id
+        WHERE p.depth < 3
+          AND NOT ARRAY_CONTAINS(p.visited, e.target_account_id)
+          AND (e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY))
+      )
+    SELECT 
+       customer_id AS customer_id
+      ,transfer_chains AS transfer_chains
+      ,avg_chain_length AS avg_chain_length
+    FROM (
+      SELECT 
+         _gsql2rsql_source_customer_id AS customer_id
+        ,COUNT(DISTINCT _gsql2rsql_path_id) AS transfer_chains
+        ,AVG(CAST((SIZE(_gsql2rsql_path_id) - 1) AS DOUBLE)) AS avg_chain_length
+      FROM (
+        SELECT
+           sink.id AS _gsql2rsql_sink_id
+          ,sink.balance AS _gsql2rsql_sink_balance
+          ,sink.customer_id AS _gsql2rsql_sink_customer_id
+          ,source.id AS _gsql2rsql_source_id
+          ,source.balance AS _gsql2rsql_source_balance
+          ,source.customer_id AS _gsql2rsql_source_customer_id
+          ,p.start_node
+          ,p.end_node
+          ,p.depth
+          ,p.path AS _gsql2rsql_path_id
+          ,p.path_edges AS _gsql2rsql_path_edges
+        FROM paths_1 p
+        JOIN catalog.credit.Account sink
+          ON sink.id = p.end_node
+        JOIN catalog.credit.Account source
+          ON source.id = p.start_node
+        WHERE p.depth >= 1 AND p.depth <= 3
+      ) AS _proj
+      WHERE (_gsql2rsql_source_customer_id) = (_gsql2rsql_sink_customer_id)
+      GROUP BY _gsql2rsql_source_customer_id
+    ) AS _proj
+    ORDER BY transfer_chains DESC
+    LIMIT 20
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: source:Account
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: sink:Account
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(TRANSFER*1..3, path=path)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=6;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=sink RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=ProjectionOperator; InOpIds=4; OutOpIds=7;
+      ProjectionOperator(id=6)
+        Projections: customer_id=source.customer_id, transfer_chains=COUNT(DISTINCT path), avg_chain_length=AVG(LENGTH(path))
+        Filter: (source.customer_id EQ sink.customer_id)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=6; OutOpIds=;
+      ProjectionOperator(id=7)
+        Projections: customer_id=customer_id, transfer_chains=transfer_chains, avg_chain_length=avg_chain_length
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 6. Find high-value customers for premium credit products
+
+**Application**: Credit: Customer segmentation
+
+??? note "Notes"
+
+    Identifies high-value customers suitable for premium offerings.
+    High transaction volume and balances indicate creditworthiness.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('P180D')
+    WITH c, SUM(t.amount) AS total_volume, AVG(a.balance) AS avg_balance, COUNT(DISTINCT a) AS account_count
+    WHERE total_volume > 100000 AND avg_balance > 10000
+    RETURN c.id, c.name, total_volume, avg_balance, account_count
+    ORDER BY total_volume DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,total_volume AS total_volume
+      ,avg_balance AS avg_balance
+      ,account_count AS account_count
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,SUM(_gsql2rsql_t_amount) AS total_volume
+        ,AVG(CAST(_gsql2rsql_a_balance AS DOUBLE)) AS avg_balance
+        ,COUNT(DISTINCT _gsql2rsql_a_id) AS account_count
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+          ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+            ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_right._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_right._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,account_id AS _gsql2rsql__anon1_account_id
+                FROM
+                  catalog.credit.CustomerAccount
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_a_id
+                ,balance AS _gsql2rsql_a_balance
+              FROM
+                catalog.credit.Account
+            ) AS _right ON
+              _right._gsql2rsql_a_id = _left._gsql2rsql__anon1_account_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon2_account_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.AccountTransaction
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon2_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 180 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING ((total_volume) > (100000)) AND ((avg_balance) > (10000))
+    ) AS _proj
+    ORDER BY total_volume DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, total_volume=SUM(t.amount), avg_balance=AVG(a.balance), account_count=COUNT(DISTINCT a)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P180D')))
+        Having: ((total_volume GT 100000) AND (avg_balance GT 10000))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, name=c.name, total_volume=total_volume, avg_balance=avg_balance, account_count=account_count
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 7. Detect early warning signs of financial distress
+
+**Application**: Credit: Early warning system
+
+??? note "Notes"
+
+    Identifies customers with sudden balance declines.
+    Sharp drops may indicate financial distress or income loss.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+    WITH c, a,
+         AVG(CASE WHEN t.timestamp > TIMESTAMP() - DURATION('P7D') THEN a.balance END) AS recent_avg,
+         AVG(CASE WHEN t.timestamp <= TIMESTAMP() - DURATION('P30D') AND t.timestamp > TIMESTAMP() - DURATION('P60D') THEN a.balance END) AS historical_avg
+    WHERE historical_avg > 0 AND recent_avg < historical_avg * 0.5
+    RETURN c.id, c.name, historical_avg, recent_avg,
+           ((historical_avg - recent_avg) / historical_avg) AS balance_decline_pct
+    ORDER BY balance_decline_pct DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,historical_avg AS historical_avg
+      ,recent_avg AS recent_avg
+      ,((historical_avg) - (recent_avg)) / (historical_avg) AS balance_decline_pct
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_a_id AS _gsql2rsql_a_id
+        ,AVG(CAST(CASE WHEN (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY)) THEN _gsql2rsql_a_balance END AS DOUBLE)) AS recent_avg
+        ,AVG(CAST(CASE WHEN ((_gsql2rsql_t_timestamp) <= ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY))) AND ((_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 60 DAY))) THEN _gsql2rsql_a_balance END AS DOUBLE)) AS historical_avg
+        ,_gsql2rsql_a_balance AS _gsql2rsql_a_balance
+        ,_gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+          ,_left._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+          ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_left._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+            ,_left._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+            ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_right._gsql2rsql_a_id AS _gsql2rsql_a_id
+              ,_right._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+              ,_right._gsql2rsql_a_customer_id AS _gsql2rsql_a_customer_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,account_id AS _gsql2rsql__anon1_account_id
+                FROM
+                  catalog.credit.CustomerAccount
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_a_id
+                ,balance AS _gsql2rsql_a_balance
+                ,customer_id AS _gsql2rsql_a_customer_id
+              FROM
+                catalog.credit.Account
+            ) AS _right ON
+              _right._gsql2rsql_a_id = _left._gsql2rsql__anon1_account_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon2_account_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.AccountTransaction
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon2_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_a_id, _gsql2rsql_a_balance, _gsql2rsql_a_customer_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING ((historical_avg) > (0)) AND ((recent_avg) < ((historical_avg) * (0.5)))
+    ) AS _proj
+    ORDER BY balance_decline_pct DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=10;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=10 Op=ProjectionOperator; InOpIds=9; OutOpIds=11;
+      ProjectionOperator(id=10)
+        Projections: c=c, a=a, recent_avg=AVG(CASE WHEN (t.timestamp GT (DATETIME() MINUS DURATION('P7D'))) THEN a.balance END), historical_avg=AVG(CASE WHEN ((t.timestamp LEQ (DATETIME() MINUS DURATION('P30D'))) AND (t.timestamp GT (DATETIME() MINUS DURATION('P60D')))) THEN a.balance END)
+        Having: ((historical_avg GT 0) AND (recent_avg LT (historical_avg MULTIPLY 0.5)))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=10; OutOpIds=;
+      ProjectionOperator(id=11)
+        Projections: id=c.id, name=c.name, historical_avg=historical_avg, recent_avg=recent_avg, balance_decline_pct=((historical_avg MINUS recent_avg) DIVIDE historical_avg)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 8. Assess creditworthiness via social network analysis
+
+**Application**: Credit: Network-based scoring
+
+??? note "Notes"
+
+    Analyzes credit risk based on social network connections.
+    Proximity to defaulted borrowers increases risk score.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:KNOWS*1..2]-(peer:Customer)-[:HAS_LOAN]->(l:Loan)
+    WHERE l.status = 'defaulted'
+    WITH c, COUNT(DISTINCT peer) AS defaulted_peers, COUNT(DISTINCT l) AS defaulted_loans
+    WHERE defaulted_peers > 0
+    RETURN c.id, c.name, defaulted_peers, defaulted_loans,
+           (defaulted_peers * 1.0) AS network_risk_score
+    ORDER BY network_risk_score DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.customer_id AS start_node,
+          e.knows_customer_id AS end_node,
+          1 AS depth,
+          ARRAY(e.customer_id, e.knows_customer_id) AS path,
+          ARRAY(e.customer_id) AS visited
+        FROM catalog.credit.CustomerKnows e
+    
+        UNION ALL
+    
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.knows_customer_id AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.knows_customer_id)) AS path,
+          CONCAT(p.visited, ARRAY(e.customer_id)) AS visited
+        FROM paths_1 p
+        JOIN catalog.credit.CustomerKnows e
+          ON p.end_node = e.customer_id
+        WHERE p.depth < 2
+          AND NOT ARRAY_CONTAINS(p.visited, e.knows_customer_id)
+      )
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,defaulted_peers AS defaulted_peers
+      ,defaulted_loans AS defaulted_loans
+      ,(defaulted_peers) * (1.0) AS network_risk_score
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,COUNT(DISTINCT _gsql2rsql_peer_id) AS defaulted_peers
+        ,COUNT(DISTINCT _gsql2rsql_l_id) AS defaulted_loans
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql_peer_id AS _gsql2rsql_peer_id
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          ,_right._gsql2rsql_l_id AS _gsql2rsql_l_id
+          ,_right._gsql2rsql_l_status AS _gsql2rsql_l_status
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql_peer_id AS _gsql2rsql_peer_id
+            ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_right._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          FROM (
+            SELECT
+               sink.id AS _gsql2rsql_peer_id
+              ,sink.name AS _gsql2rsql_peer_name
+              ,sink.status AS _gsql2rsql_peer_status
+              ,source.id AS _gsql2rsql_c_id
+              ,source.name AS _gsql2rsql_c_name
+              ,source.status AS _gsql2rsql_c_status
+              ,p.start_node
+              ,p.end_node
+              ,p.depth
+              ,p.path
+            FROM paths_1 p
+            JOIN catalog.credit.Customer sink
+              ON sink.id = p.end_node
+            JOIN catalog.credit.Customer source
+              ON source.id = p.start_node
+            WHERE p.depth >= 1 AND p.depth <= 2
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               customer_id AS _gsql2rsql__anon1_customer_id
+              ,loan_id AS _gsql2rsql__anon1_loan_id
+            FROM
+              catalog.credit.CustomerLoan
+          ) AS _right ON
+            _left._gsql2rsql_peer_id = _right._gsql2rsql__anon1_customer_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_l_id
+            ,status AS _gsql2rsql_l_status
+          FROM
+            catalog.credit.Loan
+        ) AS _right ON
+          _right._gsql2rsql_l_id = _left._gsql2rsql__anon1_loan_id
+      ) AS _proj
+      WHERE (_gsql2rsql_l_status) = ('defaulted')
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING (defaulted_peers) > (0)
+    ) AS _proj
+    ORDER BY network_risk_score DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=2;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=3)
+        DataSource: peer:Customer
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=5)
+        DataSource: [_anon1:HAS_LOAN]->
+    *
+    OpId=7 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=7)
+        DataSource: l:Loan
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=2 Op=RecursiveTraversalOperator; InOpIds=1; OutOpIds=4;
+      RecursiveTraversal(KNOWS*1..2)
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=2,3; OutOpIds=6;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=peer RelOrNode=paths_r Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=4,5; OutOpIds=8;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=peer RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=6,7; OutOpIds=10;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=10 Op=ProjectionOperator; InOpIds=8; OutOpIds=11;
+      ProjectionOperator(id=10)
+        Projections: c=c, defaulted_peers=COUNT(DISTINCT peer), defaulted_loans=COUNT(DISTINCT l)
+        Filter: (l.status EQ 'defaulted')
+        Having: (defaulted_peers GT 0)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=10; OutOpIds=;
+      ProjectionOperator(id=11)
+        Projections: id=c.id, name=c.name, defaulted_peers=defaulted_peers, defaulted_loans=defaulted_loans, network_risk_score=(defaulted_peers MULTIPLY 1.0)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 9. Identify seasonal spending patterns for credit limit adjustments
+
+**Application**: Credit: Seasonal analysis
+
+??? note "Notes"
+
+    Identifies months with above-average spending for each customer.
+    Useful for temporary credit limit increases during peak periods.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('P365D')
+    WITH c, card,
+         month(t.timestamp) AS month,
+         SUM(t.amount) AS monthly_spend
+    WITH c, card, month, monthly_spend,
+         AVG(monthly_spend) OVER (PARTITION BY c.id) AS avg_monthly_spend
+    WHERE monthly_spend > avg_monthly_spend * 1.5
+    RETURN c.id, month, monthly_spend, avg_monthly_spend
+    ORDER BY monthly_spend DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS _gsql2rsql_c_id
+      ,_gsql2rsql_card_id AS _gsql2rsql_card_id
+      ,month AS month
+      ,monthly_spend AS monthly_spend
+      ,AVG(CAST(monthly_spend AS DOUBLE)) AS 
+      ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+      ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      ,_gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+      ,_gsql2rsql_card_number AS _gsql2rsql_card_number
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_card_id AS _gsql2rsql_card_id
+        ,MONTH(_gsql2rsql_t_timestamp) AS month
+        ,SUM(_gsql2rsql_t_amount) AS monthly_spend
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+        ,_gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+        ,_gsql2rsql_card_number AS _gsql2rsql_card_number
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+          ,_left._gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+          ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+          ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+            ,_left._gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+            ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+            ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              ,_right._gsql2rsql_card_id AS _gsql2rsql_card_id
+              ,_right._gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+              ,_right._gsql2rsql_card_number AS _gsql2rsql_card_number
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,card_id AS _gsql2rsql__anon1_card_id
+                FROM
+                  catalog.credit.CustomerCard
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_card_id
+                ,credit_limit AS _gsql2rsql_card_credit_limit
+                ,number AS _gsql2rsql_card_number
+              FROM
+                catalog.credit.CreditCard
+            ) AS _right ON
+              _right._gsql2rsql_card_id = _left._gsql2rsql__anon1_card_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               card_id AS _gsql2rsql__anon2_card_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.CardTransaction
+          ) AS _right ON
+            _left._gsql2rsql_card_id = _right._gsql2rsql__anon2_card_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 365 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_card_id, MONTH(_gsql2rsql_t_timestamp), _gsql2rsql_c_name, _gsql2rsql_c_status, _gsql2rsql_card_credit_limit, _gsql2rsql_card_number
+    ) AS _proj
+    GROUP BY _gsql2rsql_c_id, _gsql2rsql_card_id, month, monthly_spend, _gsql2rsql_c_name, _gsql2rsql_c_status, _gsql2rsql_card_credit_limit, _gsql2rsql_card_number
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_CARD]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: card:CreditCard
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:CARD_TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, card=card, month=DATE_MONTH(t.timestamp), monthly_spend=SUM(t.amount)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P365D')))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: c=c, card=card, month=month, monthly_spend=monthly_spend, =AVG(monthly_spend)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 10. Calculate debt-to-income ratio estimates from transaction data
+
+**Application**: Credit: DTI estimation
+
+??? note "Notes"
+
+    Estimates debt-to-income ratio from transaction patterns.
+    DTI is a critical metric for credit approval decisions.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('P90D')
+    WITH c,
+         SUM(CASE WHEN t.category = 'income' THEN t.amount ELSE 0 END) AS income,
+         SUM(CASE WHEN t.category = 'debt_payment' THEN t.amount ELSE 0 END) AS debt_payments
+    WHERE income > 0
+    RETURN c.id, c.name, income, debt_payments,
+           (debt_payments * 1.0 / income) AS estimated_dti
+    ORDER BY estimated_dti DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,income AS income
+      ,debt_payments AS debt_payments
+      ,((debt_payments) * (1.0)) / (income) AS estimated_dti
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,SUM(CASE WHEN (_gsql2rsql_t_category) = ('income') THEN _gsql2rsql_t_amount ELSE 0 END) AS income
+        ,SUM(CASE WHEN (_gsql2rsql_t_category) = ('debt_payment') THEN _gsql2rsql_t_amount ELSE 0 END) AS debt_payments
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+          ,_right._gsql2rsql_t_category AS _gsql2rsql_t_category
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql_a_id AS _gsql2rsql_a_id
+            ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_right._gsql2rsql_a_id AS _gsql2rsql_a_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,account_id AS _gsql2rsql__anon1_account_id
+                FROM
+                  catalog.credit.CustomerAccount
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_a_id
+              FROM
+                catalog.credit.Account
+            ) AS _right ON
+              _right._gsql2rsql_a_id = _left._gsql2rsql__anon1_account_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               account_id AS _gsql2rsql__anon2_account_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.AccountTransaction
+          ) AS _right ON
+            _left._gsql2rsql_a_id = _right._gsql2rsql__anon2_account_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+            ,category AS _gsql2rsql_t_category
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 90 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING (income) > (0)
+    ) AS _proj
+    ORDER BY estimated_dti DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, income=SUM(CASE WHEN (t.category EQ 'income') THEN t.amount ELSE 0 END), debt_payments=SUM(CASE WHEN (t.category EQ 'debt_payment') THEN t.amount ELSE 0 END)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P90D')))
+        Having: (income GT 0)
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, name=c.name, income=income, debt_payments=debt_payments, estimated_dti=((debt_payments MULTIPLY 1.0) DIVIDE income)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 11. Find cross-sell opportunities for additional credit products
+
+**Application**: Credit: Cross-sell targeting
+
+??? note "Notes"
+
+    Identifies customers without loans but with strong deposit relationships.
+    Prime candidates for personal loan or credit card offers.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)
+    WHERE NOT (c)-[:HAS_LOAN]->(:Loan) AND a.balance > 5000
+    WITH c, AVG(a.balance) AS avg_balance, COUNT(a) AS account_count
+    WHERE account_count >= 2
+    RETURN c.id, c.name, avg_balance, account_count
+    ORDER BY avg_balance DESC
+    LIMIT 50
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,avg_balance AS avg_balance
+      ,account_count AS account_count
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,AVG(CAST(_gsql2rsql_a_balance AS DOUBLE)) AS avg_balance
+        ,COUNT(_gsql2rsql_a_id) AS account_count
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_right._gsql2rsql_a_id AS _gsql2rsql_a_id
+          ,_right._gsql2rsql_a_balance AS _gsql2rsql_a_balance
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_c_id
+              ,name AS _gsql2rsql_c_name
+              ,status AS _gsql2rsql_c_status
+            FROM
+              catalog.credit.Customer
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               customer_id AS _gsql2rsql__anon1_customer_id
+              ,account_id AS _gsql2rsql__anon1_account_id
+            FROM
+              catalog.credit.CustomerAccount
+          ) AS _right ON
+            _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_a_id
+            ,balance AS _gsql2rsql_a_balance
+          FROM
+            catalog.credit.Account
+          WHERE ((balance) > (5000))
+        ) AS _right ON
+          _right._gsql2rsql_a_id = _left._gsql2rsql__anon1_account_id
+      ) AS _proj
+      WHERE NOT (EXISTS (SELECT 1 FROM catalog.credit.CustomerLoan _exists_rel JOIN catalog.credit.Loan _exists_target ON _exists_rel.loan_id = _exists_target.id WHERE _exists_rel.customer_id = _gsql2rsql_c_id))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_c_name, _gsql2rsql_c_status
+      HAVING (account_count) >= (2)
+    ) AS _proj
+    ORDER BY avg_balance DESC
+    LIMIT 50
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: a:Account
+        Filter: (a.balance GT 5000)
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=a RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: c=c, avg_balance=AVG(a.balance), account_count=COUNT(a)
+        Filter: NOT(EXISTS { c:, [:HAS_LOAN]->, :Loan })
+        Having: (account_count GEQ 2)
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=c.id, name=c.name, avg_balance=avg_balance, account_count=account_count
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 12. Analyze payment velocity to detect cash flow improvements
+
+**Application**: Credit: Payment velocity analysis
+
+??? note "Notes"
+
+    Detects customers increasing loan payment amounts.
+    Indicates improved cash flow and reduced default risk.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)-[:PAYMENT]->(p:Payment)
+    WHERE p.timestamp > TIMESTAMP() - DURATION('P180D')
+    WITH c, l,
+         AVG(CASE WHEN p.timestamp > TIMESTAMP() - DURATION('P30D') THEN p.amount END) AS recent_avg,
+         AVG(CASE WHEN p.timestamp <= TIMESTAMP() - DURATION('P90D') THEN p.amount END) AS historical_avg
+    WHERE historical_avg > 0 AND recent_avg > historical_avg * 1.2
+    RETURN c.id, c.name, l.id AS loan_id, historical_avg, recent_avg,
+           ((recent_avg - historical_avg) / historical_avg) AS payment_increase_pct
+    ORDER BY payment_increase_pct DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,_gsql2rsql_l_id AS loan_id
+      ,historical_avg AS historical_avg
+      ,recent_avg AS recent_avg
+      ,((recent_avg) - (historical_avg)) / (historical_avg) AS payment_increase_pct
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_l_id AS _gsql2rsql_l_id
+        ,AVG(CAST(CASE WHEN (_gsql2rsql_p_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY)) THEN _gsql2rsql_p_amount END AS DOUBLE)) AS recent_avg
+        ,AVG(CAST(CASE WHEN (_gsql2rsql_p_timestamp) <= ((CURRENT_TIMESTAMP()) - (INTERVAL 90 DAY)) THEN _gsql2rsql_p_amount END AS DOUBLE)) AS historical_avg
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+        ,_gsql2rsql_l_amount AS _gsql2rsql_l_amount
+        ,_gsql2rsql_l_balance AS _gsql2rsql_l_balance
+        ,_gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+        ,_gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+        ,_gsql2rsql_l_status AS _gsql2rsql_l_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+          ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+          ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+          ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+          ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+          ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+          ,_left._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+          ,_left._gsql2rsql__anon2_payment_id AS _gsql2rsql__anon2_payment_id
+          ,_right._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_right._gsql2rsql_p_amount AS _gsql2rsql_p_amount
+          ,_right._gsql2rsql_p_timestamp AS _gsql2rsql_p_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+            ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+            ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+            ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+            ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+            ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+            ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+            ,_right._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+            ,_right._gsql2rsql__anon2_payment_id AS _gsql2rsql__anon2_payment_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+              ,_right._gsql2rsql_l_id AS _gsql2rsql_l_id
+              ,_right._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+              ,_right._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+              ,_right._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+              ,_right._gsql2rsql_l_status AS _gsql2rsql_l_status
+              ,_right._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,loan_id AS _gsql2rsql__anon1_loan_id
+                FROM
+                  catalog.credit.CustomerLoan
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_l_id
+                ,amount AS _gsql2rsql_l_amount
+                ,balance AS _gsql2rsql_l_balance
+                ,interest_rate AS _gsql2rsql_l_interest_rate
+                ,status AS _gsql2rsql_l_status
+                ,origination_date AS _gsql2rsql_l_origination_date
+              FROM
+                catalog.credit.Loan
+            ) AS _right ON
+              _right._gsql2rsql_l_id = _left._gsql2rsql__anon1_loan_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               loan_id AS _gsql2rsql__anon2_loan_id
+              ,payment_id AS _gsql2rsql__anon2_payment_id
+            FROM
+              catalog.credit.LoanPayment
+          ) AS _right ON
+            _left._gsql2rsql_l_id = _right._gsql2rsql__anon2_loan_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_p_id
+            ,amount AS _gsql2rsql_p_amount
+            ,timestamp AS _gsql2rsql_p_timestamp
+          FROM
+            catalog.credit.Payment
+        ) AS _right ON
+          _right._gsql2rsql_p_id = _left._gsql2rsql__anon2_payment_id
+      ) AS _proj
+      WHERE (_gsql2rsql_p_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 180 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_l_id, _gsql2rsql_c_name, _gsql2rsql_c_status, _gsql2rsql_l_amount, _gsql2rsql_l_balance, _gsql2rsql_l_interest_rate, _gsql2rsql_l_origination_date, _gsql2rsql_l_status
+      HAVING ((historical_avg) > (0)) AND ((recent_avg) > ((historical_avg) * (1.2)))
+    ) AS _proj
+    ORDER BY payment_increase_pct DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_LOAN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: l:Loan
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:PAYMENT]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: p:Payment
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=p RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, l=l, recent_avg=AVG(CASE WHEN (p.timestamp GT (DATETIME() MINUS DURATION('P30D'))) THEN p.amount END), historical_avg=AVG(CASE WHEN (p.timestamp LEQ (DATETIME() MINUS DURATION('P90D'))) THEN p.amount END)
+        Filter: (p.timestamp GT (DATETIME() MINUS DURATION('P180D')))
+        Having: ((historical_avg GT 0) AND (recent_avg GT (historical_avg MULTIPLY 1.2)))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, name=c.name, loan_id=l.id, historical_avg=historical_avg, recent_avg=recent_avg, payment_increase_pct=((recent_avg MINUS historical_avg) DIVIDE historical_avg)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 13. Identify customers suitable for credit line decreases
+
+**Application**: Credit: Risk mitigation
+
+??? note "Notes"
+
+    Finds credit cards with limits far exceeding usage patterns.
+    Reducing limits can decrease exposure while maintaining customer satisfaction.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
+    WHERE t.timestamp > TIMESTAMP() - DURATION('P180D')
+    WITH c, card,
+         MAX(card.credit_limit) AS credit_limit,
+         MAX(t.amount) AS max_transaction,
+         AVG(t.amount) AS avg_transaction
+    WHERE max_transaction < credit_limit * 0.3 AND avg_transaction < credit_limit * 0.1
+    RETURN c.id, card.id AS card_id, credit_limit, max_transaction, avg_transaction,
+           (credit_limit - max_transaction * 3) AS suggested_new_limit
+    ORDER BY suggested_new_limit DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_card_id AS card_id
+      ,credit_limit AS credit_limit
+      ,max_transaction AS max_transaction
+      ,avg_transaction AS avg_transaction
+      ,(credit_limit) - ((max_transaction) * (3)) AS suggested_new_limit
+    FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_card_id AS _gsql2rsql_card_id
+        ,MAX(_gsql2rsql_card_credit_limit) AS credit_limit
+        ,MAX(_gsql2rsql_t_amount) AS max_transaction
+        ,AVG(CAST(_gsql2rsql_t_amount AS DOUBLE)) AS avg_transaction
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+        ,_gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+        ,_gsql2rsql_card_number AS _gsql2rsql_card_number
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+          ,_left._gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+          ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+          ,_left._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+          ,_left._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          ,_right._gsql2rsql_t_id AS _gsql2rsql_t_id
+          ,_right._gsql2rsql_t_amount AS _gsql2rsql_t_amount
+          ,_right._gsql2rsql_t_timestamp AS _gsql2rsql_t_timestamp
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+            ,_left._gsql2rsql_card_id AS _gsql2rsql_card_id
+            ,_left._gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+            ,_left._gsql2rsql_card_number AS _gsql2rsql_card_number
+            ,_right._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+            ,_right._gsql2rsql__anon2_transaction_id AS _gsql2rsql__anon2_transaction_id
+          FROM (
+            SELECT
+               _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+              ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+              ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              ,_right._gsql2rsql_card_id AS _gsql2rsql_card_id
+              ,_right._gsql2rsql_card_credit_limit AS _gsql2rsql_card_credit_limit
+              ,_right._gsql2rsql_card_number AS _gsql2rsql_card_number
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+                ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+                ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+                ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_right._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+              FROM (
+                SELECT
+                   id AS _gsql2rsql_c_id
+                  ,name AS _gsql2rsql_c_name
+                  ,status AS _gsql2rsql_c_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon1_customer_id
+                  ,card_id AS _gsql2rsql__anon1_card_id
+                FROM
+                  catalog.credit.CustomerCard
+              ) AS _right ON
+                _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_card_id
+                ,credit_limit AS _gsql2rsql_card_credit_limit
+                ,number AS _gsql2rsql_card_number
+              FROM
+                catalog.credit.CreditCard
+            ) AS _right ON
+              _right._gsql2rsql_card_id = _left._gsql2rsql__anon1_card_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               card_id AS _gsql2rsql__anon2_card_id
+              ,transaction_id AS _gsql2rsql__anon2_transaction_id
+            FROM
+              catalog.credit.CardTransaction
+          ) AS _right ON
+            _left._gsql2rsql_card_id = _right._gsql2rsql__anon2_card_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_t_id
+            ,amount AS _gsql2rsql_t_amount
+            ,timestamp AS _gsql2rsql_t_timestamp
+          FROM
+            catalog.credit.Transaction
+        ) AS _right ON
+          _right._gsql2rsql_t_id = _left._gsql2rsql__anon2_transaction_id
+      ) AS _proj
+      WHERE (_gsql2rsql_t_timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 180 DAY))
+      GROUP BY _gsql2rsql_c_id, _gsql2rsql_card_id, _gsql2rsql_c_name, _gsql2rsql_c_status, _gsql2rsql_card_credit_limit, _gsql2rsql_card_number
+      HAVING ((max_transaction) < ((credit_limit) * (0.3))) AND ((avg_transaction) < ((credit_limit) * (0.1)))
+    ) AS _proj
+    ORDER BY suggested_new_limit DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_CARD]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: card:CreditCard
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:CARD_TRANSACTION]->
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: t:Transaction
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=card RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=11;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=t RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=11 Op=ProjectionOperator; InOpIds=9; OutOpIds=12;
+      ProjectionOperator(id=11)
+        Projections: c=c, card=card, credit_limit=MAX(card.credit_limit), max_transaction=MAX(t.amount), avg_transaction=AVG(t.amount)
+        Filter: (t.timestamp GT (DATETIME() MINUS DURATION('P180D')))
+        Having: ((max_transaction LT (credit_limit MULTIPLY 0.3)) AND (avg_transaction LT (credit_limit MULTIPLY 0.1)))
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=12 Op=ProjectionOperator; InOpIds=11; OutOpIds=;
+      ProjectionOperator(id=12)
+        Projections: id=c.id, card_id=card.id, credit_limit=credit_limit, max_transaction=max_transaction, avg_transaction=avg_transaction, suggested_new_limit=(credit_limit MINUS (max_transaction MULTIPLY 3))
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 14. Detect refinancing opportunities via interest rate comparison
+
+**Application**: Credit: Refinancing targeting
+
+??? note "Notes"
+
+    Identifies loans with rates significantly above current market.
+    Proactive refinancing offers can improve retention and customer satisfaction.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)
+    WHERE l.status = 'active' AND l.origination_date < TIMESTAMP() - DURATION('P730D')
+      AND l.interest_rate > 7.0
+    WITH c, l, l.interest_rate AS current_rate, 5.5 AS market_rate
+    WHERE current_rate > market_rate + 1.0
+    RETURN c.id, c.name, l.id AS loan_id, l.balance, current_rate, market_rate,
+           (l.balance * (current_rate - market_rate) / 100) AS annual_savings_potential
+    ORDER BY annual_savings_potential DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c_id AS id
+      ,_gsql2rsql_c_name AS name
+      ,_gsql2rsql_l_id AS loan_id
+      ,_gsql2rsql_l_balance AS balance
+      ,current_rate AS current_rate
+      ,market_rate AS market_rate
+      ,((_gsql2rsql_l_balance) * ((current_rate) - (market_rate))) / (100) AS annual_savings_potential
+    FROM (
+      SELECT *
+      FROM (
+      SELECT 
+         _gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_gsql2rsql_l_id AS _gsql2rsql_l_id
+        ,_gsql2rsql_l_interest_rate AS current_rate
+        ,5.5 AS market_rate
+        ,_gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_gsql2rsql_c_status AS _gsql2rsql_c_status
+        ,_gsql2rsql_l_amount AS _gsql2rsql_l_amount
+        ,_gsql2rsql_l_balance AS _gsql2rsql_l_balance
+        ,_gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+        ,_gsql2rsql_l_status AS _gsql2rsql_l_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+          ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+          ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          ,_right._gsql2rsql_l_id AS _gsql2rsql_l_id
+          ,_right._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+          ,_right._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+          ,_right._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+          ,_right._gsql2rsql_l_status AS _gsql2rsql_l_status
+          ,_right._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+        FROM (
+          SELECT
+             _left._gsql2rsql_c_id AS _gsql2rsql_c_id
+            ,_left._gsql2rsql_c_name AS _gsql2rsql_c_name
+            ,_left._gsql2rsql_c_status AS _gsql2rsql_c_status
+            ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_right._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          FROM (
+            SELECT
+               id AS _gsql2rsql_c_id
+              ,name AS _gsql2rsql_c_name
+              ,status AS _gsql2rsql_c_status
+            FROM
+              catalog.credit.Customer
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               customer_id AS _gsql2rsql__anon1_customer_id
+              ,loan_id AS _gsql2rsql__anon1_loan_id
+            FROM
+              catalog.credit.CustomerLoan
+          ) AS _right ON
+            _left._gsql2rsql_c_id = _right._gsql2rsql__anon1_customer_id
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             id AS _gsql2rsql_l_id
+            ,amount AS _gsql2rsql_l_amount
+            ,balance AS _gsql2rsql_l_balance
+            ,interest_rate AS _gsql2rsql_l_interest_rate
+            ,status AS _gsql2rsql_l_status
+            ,origination_date AS _gsql2rsql_l_origination_date
+          FROM
+            catalog.credit.Loan
+          WHERE (((status) = ('active')) AND ((interest_rate) > (7.0)))
+        ) AS _right ON
+          _right._gsql2rsql_l_id = _left._gsql2rsql__anon1_loan_id
+      ) AS _proj
+      WHERE (_gsql2rsql_l_origination_date) < ((CURRENT_TIMESTAMP()) - (INTERVAL 730 DAY))
+      ) AS _filter
+      WHERE (current_rate) > ((market_rate) + (1.0))
+    ) AS _proj
+    ORDER BY annual_savings_potential DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=1)
+        DataSource: c:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=4;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:HAS_LOAN]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=5;
+      DataSourceOperator(id=3)
+        DataSource: l:Loan
+        Filter: ((l.status EQ 'active') AND (l.interest_rate GT 7.0))
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=4 Op=JoinOperator; InOpIds=1,2; OutOpIds=5;
+      JoinOperator(id=4)
+        JoinType: INNER
+        Joins: JoinPair: Node=c RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=5 Op=JoinOperator; InOpIds=4,3; OutOpIds=7;
+      JoinOperator(id=5)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=7 Op=ProjectionOperator; InOpIds=5; OutOpIds=8;
+      ProjectionOperator(id=7)
+        Projections: c=c, l=l, current_rate=l.interest_rate, market_rate=5.5
+        Filter: (l.origination_date LT (DATETIME() MINUS DURATION('P730D')))
+        Having: (current_rate GT (market_rate PLUS 1.0))
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=8 Op=ProjectionOperator; InOpIds=7; OutOpIds=;
+      ProjectionOperator(id=8)
+        Projections: id=c.id, name=c.name, loan_id=l.id, balance=l.balance, current_rate=current_rate, market_rate=market_rate, annual_savings_potential=((l.balance MULTIPLY (current_rate MINUS market_rate)) DIVIDE 100)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---
+
+## 15. Analyze co-borrower relationships for joint credit assessment
+
+**Application**: Credit: Co-borrower analysis
+
+??? note "Notes"
+
+    Examines financial strength of co-borrowers for joint loans.
+    Combined liquidity assessment provides more accurate risk picture.
+
+???+ note "OpenCypher Query"
+    ```cypher
+    MATCH (c1:Customer)-[:CO_BORROWER]->(l:Loan)<-[:CO_BORROWER]-(c2:Customer)
+    WHERE c1.id < c2.id
+    MATCH (c1)-[:HAS_ACCOUNT]->(a1:Account), (c2)-[:HAS_ACCOUNT]->(a2:Account)
+    WITH c1, c2, l,
+         AVG(a1.balance) AS c1_avg_balance,
+         AVG(a2.balance) AS c2_avg_balance
+    RETURN c1.id, c2.id, l.id AS loan_id, l.balance,
+           c1_avg_balance, c2_avg_balance,
+           (c1_avg_balance + c2_avg_balance) AS combined_liquidity
+    ORDER BY combined_liquidity DESC
+    ```
+
+??? example "Generated SQL"
+    ```sql
+    SELECT 
+       _gsql2rsql_c1_id AS id
+      ,_gsql2rsql_c2_id AS id
+      ,_gsql2rsql_l_id AS loan_id
+      ,_gsql2rsql_l_balance AS balance
+      ,c1_avg_balance AS c1_avg_balance
+      ,c2_avg_balance AS c2_avg_balance
+      ,(c1_avg_balance) + (c2_avg_balance) AS combined_liquidity
+    FROM (
+      SELECT 
+         _gsql2rsql_c1_id AS _gsql2rsql_c1_id
+        ,_gsql2rsql_c2_id AS _gsql2rsql_c2_id
+        ,_gsql2rsql_l_id AS _gsql2rsql_l_id
+        ,AVG(CAST(_gsql2rsql_a1_balance AS DOUBLE)) AS c1_avg_balance
+        ,AVG(CAST(_gsql2rsql_a2_balance AS DOUBLE)) AS c2_avg_balance
+        ,_gsql2rsql_c1_name AS _gsql2rsql_c1_name
+        ,_gsql2rsql_c1_status AS _gsql2rsql_c1_status
+        ,_gsql2rsql_c2_name AS _gsql2rsql_c2_name
+        ,_gsql2rsql_c2_status AS _gsql2rsql_c2_status
+        ,_gsql2rsql_l_amount AS _gsql2rsql_l_amount
+        ,_gsql2rsql_l_balance AS _gsql2rsql_l_balance
+        ,_gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+        ,_gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+        ,_gsql2rsql_l_status AS _gsql2rsql_l_status
+      FROM (
+        SELECT
+           _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+          ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+          ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+          ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+          ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+          ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+          ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+          ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+          ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+          ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+          ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+          ,_left._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+          ,_left._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+          ,_left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+          ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+          ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+          ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+          ,_right._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+          ,_right._gsql2rsql_a1_balance AS _gsql2rsql_a1_balance
+          ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+          ,_right._gsql2rsql_a2_id AS _gsql2rsql_a2_id
+          ,_right._gsql2rsql_a2_balance AS _gsql2rsql_a2_balance
+        FROM (
+          SELECT *
+          FROM (
+            SELECT
+               _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+              ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+              ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+              ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+              ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+              ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+              ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+              ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+              ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+              ,_left._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+              ,_left._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+              ,_right._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+              ,_right._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+              ,_right._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+                ,_left._gsql2rsql_l_id AS _gsql2rsql_l_id
+                ,_left._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+                ,_left._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+                ,_left._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+                ,_left._gsql2rsql_l_status AS _gsql2rsql_l_status
+                ,_left._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+                ,_right._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+                ,_right._gsql2rsql__anon2_loan_id AS _gsql2rsql__anon2_loan_id
+              FROM (
+                SELECT
+                   _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                  ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                  ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                  ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                  ,_left._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+                  ,_right._gsql2rsql_l_id AS _gsql2rsql_l_id
+                  ,_right._gsql2rsql_l_amount AS _gsql2rsql_l_amount
+                  ,_right._gsql2rsql_l_balance AS _gsql2rsql_l_balance
+                  ,_right._gsql2rsql_l_interest_rate AS _gsql2rsql_l_interest_rate
+                  ,_right._gsql2rsql_l_status AS _gsql2rsql_l_status
+                  ,_right._gsql2rsql_l_origination_date AS _gsql2rsql_l_origination_date
+                FROM (
+                  SELECT
+                     _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                    ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                    ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                    ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                    ,_right._gsql2rsql__anon1_loan_id AS _gsql2rsql__anon1_loan_id
+                  FROM (
+                    SELECT
+                       id AS _gsql2rsql_c1_id
+                      ,name AS _gsql2rsql_c1_name
+                      ,status AS _gsql2rsql_c1_status
+                    FROM
+                      catalog.credit.Customer
+                  ) AS _left
+                  INNER JOIN (
+                    SELECT
+                       customer_id AS _gsql2rsql__anon1_customer_id
+                      ,loan_id AS _gsql2rsql__anon1_loan_id
+                    FROM
+                      catalog.credit.CoBorrower
+                  ) AS _right ON
+                    _left._gsql2rsql_c1_id = _right._gsql2rsql__anon1_customer_id
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     id AS _gsql2rsql_l_id
+                    ,amount AS _gsql2rsql_l_amount
+                    ,balance AS _gsql2rsql_l_balance
+                    ,interest_rate AS _gsql2rsql_l_interest_rate
+                    ,status AS _gsql2rsql_l_status
+                    ,origination_date AS _gsql2rsql_l_origination_date
+                  FROM
+                    catalog.credit.Loan
+                ) AS _right ON
+                  _right._gsql2rsql_l_id = _left._gsql2rsql__anon1_loan_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   customer_id AS _gsql2rsql__anon2_customer_id
+                  ,loan_id AS _gsql2rsql__anon2_loan_id
+                FROM
+                  catalog.credit.CoBorrower
+              ) AS _right ON
+                _left._gsql2rsql_l_id = _right._gsql2rsql__anon2_loan_id
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 id AS _gsql2rsql_c2_id
+                ,name AS _gsql2rsql_c2_name
+                ,status AS _gsql2rsql_c2_status
+              FROM
+                catalog.credit.Customer
+            ) AS _right ON
+              _right._gsql2rsql_c2_id = _left._gsql2rsql__anon2_customer_id
+          ) AS _filter
+          WHERE (_gsql2rsql_c1_id) < (_gsql2rsql_c2_id)
+        ) AS _left
+        INNER JOIN (
+          SELECT
+             _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+            ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+            ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+            ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+            ,_left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+            ,_left._gsql2rsql_a1_balance AS _gsql2rsql_a1_balance
+            ,_left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+            ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+            ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+            ,_left._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+            ,_left._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            ,_right._gsql2rsql_a2_id AS _gsql2rsql_a2_id
+            ,_right._gsql2rsql_a2_balance AS _gsql2rsql_a2_balance
+          FROM (
+            SELECT
+               _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+              ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+              ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+              ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+              ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+              ,_left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+              ,_left._gsql2rsql_a1_balance AS _gsql2rsql_a1_balance
+              ,_left._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+              ,_left._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+              ,_left._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+              ,_right._gsql2rsql__anon2_customer_id AS _gsql2rsql__anon2_customer_id
+              ,_right._gsql2rsql__anon2_account_id AS _gsql2rsql__anon2_account_id
+            FROM (
+              SELECT
+                 _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                ,_left._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+                ,_left._gsql2rsql_a1_balance AS _gsql2rsql_a1_balance
+                ,_right._gsql2rsql_c2_id AS _gsql2rsql_c2_id
+                ,_right._gsql2rsql_c2_name AS _gsql2rsql_c2_name
+                ,_right._gsql2rsql_c2_status AS _gsql2rsql_c2_status
+              FROM (
+                SELECT
+                   _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                  ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                  ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                  ,_left._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                  ,_left._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                  ,_right._gsql2rsql_a1_id AS _gsql2rsql_a1_id
+                  ,_right._gsql2rsql_a1_balance AS _gsql2rsql_a1_balance
+                FROM (
+                  SELECT
+                     _left._gsql2rsql_c1_id AS _gsql2rsql_c1_id
+                    ,_left._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+                    ,_left._gsql2rsql_c1_status AS _gsql2rsql_c1_status
+                    ,_right._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+                    ,_right._gsql2rsql__anon1_account_id AS _gsql2rsql__anon1_account_id
+                  FROM (
+                    SELECT
+                       id AS _gsql2rsql_c1_id
+                      ,name AS _gsql2rsql_c1_name
+                      ,status AS _gsql2rsql_c1_status
+                    FROM
+                      catalog.credit.Customer
+                  ) AS _left
+                  INNER JOIN (
+                    SELECT
+                       customer_id AS _gsql2rsql__anon1_customer_id
+                      ,account_id AS _gsql2rsql__anon1_account_id
+                    FROM
+                      catalog.credit.CustomerAccount
+                  ) AS _right ON
+                    _left._gsql2rsql_c1_id = _right._gsql2rsql__anon1_customer_id
+                ) AS _left
+                INNER JOIN (
+                  SELECT
+                     id AS _gsql2rsql_a1_id
+                    ,balance AS _gsql2rsql_a1_balance
+                  FROM
+                    catalog.credit.Account
+                ) AS _right ON
+                  _right._gsql2rsql_a1_id = _left._gsql2rsql__anon1_account_id
+              ) AS _left
+              INNER JOIN (
+                SELECT
+                   id AS _gsql2rsql_c2_id
+                  ,name AS _gsql2rsql_c2_name
+                  ,status AS _gsql2rsql_c2_status
+                FROM
+                  catalog.credit.Customer
+              ) AS _right ON
+                TRUE
+            ) AS _left
+            INNER JOIN (
+              SELECT
+                 customer_id AS _gsql2rsql__anon2_customer_id
+                ,account_id AS _gsql2rsql__anon2_account_id
+              FROM
+                catalog.credit.CustomerAccount
+            ) AS _right ON
+              _left._gsql2rsql_c2_id = _right._gsql2rsql__anon2_customer_id
+          ) AS _left
+          INNER JOIN (
+            SELECT
+               id AS _gsql2rsql_a2_id
+              ,balance AS _gsql2rsql_a2_balance
+            FROM
+              catalog.credit.Account
+          ) AS _right ON
+            _right._gsql2rsql_a2_id = _left._gsql2rsql__anon2_account_id
+        ) AS _right ON
+          _left._gsql2rsql_c1_id = _right._gsql2rsql_c1_id
+          AND _left._gsql2rsql_c2_id = _right._gsql2rsql_c2_id
+      ) AS _proj
+      GROUP BY _gsql2rsql_c1_id, _gsql2rsql_c2_id, _gsql2rsql_l_id, _gsql2rsql_c1_name, _gsql2rsql_c1_status, _gsql2rsql_c2_name, _gsql2rsql_c2_status, _gsql2rsql_l_amount, _gsql2rsql_l_balance, _gsql2rsql_l_interest_rate, _gsql2rsql_l_origination_date, _gsql2rsql_l_status
+    ) AS _proj
+    ORDER BY combined_liquidity DESC
+    ```
+
+??? info "Logical Plan"
+    ```
+    Level 0:
+    ----------------------------------------------------------------------
+    OpId=1 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=1)
+        DataSource: c1:Customer
+    *
+    OpId=2 Op=DataSourceOperator; InOpIds=; OutOpIds=6;
+      DataSourceOperator(id=2)
+        DataSource: [_anon1:CO_BORROWER]->
+    *
+    OpId=3 Op=DataSourceOperator; InOpIds=; OutOpIds=7;
+      DataSourceOperator(id=3)
+        DataSource: l:Loan
+    *
+    OpId=4 Op=DataSourceOperator; InOpIds=; OutOpIds=8;
+      DataSourceOperator(id=4)
+        DataSource: [_anon2:CO_BORROWER]<-
+    *
+    OpId=5 Op=DataSourceOperator; InOpIds=; OutOpIds=9;
+      DataSourceOperator(id=5)
+        DataSource: c2:Customer
+    *
+    OpId=11 Op=DataSourceOperator; InOpIds=; OutOpIds=17;
+      DataSourceOperator(id=11)
+        DataSource: c1:Customer
+    *
+    OpId=12 Op=DataSourceOperator; InOpIds=; OutOpIds=17;
+      DataSourceOperator(id=12)
+        DataSource: [_anon1:HAS_ACCOUNT]->
+    *
+    OpId=13 Op=DataSourceOperator; InOpIds=; OutOpIds=18;
+      DataSourceOperator(id=13)
+        DataSource: a1:Account
+    *
+    OpId=14 Op=DataSourceOperator; InOpIds=; OutOpIds=19;
+      DataSourceOperator(id=14)
+        DataSource: c2:Customer
+    *
+    OpId=15 Op=DataSourceOperator; InOpIds=; OutOpIds=20;
+      DataSourceOperator(id=15)
+        DataSource: [_anon2:HAS_ACCOUNT]->
+    *
+    OpId=16 Op=DataSourceOperator; InOpIds=; OutOpIds=21;
+      DataSourceOperator(id=16)
+        DataSource: a2:Account
+    *
+    ----------------------------------------------------------------------
+    Level 1:
+    ----------------------------------------------------------------------
+    OpId=6 Op=JoinOperator; InOpIds=1,2; OutOpIds=7;
+      JoinOperator(id=6)
+        JoinType: INNER
+        Joins: JoinPair: Node=c1 RelOrNode=_anon1 Type=SOURCE
+    *
+    OpId=17 Op=JoinOperator; InOpIds=11,12; OutOpIds=18;
+      JoinOperator(id=17)
+        JoinType: INNER
+        Joins: JoinPair: Node=c1 RelOrNode=_anon1 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 2:
+    ----------------------------------------------------------------------
+    OpId=7 Op=JoinOperator; InOpIds=6,3; OutOpIds=8;
+      JoinOperator(id=7)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon1 Type=SINK
+    *
+    OpId=18 Op=JoinOperator; InOpIds=17,13; OutOpIds=19;
+      JoinOperator(id=18)
+        JoinType: INNER
+        Joins: JoinPair: Node=a1 RelOrNode=_anon1 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 3:
+    ----------------------------------------------------------------------
+    OpId=8 Op=JoinOperator; InOpIds=7,4; OutOpIds=9;
+      JoinOperator(id=8)
+        JoinType: INNER
+        Joins: JoinPair: Node=l RelOrNode=_anon2 Type=SINK
+    *
+    OpId=19 Op=JoinOperator; InOpIds=18,14; OutOpIds=20;
+      JoinOperator(id=19)
+        JoinType: INNER
+        Joins: 
+    *
+    ----------------------------------------------------------------------
+    Level 4:
+    ----------------------------------------------------------------------
+    OpId=9 Op=JoinOperator; InOpIds=8,5; OutOpIds=10;
+      JoinOperator(id=9)
+        JoinType: INNER
+        Joins: JoinPair: Node=c2 RelOrNode=_anon2 Type=SOURCE
+    *
+    OpId=20 Op=JoinOperator; InOpIds=19,15; OutOpIds=21;
+      JoinOperator(id=20)
+        JoinType: INNER
+        Joins: JoinPair: Node=c2 RelOrNode=_anon2 Type=SOURCE
+    *
+    ----------------------------------------------------------------------
+    Level 5:
+    ----------------------------------------------------------------------
+    OpId=10 Op=SelectionOperator; InOpIds=9; OutOpIds=22;
+      SelectionOperator(id=10)
+        Filter: (c1.id LT c2.id)
+    *
+    OpId=21 Op=JoinOperator; InOpIds=20,16; OutOpIds=22;
+      JoinOperator(id=21)
+        JoinType: INNER
+        Joins: JoinPair: Node=a2 RelOrNode=_anon2 Type=SINK
+    *
+    ----------------------------------------------------------------------
+    Level 6:
+    ----------------------------------------------------------------------
+    OpId=22 Op=JoinOperator; InOpIds=10,21; OutOpIds=23;
+      JoinOperator(id=22)
+        JoinType: INNER
+        Joins: JoinPair: Node=c1 RelOrNode=c1 Type=NODE_ID, JoinPair: Node=c2 RelOrNode=c2 Type=NODE_ID
+    *
+    ----------------------------------------------------------------------
+    Level 7:
+    ----------------------------------------------------------------------
+    OpId=23 Op=ProjectionOperator; InOpIds=22; OutOpIds=24;
+      ProjectionOperator(id=23)
+        Projections: c1=c1, c2=c2, l=l, c1_avg_balance=AVG(a1.balance), c2_avg_balance=AVG(a2.balance)
+    *
+    ----------------------------------------------------------------------
+    Level 8:
+    ----------------------------------------------------------------------
+    OpId=24 Op=ProjectionOperator; InOpIds=23; OutOpIds=;
+      ProjectionOperator(id=24)
+        Projections: id=c1.id, id=c2.id, loan_id=l.id, balance=l.balance, c1_avg_balance=c1_avg_balance, c2_avg_balance=c2_avg_balance, combined_liquidity=(c1_avg_balance PLUS c2_avg_balance)
+    *
+    ----------------------------------------------------------------------
+    ```
+
+---

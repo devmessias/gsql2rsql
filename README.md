@@ -1,327 +1,286 @@
-# gsql2rsql (Python)
+# gsql2rsql - OpenCypher to Databricks SQL Transpiler
 
-A Python 3.12+ port of the openCypher to Databricks SQL transpiler.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python Version](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![Documentation](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://devmessias.github.io/gsql2rsql)
 
-This library helps you build an [openCypher](http://www.opencypher.org/) query layer on top of a relational database or structured data in data lakes. By leveraging this library, you can transpile openCypher queries into Databricks SQL with support for advanced features like `WITH RECURSIVE` for variable-length path traversals (BFS/DFS).
+**gsql2rsql** transpiles OpenCypher graph queries to Databricks SQL, enabling graph analytics on Delta Lake without a dedicated graph database.
 
-## Features
+> **Project Status**: This is a hobby/research project being developed towards production quality. While it handles complex queries and includes comprehensive tests, it's not yet  at enterprise scale. Contributions welcome!
 
-- **Databricks SQL compatible output**: Uses backticks for identifiers, `TRUE`/`FALSE` for booleans, `RLIKE` for regex, etc.
-- **Variable-length path support**: Transpiles patterns like `(a)-[*1..5]->(b)` using `WITH RECURSIVE` CTEs
-- **Cycle detection**: Automatic cycle prevention in recursive queries using `ARRAY_CONTAINS`
-- **Clean syntax**: No T-SQL artifacts (brackets, `N''` strings, `PATINDEX`)
+## Why This Project?
 
-## Components
+### Inspiration: Microsoft's openCypherTranspiler
 
-This library has three main components:
+This project was inspired by Microsoft's [openCypherTranspiler](https://github.com/microsoft/openCypherTranspiler) which transpiled OpenCypher to T-SQL (SQL Server). However, **Databricks SQL is fundamentally different** from T-SQL:
 
-* **openCypher Parser**: Built on top of ANTLR4 and the official openCypher grammar to parse and create an AST (Abstract Syntax Tree) to abstract the syntactical structure of the graph query
-* **Logical Planner**: Transforms the AST into a relational query logical plan similar to [Relational Algebra](https://en.wikipedia.org/wiki/Relational_algebra)
-* **SQL Renderer**: Produces Databricks SQL from the logical plan with support for `WITH RECURSIVE` CTEs
 
-## Requirements
 
-- Python 3.12+
-- uv (Python package manager)
-- ANTLR4 (for grammar generation)
+**The game-changer**: Databricks recently added **WITH RECURSIVE** support, unlocking variable-leng
 
-## Installation
+### Databricks SQL Higher-Order Functions (HOFs)
 
-### 1. Install ANTLR4 (for grammar generation)
+ Databricks SQL has **native array manipulation** via HOFs:
 
-```bash
-# Download ANTLR4 jar
-curl -O https://www.antlr.org/download/antlr-4.13.1-complete.jar
+```sql
+-- Transform array elements
+SELECT transform(relationships, r -> r.amount) AS amounts
+FROM fraud_paths
 
-# Or install via package manager
-# macOS:
-brew install antlr
+-- Filter complex conditions
+SELECT filter(path, node -> node.risk_score > 0.8) AS risky_nodes
+FROM customer_journeys
 
-# Ubuntu/Debian:
+-- Aggregate with lambda
+SELECT aggregate(
+  transactions,
+  0.0,
+  (acc, t) -> acc + t.amount,
+  acc -> acc
+) AS total
+FROM account_history
 ```
 
-### 2. Generate Grammar Files
+gsql2rsql leverages these HOFs for:
+- **Path filtering**: `NONE(r IN relationships(path) WHERE r.suspicious)`
+- **Path aggregations**: `SUM(r IN rels WHERE r.amount > 1000)`
+- **Pattern matching**: Complex nested conditions
 
-Download the openCypher grammar from the official repository and generate Python parser:
+This makes Cypher → SQL transpilation **more natural**
 
-```bash
-# Download openCypher grammar
-curl -O https://raw.githubusercontent.com/antlr/grammars-v4/refs/heads/master/cypher/CypherParser.g4
+## Why Graph Queries on Delta Lake?
 
-# Move to grammar directory
-mkdir -p src/gsql2rsql/parser/grammar/
-mv Cypher.g4 src/gsql2rsql/parser/grammar/
 
-# Generate Python parser files
-cd src/gsql2rsql/parser/grammar/
-antlr4 -Dlanguage=Python3 -visitor Cypher.g4
-
-# Or with jar:
-java -jar /path/to/antlr-4.13.1-complete.jar -Dlanguage=Python3 -visitor Cypher.g4
+```
+Delta Lake (Single Source)
+     ↓ OpenCypher (via gsql2rsql)
+Databricks SQL
+     ↓ Results
 ```
 
-This will generate:
-- `CypherLexer.py`
-- `CypherParser.py`
-- `CypherVisitor.py`
-- `CypherListener.py`
+**Advantages**:
+1. **No duplication**: Query source data directly
+2. **Real-time**: Always fresh data
+3. **No sync**: One less thing to break
+4. **Cost-effective**: No second database
+5. **Unified governance**: Single data platform
 
-### 3. Install Python Dependencies
+## Billion-Scale Relationships: Triple Stores in Delta
 
-```bash
-# Using uv (recommended)
-uv venv
-source .venv/bin/activate  # On Linux/macOS
+### The Problem with graph databases (oltp) at Scale
 
-uv pip install -e .
+When you have **billions of relationships**:
 
-# Or with development dependencies
-uv pip install -e ".[dev]"
+- **Memory limits**: Graph must fit in RAM for good performance
+- **Vertical scaling**: Limited by single-server resources
+- **Cost**: Enterprise licenses + large EC2 instances = $$$$
+- **Backup/Recovery**: GBs of graph data, long backup windows
+- **Version upgrades**: Risky with large graphs
+
+
+### Triple Store in Delta Lake
+
+Model relationships as **triples** in Delta:
+
+```sql
+CREATE TABLE relationships (
+  subject_id STRING,    -- Source entity
+  predicate STRING,     -- Relationship type
+  object_id STRING,     -- Target entity
+  properties MAP<STRING, STRING>,
+  timestamp TIMESTAMP,
+  _partition DATE GENERATED ALWAYS AS (DATE(timestamp))
+) PARTITIONED BY (_partition);
 ```
+
+**Advantages**:
+1. **Horizontal scale**: Petabytes, billions of rows, no problem
+2. **Cost-effective**: S3 storage ($0.023/GB) vs RAM ($10+/GB)
+3. **Time travel**: Delta Lake versioning = free audit trail
+4. **Schema evolution**: Add properties without downtime
+5. **ACID guarantees**: Delta Lake transactions
+6. **Z-ordering**: `OPTIMIZE table ZORDER BY (subject_id, predicate)` for fast lookups
+7. **Liquid clustering**: Auto-optimize hot paths
+
+
+## LLMs + Transpilers: Enterprise Governance
+
+**The Problem**: In enterprise environments, **someone must be accountable** for queries before execution — even with LLM text-to-query.
+
+### Why Transpilers Matter
+
+**1. Reviewability**: Graph queries are **4-5 lines** vs **hundreds of SQL lines**
+```cypher
+# 5 lines in Cypher
+MATCH (c:Customer)-[:TRANSACTION*1..3]->(m:Merchant)
+WHERE m.risk_score > 0.9
+RETURN c.id, COUNT(*) AS risky_tx
+ORDER BY risky_tx DESC
+LIMIT 100
+```
+vs 150+ lines of recursive SQL. Easier for humans to review and approve.
+
+
+Transpilers turn LLM outputs into **governable, auditable, human-reviewable queries**.
 
 ## Quick Start
 
-```python
-from opencypher_transpiler import OpenCypherParser, LogicalPlan, SQLRenderer
-from opencypher_transpiler.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema
-from opencypher_transpiler.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
+### Installation
 
-cypher_query = """
-    MATCH (d:device)-[:belongsTo]->(t:tenant)
-    MATCH (d)-[:runs]->(a:app)
-    RETURN t.id as TenantId, a.AppName as AppName, COUNT(d) as DeviceCount
-"""
-
-# Define your graph schema
-graph_schema = SimpleGraphSchemaProvider()
-graph_schema.add_node(NodeSchema(name="device"))
-graph_schema.add_node(NodeSchema(name="tenant"))
-graph_schema.add_node(NodeSchema(name="app"))
-graph_schema.add_edge(EdgeSchema(name="belongsTo", source_node_id="device", sink_node_id="tenant"))
-graph_schema.add_edge(EdgeSchema(name="runs", source_node_id="device", sink_node_id="app"))
-
-# Define SQL schema mappings (Databricks format: catalog.schema.table)
-sql_schema = SimpleSQLSchemaProvider()
-sql_schema.add_table(SQLTableDescriptor(entity_id="device", table_name="catalog.schema.Device", node_id_columns=["id"]))
-sql_schema.add_table(SQLTableDescriptor(entity_id="tenant", table_name="catalog.schema.Tenant", node_id_columns=["id"]))
-sql_schema.add_table(SQLTableDescriptor(entity_id="app", table_name="catalog.schema.App", node_id_columns=["id"]))
-sql_schema.add_table(SQLTableDescriptor(entity_id="device@belongsTo@tenant", table_name="catalog.schema.BelongsTo", node_id_columns=["device_id", "tenant_id"]))
-sql_schema.add_table(SQLTableDescriptor(entity_id="device@runs@app", table_name="catalog.schema.Runs", node_id_columns=["device_id", "app_id"]))
-
-# Parse, plan, and render
-parser = OpenCypherParser()
-ast = parser.parse(cypher_query)
-
-plan = LogicalPlan.process_query_tree(ast, graph_schema)
-
-renderer = SQLRenderer(db_schema_provider=sql_schema)
-sql_query = renderer.render_plan(plan)
-
-print("Transpiled Databricks SQL query:")
-print(sql_query)
+```bash
+pip install gsql2rsql
+# Or from source:
+git clone https://github.com/devmessias/gsql2rsql
+cd gsql2rsql/python
+uv pip install -e .
 ```
 
-## Variable-Length Paths with WITH RECURSIVE (BFS)
-
-The transpiler supports variable-length relationship patterns using `WITH RECURSIVE` CTEs for BFS traversal.
-
-### Example: Find all neighbors up to 5 hops from a root vertex
-
-**openCypher Query:**
-```cypher
-MATCH (root:Person {id: 42})-[:KNOWS*1..5]->(neighbor:Person)
-RETURN DISTINCT neighbor.id, neighbor.name
-```
-
-**Generated Databricks SQL:**
-```sql
-WITH RECURSIVE paths AS (
-    -- Base case: direct neighbors of root vertex (id=42)
-    SELECT
-        e.target_id AS current_node,
-        1 AS depth,
-        ARRAY(e.source_id) AS visited
-    FROM `graph.Knows` e
-    WHERE e.source_id = 42
-
-    UNION ALL
-
-    -- Recursive case: expand to next level neighbors
-    SELECT
-        e.target_id AS current_node,
-        p.depth + 1 AS depth,
-        ARRAY_APPEND(p.visited, e.source_id) AS visited
-    FROM paths p
-    JOIN `graph.Knows` e ON e.source_id = p.current_node
-    WHERE p.depth < 5
-      AND NOT ARRAY_CONTAINS(p.visited, e.target_id)  -- cycle detection
-)
-SELECT DISTINCT
-    n.id,
-    n.name
-FROM paths p
-JOIN `graph.Person` n ON n.id = p.current_node
-WHERE p.depth >= 1
-```
-
-### Python Usage:
+### Your First Query
 
 ```python
-from opencypher_transpiler import OpenCypherParser, LogicalPlan, SQLRenderer
-from opencypher_transpiler.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
-from opencypher_transpiler.common.schema import (
-    SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
-)
+from gsql2rsql.parser.opencypher_parser import OpenCypherParser
+from gsql2rsql.planner.logical_plan import LogicalPlan
+from gsql2rsql.renderer.sql_renderer import SQLRenderer
+from gsql2rsql.planner.schema import DatabricksSchemaProvider, SimpleGraphSchemaProvider
+from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
 
-# Define graph schema
-graph_schema = SimpleGraphSchemaProvider()
-graph_schema.add_node(NodeSchema(
+# 1. Define schema (map graph to Delta tables)
+schema = SimpleGraphSchemaProvider()
+
+person = NodeSchema(
     name="Person",
     properties=[
-        EntityProperty("id", int),
-        EntityProperty("name", str),
+        EntityProperty(property_name="id", data_type=int),
+        EntityProperty(property_name="name", data_type=str),
+        EntityProperty(property_name="age", data_type=int),
     ],
-    node_id_property=EntityProperty("id", int),
-))
-graph_schema.add_edge(EdgeSchema(
-    name="KNOWS",
+    node_id_property=EntityProperty(property_name="id", data_type=int)
+)
+
+company = NodeSchema(
+    name="Company",
+    properties=[
+        EntityProperty(property_name="id", data_type=int),
+        EntityProperty(property_name="name", data_type=str),
+        EntityProperty(property_name="industry", data_type=str),
+    ],
+    node_id_property=EntityProperty(property_name="id", data_type=int)
+)
+
+works_at = EdgeSchema(
+    name="WORKS_AT",
     source_node_id="Person",
-    sink_node_id="Person",
-    source_id_property=EntityProperty("source_id", int),
-    sink_id_property=EntityProperty("target_id", int),
-))
-
-# Define SQL schema (Databricks format)
-sql_schema = SimpleSQLSchemaProvider()
-sql_schema.add_node(
-    NodeSchema(name="Person", node_id_property=EntityProperty("id", int)),
-    SQLTableDescriptor(table_name="graph.Person", node_id_columns=["id"]),
-)
-sql_schema.add_edge(
-    EdgeSchema(
-        name="KNOWS",
-        source_node_id="Person",
-        sink_node_id="Person",
-        source_id_property=EntityProperty("source_id", int),
-        sink_id_property=EntityProperty("target_id", int),
-    ),
-    SQLTableDescriptor(table_name="graph.Knows"),
+    sink_node_id="Company",
+    source_id_property=EntityProperty(property_name="person_id", data_type=int),
+    sink_id_property=EntityProperty(property_name="company_id", data_type=int),
+    properties=[EntityProperty(property_name="since", data_type=int)]
 )
 
-# BFS query: find neighbors up to 5 hops from vertex with id=42
-cypher_query = """
-MATCH (root:Person {id: 42})-[:KNOWS*1..5]->(neighbor:Person)
-RETURN DISTINCT neighbor.id AS id, neighbor.name AS name
+schema.add_node(person)
+schema.add_node(company)
+schema.add_edge(works_at)
+
+# 2. Write Cypher query
+query = """
+MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+WHERE c.industry = 'Technology'
+RETURN p.name, p.age, c.name AS company
+ORDER BY p.age DESC
+LIMIT 10
 """
 
-# Transpile
+# 3. Transpile to SQL
 parser = OpenCypherParser()
-ast = parser.parse(cypher_query)
-plan = LogicalPlan.process_query_tree(ast, graph_schema)
-renderer = SQLRenderer(db_schema_provider=sql_schema)
+schema_provider = DatabricksSchemaProvider(schema)
+renderer = SQLRenderer(schema_provider)
+
+ast = parser.parse(query)
+plan = LogicalPlan.from_ast(ast, schema)
+plan.resolve(query)
 sql = renderer.render_plan(plan)
 
 print(sql)
+
+# 4. Execute on Databricks
+# spark.sql(sql).show()
 ```
 
-### Key Features:
+**Output**: Databricks SQL with JOINs, WHERE filters, ORDER BY, and LIMIT — ready to execute on Delta Lake.
 
-- **BFS Traversal**: Uses `WITH RECURSIVE` CTE to traverse the graph level by level
-- **Cycle Detection**: `ARRAY_CONTAINS(visited, target_id)` prevents infinite loops
-- **Bounded Depth**: `WHERE depth < max_hops` ensures traversal stops at specified depth
-- **Min/Max Hops**: Pattern `*1..5` means at least 1 hop and at most 5 hops
+## Features
 
-## CLI Usage
+- ✅ **Variable-length paths** (`*1..N`) via `WITH RECURSIVE`
+- ✅ **Undirected relationships** (`-[:REL]-`)
+- ✅ **Path functions** (`length()`, `nodes()`, `relationships()`)
+- ✅ **Aggregations** (`COUNT`, `SUM`, `COLLECT`, etc.)
+- ✅ **Filter pushdown** (optimizes Delta scans)
+- ✅ **WITH clauses** (multi-stage composition)
+- ✅ **UNION**, **OPTIONAL MATCH**, **CASE**, **DISTINCT**
 
-```bash
-# Transpile a query from stdin
-echo "MATCH (n:Person) RETURN n.name" | gsql2rsql transpile --schema schema.json
+See [full feature list](docs/index.md#features).
 
-# Transpile a query from file
-gsql2rsql transpile --input query.cypher --schema schema.json --output query.sql
+## Documentation
 
-# Parse a query to AST
-gsql2rsql parse --input query.cypher
-
-# Initialize a schema template
-gsql2rsql init-schema --output schema.json
-```
-
-## Schema File Format
-
-```json
-{
-  "nodes": [
-    {
-      "name": "Person",
-      "tableName": "catalog.schema.Person",
-      "idProperty": {"name": "id", "type": "int"},
-      "properties": [
-        {"name": "name", "type": "string"},
-        {"name": "age", "type": "int"}
-      ]
-    }
-  ],
-  "edges": [
-    {
-      "name": "KNOWS",
-      "sourceNode": "Person",
-      "sinkNode": "Person",
-      "tableName": "catalog.schema.Knows",
-      "sourceIdProperty": {"name": "source_id", "type": "int"},
-      "sinkIdProperty": {"name": "target_id", "type": "int"},
-      "properties": []
-    }
-  ]
-}
-```
+- 📘 [Installation & Quick Start](https://devmessias.github.io/gsql2rsql/installation/)
+- 🎯 [Examples Gallery](https://devmessias.github.io/gsql2rsql/examples/) (69 queries)
+  - [Fraud Detection](https://devmessias.github.io/gsql2rsql/examples/fraud/)
+  - [Credit Risk](https://devmessias.github.io/gsql2rsql/examples/credit/)
+  - [Feature Engineering](https://devmessias.github.io/gsql2rsql/examples/features/)
+- 🏗️ [Architecture](https://devmessias.github.io/gsql2rsql/architecture/)
+- 🤝 [Contributing](https://devmessias.github.io/gsql2rsql/contributing/)
 
 ## Development
 
 ```bash
-# Install dev dependencies
+# Setup
+uv sync --extra dev
 uv pip install -e ".[dev]"
 
-# Run tests
-pytest
+# Tests
+make test-no-pyspark   # Fast (no Spark dependency)
+make test-pyspark      # Full validation with PySpark
 
-# Type checking
-mypy src/opencypher_transpiler
-
-# Linting
-ruff check src/ tests/
-ruff format src/ tests/
+# Lint & Format
+make lint
+make format
+make typecheck
 ```
 
-## Project Structure
+See [CONTRIBUTING.md](CONTRIBUTING.md) for conventional commits and release process.
 
-```
-python/
-├── pyproject.toml          # Project configuration
-├── README.md               # This file
-└── src/
-    └── opencypher_transpiler/
-        ├── common/         # Shared utilities, exceptions, schemas
-        │   ├── exceptions.py
-        │   ├── logging.py
-        │   ├── schema.py
-        │   └── utils.py
-        ├── parser/         # openCypher parser (ANTLR4)
-        │   ├── grammar/    # ANTLR4 generated files
-        │   ├── ast.py      # AST node definitions
-        │   ├── operators.py # Operators and functions
-        │   ├── opencypher_parser.py
-        │   └── visitor.py  # Parse tree visitor
-        ├── planner/        # Logical query planner
-        │   ├── operators.py # Logical operators
-        │   ├── schema.py   # Plan schema
-        │   └── logical_plan.py
-        ├── renderer/       # SQL rendering
-        │   ├── schema_provider.py
-        │   └── sql_renderer.py
-        └── cli.py          # CLI interface
-```
+## Requirements
+
+- **Python 3.12+**
+- **Databricks Runtime 15.0+** (for `WITH RECURSIVE`)
+- **PySpark** (optional, only for development/testing)
+
+
+See [full limitations](docs/limitations.md).
+
+## Contributing
+
+This is an **open hobby project** — contributions are very welcome!
+
+- **Bugs**: [Open an issue](https://github.com/devmessias/gsql2rsql/issues)
+- **Features**: Discuss in [Discussions](https://github.com/devmessias/gsql2rsql/discussions)
+- **PRs**: Follow [conventional commits](CONTRIBUTING.md#commit-message-convention)
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License - see [LICENSE](LICENSE).
+
+## Acknowledgments
+
+- Microsoft's [openCypherTranspiler](https://github.com/microsoft/openCypherTranspiler) (T-SQL) for inspiration
+- [OpenCypher](https://opencypher.org/) community for the graph query language
+- [ANTLR](https://www.antlr.org/) for parser generation
+- [Databricks](https://databricks.com/) for Delta Lake + Spark SQL + `WITH RECURSIVE` support
+
+## Author
+
+**Bruno Messias**
+[LinkedIn](https://www.linkedin.com/in/bruno-messias-510553193/) | [GitHub](https://github.com/devmessias)
+
+---
+
+**Status**: Active development | **Version**: 0.1.0 (Alpha) | **Python**: 3.12+

@@ -6,6 +6,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 tests/output/
+docs/development
+docs_help_dev
 .vscode
 # C extensions
 *.so

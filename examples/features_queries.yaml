@@ -776,3 +776,37 @@ examples:
         JOIN (SELECT ... FROM Person WHERE salary > 50000) AS f
         JOIN ...
         JOIN (SELECT ... FROM Company WHERE industry = 'Tech') AS c
+
+  - description: "Variable-length paths with multi-hop traversal and aggregation"
+    application: "Features: Complex graph traversal with aggregation"
+    query: |
+      MATCH (p:Person)-[:KNOWS*1..3]-(friend:Person)-[:WORKS_AT]->(c:Company)
+      WHERE c.industry = 'Technology'
+      RETURN p.name, COUNT(DISTINCT friend) AS tech_connections
+      ORDER BY tech_connections DESC
+      LIMIT 10
+    notes: |
+      This query demonstrates a powerful combination of features:
+        1. Variable-length path: KNOWS*1..3 (1 to 3 hops)
+        2. Pattern continuation after varlen path
+        3. Filter on final relationship target
+        4. Aggregation with COUNT(DISTINCT)
+        5. Ordering by aggregated column
+
+      REAL-WORLD USE: Find people with the most connections to tech workers.
+      Used in professional networking, talent acquisition, and social graph analysis.
+
+      OPTIMIZATION: Filter on c.industry pushed down before joins.
+
+      COMPLEXITY: O(n^3) for 3-hop traversal, but filtered early.
+      Result deduplication via DISTINCT crucial for accurate counts.
+
+      SQL Pattern:
+        WITH RECURSIVE path AS (...)  -- Variable-length expansion
+        SELECT p.name, COUNT(DISTINCT friend_id) AS tech_connections
+        FROM path
+        JOIN WorksAt ON ...
+        JOIN (SELECT ... FROM Company WHERE industry = 'Technology') AS c
+        GROUP BY p.name
+        ORDER BY tech_connections DESC
+        LIMIT 10
