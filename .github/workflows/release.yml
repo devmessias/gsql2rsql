@@ -1,23 +1,31 @@
-name: Release
+name: Release & Publish
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:  # Allow manual trigger
 
 permissions:
-  contents: write
-  id-token: write
+  contents: write      # Create releases and tags
+  id-token: write      # OIDC for PyPI trusted publishing
 
 jobs:
   release:
+    name: Create Release
     runs-on: ubuntu-latest
-    concurrency: release
+    concurrency: release  # Prevent concurrent releases
+
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history for semantic-release
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.12
@@ -26,7 +34,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Install dependencies
         run: |
@@ -37,29 +47,60 @@ jobs:
       - name: Run tests
         run: make test-no-pyspark
 
-      - name: Python Semantic Release
+      - name: Semantic Release (version bump, changelog, tag)
         id: release
         uses: python-semantic-release/python-semantic-release@v9.8.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to PyPI
-        if: steps.release.outputs.released == 'true'
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # Uses OIDC authentication (no token needed)
-          # Configure at: https://pypi.org/manage/account/publishing/
-
-      - name: Publish docs to GitHub Pages
-        if: steps.release.outputs.released == 'true'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          cname: gsql2rsql.dev  # Optional: your custom domain
-
-      - name: Notify release
+      - name: Build package
         if: steps.release.outputs.released == 'true'
         run: |
-          echo "Released version ${{ steps.release.outputs.version }}"
-          echo "Changelog: ${{ steps.release.outputs.changelog }}"
+          uv pip install build
+          python -m build
+
+      - name: Upload build artifacts
+        if: steps.release.outputs.released == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/gsql2rsql/
+
+    permissions:
+      id-token: write  # OIDC for trusted publishing
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # OIDC trusted publisher - configure at: https://pypi.org/manage/account/publishing/
+        # Project: gsql2rsql
+        # Workflow: release.yml
+        # Environment: pypi
+
+  notify:
+    name: Notify Release
+    needs: [release, publish-pypi]
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print release info
+        run: |
+          echo "🎉 Released version ${{ needs.release.outputs.version }}"
+          echo "📦 Published to PyPI: https://pypi.org/project/gsql2rsql/${{ needs.release.outputs.version }}/"
+          echo "🏷️  Tag: ${{ needs.release.outputs.tag }}"
