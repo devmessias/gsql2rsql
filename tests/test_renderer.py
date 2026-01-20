@@ -156,13 +156,13 @@ class TestSQLTableDescriptor:
     """Tests for SQL table descriptor (Databricks format)."""
 
     def test_full_table_name_with_schema(self) -> None:
-        """Test full table name with schema - only quotes identifiers with special chars."""
+        """Test full table name with schema - returns as-is without quoting."""
         descriptor = SQLTableDescriptor(
             table_or_view_name="users",
             schema_name="catalog.schema",
         )
-        # Schema contains dot so it's quoted, but 'users' is a simple identifier
-        assert descriptor.full_table_name == "`catalog.schema`.users"
+        # Identifiers are returned as-is - user is responsible for backticks
+        assert descriptor.full_table_name == "catalog.schema.users"
 
     def test_full_table_name_without_schema(self) -> None:
         """Test full table name without schema - simple identifiers are not quoted."""
@@ -183,12 +183,12 @@ class TestSQLTableDescriptor:
         assert descriptor.full_table_name == "users"
 
     def test_full_table_name_with_special_chars(self) -> None:
-        """Test that identifiers with special characters are quoted."""
+        """Test that identifiers are returned as-is even with special characters."""
         descriptor = SQLTableDescriptor(
-            table_or_view_name="user table",
+            table_or_view_name="`user table`",  # User provides backticks
             schema_name="",
         )
-        # Contains space, must be quoted
+        # Returns exactly what user provided
         assert descriptor.full_table_name == "`user table`"
 
     def test_parse_table_name_with_schema(self) -> None:

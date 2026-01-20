@@ -97,44 +97,22 @@ class SQLTableDescriptor:
         - Two-part: schema.table
         - Three-part: catalog.schema.table
 
-        We avoid the 'dbo' prefix which is SQL Server convention.
-        Only quote identifiers containing special characters.
+        Table names are returned exactly as provided by the user.
+        If backticks are needed, they should be included by the user when
+        creating the SQLTableDescriptor.
         """
         table_name = self.table_or_view_name
 
         # If table_name already contains dots (e.g., catalog.schema.table),
         # use it directly without adding schema prefix
         if "." in table_name:
-            # Quote each part individually if needed
-            parts = table_name.split(".")
-            quoted_parts = [self._quote_identifier(p) for p in parts]
-            return ".".join(quoted_parts)
+            return table_name
 
         # Skip 'dbo' prefix - it's a SQL Server convention, not Databricks
         if self.schema_name and self.schema_name.lower() != "dbo":
-            return f"{self._quote_identifier(self.schema_name)}.{self._quote_identifier(table_name)}"
+            return f"{self.schema_name}.{table_name}"
 
-        return self._quote_identifier(table_name)
-
-    @staticmethod
-    def _quote_identifier(identifier: str) -> str:
-        """Quote an identifier if it contains special characters or is a reserved word.
-
-        For Databricks SQL, backticks are used for quoting.
-        Only quote if necessary (contains spaces, special chars, or starts with digit).
-
-        If the identifier already has backticks, return it as-is to avoid double-quoting.
-        """
-        # Already quoted with backticks - don't double-quote
-        if identifier.startswith("`") and identifier.endswith("`"):
-            return identifier
-
-        # Simple identifiers don't need quoting
-        if identifier.isidentifier() and not identifier[0].isdigit():
-            return identifier
-
-        # Quote with backticks for Databricks SQL
-        return f"`{identifier}`"
+        return table_name
 
 
 class ISQLDBSchemaProvider(IGraphSchemaProvider, ABC):

@@ -9,8 +9,8 @@ Example:
     >>>
     >>> graph = GraphContext(
     ...     spark=spark,
-    ...     nodes_table="`catalog`.`schema`.`nodes`",
-    ...     edges_table="`catalog`.`schema`.`edges`"
+    ...     nodes_table="catalog.schema.nodes",
+    ...     edges_table="catalog.schema.edges"
     ... )
     >>>
     >>> # Transpile OpenCypher to SQL
@@ -69,15 +69,15 @@ class GraphContext:
         >>> # Basic usage (creates all possible edge combinations)
         >>> graph = GraphContext(
         ...     spark=spark,
-        ...     nodes_table="`catalog`.`schema`.`nodes`",
-        ...     edges_table="`catalog`.`schema`.`edges`"
+        ...     nodes_table="catalog.schema.nodes",
+        ...     edges_table="catalog.schema.edges"
         ... )
         >>>
         >>> # Efficient usage (discovers only real edge combinations)
         >>> graph = GraphContext(
         ...     spark=spark,
-        ...     nodes_table="`catalog`.`schema`.`nodes`",
-        ...     edges_table="`catalog`.`schema`.`edges`",
+        ...     nodes_table="catalog.schema.nodes",
+        ...     edges_table="catalog.schema.edges",
         ...     discover_edge_combinations=True  # ← Much faster for large schemas!
         ... )
         >>>
@@ -90,7 +90,7 @@ class GraphContext:
         spark: "SparkSession | None" = None,
         nodes_table: str | None = None,
         edges_table: str | None = None,
-        node_type_col: str = "type",
+        node_type_col: str = "node_mltype",
         edge_type_col: str = "relationship_type",
         node_id_col: str = "node_id",
         edge_src_col: str = "src",
@@ -211,8 +211,8 @@ class GraphContext:
         Example:
             >>> # Simple usage (creates all combinations)
             >>> graph = GraphContext(
-            ...     nodes_table="`catalog`.`schema`.`nodes`",
-            ...     edges_table="`catalog`.`schema`.`edges`"
+            ...     nodes_table="catalog.schema.nodes",
+            ...     edges_table="catalog.schema.edges"
             ... )
             >>> graph.set_types(
             ...     node_types=["Person", "Company"],
