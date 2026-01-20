@@ -2,6 +2,49 @@
 
 
 
+## v0.1.6 (2026-01-20)
+
+### Documentation
+
+* docs: update Quick Start with realistic fraud detection BFS example
+
+Replaced simple Person-Company query with a more compelling use case:
+
+**Previous Example:**
+- Simple 1-hop relationship query (Person works at Company)
+- Basic WHERE filter on industry
+- No graph traversal
+
+**New Example - Fraud Detection with BFS:**
+- BFS graph traversal up to depth 4 from suspicious account (id: 12345)
+- Multi-edge schema (AMIGOS, FAMILIARES, TRANSACAO_SUSPEITA)
+- Query filters to ONLY traverse TRANSACAO_SUSPEITA edges
+- Demonstrates ignoring irrelevant edge types (social relationships)
+- Returns risk scores and path depth for fraud network analysis
+- Uses WITH RECURSIVE for efficient BFS on Delta Lake
+
+Benefits:
+- Shows real-world fraud detection use case
+- Demonstrates variable-length paths (*1..4)
+- Illustrates selective edge traversal in multi-edge graphs
+- More compelling for enterprise users
+- Better showcases Databricks SQL WITH RECURSIVE capabilities
+
+Validated:
+- ✅ Generates correct WITH RECURSIVE SQL
+- ✅ Only uses fraud.transacao_suspeita table
+- ✅ Ignores fraud.amigos and fraud.familiares
+- ✅ Limits depth to 4 hops
+- ✅ Returns all expected columns (origem_id, destino_id, risk_score, profundidade)
+- ✅ Includes ORDER BY and LIMIT
+
+Co-Authored-By: Claude Sonnet 4.5 &lt;noreply@anthropic.com&gt; ([`24133bc`](https://github.com/devmessias/gsql2rsql/commit/24133bc2a5a463e9941676a3c84c7185498eb775))
+
+### Fix
+
+* fix(docs): ai slop ([`4bfbeac`](https://github.com/devmessias/gsql2rsql/commit/4bfbeac4a57103d6eef8f477ec37a30f12b5c903))
+
+
 ## v0.1.5 (2026-01-20)
 
 ### Ci
