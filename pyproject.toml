@@ -105,9 +105,9 @@ addopts = "-v --tb=short"
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/gsql2rsql/__init__.py:__version__"]
 branch = "main"
-upload_to_vcs_release = true
-upload_to_pypi = false  # We use GitHub Actions OIDC
-build_command = "uv pip install build && uv run python -m build"
+upload_to_vcs_release = false  # GitHub Actions will create release
+upload_to_pypi = false  # GitHub Actions will publish with OIDC
+build_command = ""  # GitHub Actions will build with uv
 
 [tool.semantic_release.branches.main]
 match = "main"
