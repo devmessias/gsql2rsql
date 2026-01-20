@@ -197,22 +197,24 @@ def generate_index_page(
         lines.append(f"- **Failed**: {total - success}")
         lines.append("")
 
-    lines.extend([
-        "## About These Examples",
-        "",
-        "All queries are sourced from real-world use cases in:",
-        "",
-        "- **Fraud Detection**: Graph-based fraud ring detection, anomaly identification",
-        "- **Credit Analysis**: Relationship-based credit risk assessment",
-        "- **Feature Engineering**: Graph features for ML models",
-        "",
-        "!!! tip \"Try These Yourself\"",
-        "    You can run any of these queries through the transpiler using:",
-        "    ```bash",
-        "    gsql2rsql translate --schema examples/fraud_queries.yaml \"<your-query>\"",
-        "    ```",
-        "",
-    ])
+    lines.extend(
+        [
+            "## About These Examples",
+            "",
+            "All queries are sourced from real-world use cases in:",
+            "",
+            "- **Fraud Detection**: Graph-based fraud ring detection, anomaly identification",
+            "- **Credit Analysis**: Relationship-based credit risk assessment",
+            "- **Simple examples**: Simple examples",
+            "",
+            '!!! tip "Try These Yourself"',
+            "    You can run any of these queries through the transpiler using:",
+            "    ```bash",
+            '    gsql2rsql translate --schema examples/fraud_queries.yaml "<your-query>"',
+            "    ```",
+            "",
+        ]
+    )
 
     output_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"  ✓ Generated: {output_path.relative_to(output_path.parent.parent)}")

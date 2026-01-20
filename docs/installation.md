@@ -28,123 +28,6 @@ Once published, install using pip:
 pip install gsql2rsql
 ```
 
----
-
-## Install from Source
-
-### Using uv (Recommended)
-
-[uv](https://github.com/astral-sh/uv) is a fast Python package manager:
-
-```bash
-# Clone repository
-git clone https://github.com/devmessias/gsql2rsql
-cd gsql2rsql/python
-
-# Install uv if not already installed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create virtual environment and install
-uv sync
-uv pip install -e .
-```
-
-### Using pip
-
-```bash
-# Clone repository
-git clone https://github.com/devmessias/gsql2rsql
-cd gsql2rsql/python
-
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install in editable mode
-pip install -e .
-```
-
----
-
-## Development Installation
-
-For development with all testing dependencies:
-
-```bash
-# Using uv
-uv sync --extra dev
-uv pip install -e ".[dev]"
-
-# Or using pip
-pip install -e ".[dev]"
-```
-
-This installs additional tools:
-- **pytest**: Testing framework
-- **ruff**: Linting and formatting
-- **mypy**: Type checking
-- **PySpark**: For validation tests
-
----
-
-## Verify Installation
-
-Check that gsql2rsql is installed:
-
-```bash
-gsql2rsql --version
-```
-
-Test transpilation:
-
-```bash
-echo "MATCH (p:Person) RETURN p.name" | gsql2rsql translate --schema examples/schema.json
-```
-
----
-
-## Development Only: PySpark Setup
-
-**PySpark is only needed if you're contributing to the project and want to run validation tests locally.**
-
-Regular users do NOT need PySpark - the transpiler works without it.
-
-### Install Development Dependencies
-
-```bash
-# Install all dev dependencies including PySpark
-pip install -e ".[dev]"
-```
-
-### Install Java (PySpark requirement)
-
-PySpark requires Java 8 or 11:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install openjdk-11-jdk
-
-# macOS
-brew install openjdk@11
-```
-
-### Verify PySpark
-
-```bash
-python -c "import pyspark; print(pyspark.__version__)"
-```
-
-### Run Validation Tests
-
-```bash
-# Run tests without PySpark (fast)
-make test-no-pyspark
-
-# Run PySpark validation tests (slower)
-make test-pyspark
-```
-
----
 
 ## Your First Query
 
@@ -154,7 +37,7 @@ This tutorial walks through transpiling your first OpenCypher query to SQL.
 
 gsql2rsql needs a schema that maps your graph to SQL tables. You can use Python dataclasses or JSON format.
 
-#### Using Python (Recommended)
+#### Using Python
 
 ```python
 from gsql2rsql.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
@@ -375,36 +258,110 @@ ORDER BY _gsql2rsql_p_age DESC
 LIMIT 10
 ```
 
-### Step 4: Execute on Databricks
 
-Save the SQL to a file and execute it:
+## Dev
 
-```python
-from pyspark.sql import SparkSession
 
-spark = SparkSession.builder.appName("gsql2rsql").getOrCreate()
+---
 
-# Read generated SQL
-with open("output.sql") as f:
-    sql = f.read()
+## Install from Source
 
-# Execute
-result = spark.sql(sql)
-result.show()
+### Using uv (Recommended)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package manager:
+
+```bash
+# Clone repository
+git clone https://github.com/devmessias/gsql2rsql
+cd gsql2rsql/python
+
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install
+uv sync
+uv pip install -e .
 ```
 
-### Understanding the Output
+### Using pip
 
-The generated SQL:
+```bash
+# Clone repository
+git clone https://github.com/devmessias/gsql2rsql
+cd gsql2rsql/python
 
-1. **Reads from tables**: `catalog.mydb.Person`, `catalog.mydb.PersonWorksAt`, `catalog.mydb.Company`
-2. **Projects columns** with prefixed names (e.g., `_gsql2rsql_p_name`)
-3. **Joins tables** based on relationship IDs
-4. **Applies WHERE filter** on `c.industry = 'Technology'`
-5. **Orders and limits** results
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-The prefixed column names (`_gsql2rsql_*`) avoid collisions with user column names.
+# Install in editable mode
+pip install -e .
+```
 
+---
+
+## Development Installation
+
+For development with all testing dependencies:
+
+```bash
+# Using uv
+uv sync --extra dev
+uv pip install -e ".[dev]"
+
+# Or using pip
+pip install -e ".[dev]"
+```
+
+This installs additional tools:
+- **pytest**: Testing framework
+- **ruff**: Linting and formatting
+- **mypy**: Type checking
+- **PySpark**: For validation tests
+
+---
+
+## Verify Installation
+
+Check that gsql2rsql is installed:
+
+```bash
+gsql2rsql --version
+```
+
+Test transpilation:
+
+```bash
+echo "MATCH (p:Person) RETURN p.name" | gsql2rsql translate --schema examples/schema.json
+```
+
+---
+
+## Development Only: PySpark Setup
+
+**PySpark is only needed if you're contributing to the project and want to run validation tests locally.**
+
+Regular users do NOT need PySpark - the transpiler works without it.
+
+### Install Development Dependencies
+
+```bash
+# Install all dev dependencies including PySpark
+pip install -e ".[dev]"
+```
+
+
+### Run Validation Tests
+
+```bash
+# Run tests without PySpark (fast)
+make test-no-pyspark
+
+# Run PySpark validation tests (slower)
+make test-pyspark
+```
+
+---
 ---
 
 ## Next Steps

@@ -64,7 +64,7 @@ Into optimized Databricks SQL with `WITH RECURSIVE` for path traversal!
 
 - **[🔍 Fraud Detection](examples/fraud.md)** - Detect fraud rings and anomalies using graph pattern matching
 - **[💳 Credit Risk Analysis](examples/credit.md)** - Analyze relationship-based credit risk
-- **[🎯 Feature Engineering](examples/features.md)** - Graph features for ML models
+- **[🎯 Simple features](examples/features.md)** - Simple features
 
 See the [Examples Gallery](examples/index.md) for 69 complete query examples with generated SQL.
 
