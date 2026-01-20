@@ -219,6 +219,9 @@ dump-sql-save:  ## Dump and save SQL to actual/ (usage: make dump-sql-save ID=01
 dump-sql-custom:  ## Dump SQL for custom Cypher (usage: make dump-sql-custom CYPHER="MATCH (n) RETURN n")
 	@$(UV) run python scripts/dump_query_sql.py 00 custom --cypher "$(CYPHER)"
 
+generate-golden-files:  ## Generate all golden SQL files for tests
+	@$(UV) run python scripts/generate_all_golden_files.py
+
 test-transpile:  ## Run transpiler tests only
 	$(UV) run pytest tests/transpile_tests/ -v
 
