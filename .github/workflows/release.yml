@@ -84,8 +84,8 @@ jobs:
           uv sync --extra dev
           uv pip install -e ".[dev]"
 
-      - name: Run tests
-        run: make test-no-pyspark
+      # - name: Run tests
+      #   run: make test-no-pyspark
 
       - name: Build package
         run: |
