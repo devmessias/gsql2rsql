@@ -564,9 +564,24 @@ class Entity(TreeNode, ABC):
 
 @dataclass
 class NodeEntity(Entity):
-    """A node entity in a MATCH pattern."""
+    """A node entity in a MATCH pattern.
 
-    pass
+    Supports inline property filters: (p:Person {name: 'Alice', age: 30})
+
+    The inline_properties field stores property filters specified directly
+    in the node pattern, which will be converted to WHERE predicates by
+    the planner.
+    """
+
+    # Inline property filters from pattern: (n:Person {name: 'Alice'})
+    inline_properties: "QueryExpressionMapLiteral | None" = None
+
+    @property
+    def children(self) -> list[TreeNode]:
+        """Return child nodes for AST traversal."""
+        if self.inline_properties:
+            return [self.inline_properties]
+        return []
 
 
 class RelationshipDirection(Enum):
@@ -579,7 +594,14 @@ class RelationshipDirection(Enum):
 
 @dataclass
 class RelationshipEntity(Entity):
-    """A relationship entity in a MATCH pattern."""
+    """A relationship entity in a MATCH pattern.
+
+    Supports inline property filters: -[r:KNOWS {since: 2020}]->
+
+    The inline_properties field stores property filters specified directly
+    in the relationship pattern, which will be converted to WHERE predicates
+    by the planner.
+    """
 
     direction: RelationshipDirection = RelationshipDirection.BOTH
     left_entity_name: str = ""
@@ -588,10 +610,20 @@ class RelationshipEntity(Entity):
     min_hops: int | None = None  # None means fixed (not variable length)
     max_hops: int | None = None  # None means unlimited
 
+    # Inline property filters from pattern: -[r:KNOWS {weight: 1.0}]->
+    inline_properties: "QueryExpressionMapLiteral | None" = None
+
     @property
     def is_variable_length(self) -> bool:
         """Check if this is a variable-length relationship pattern."""
         return self.min_hops is not None or self.max_hops is not None
+
+    @property
+    def children(self) -> list[TreeNode]:
+        """Return child nodes for AST traversal."""
+        if self.inline_properties:
+            return [self.inline_properties]
+        return []
 
     def __str__(self) -> str:
         dir_char = {

@@ -810,3 +810,242 @@ examples:
         GROUP BY p.name
         ORDER BY tech_connections DESC
         LIMIT 10
+
+  # =========================================================================
+  # INLINE PROPERTY FILTERS
+  # =========================================================================
+  # Feature: Inline property filters in MATCH patterns
+  # Syntax: (n:Label {property: value}) instead of WHERE n.property = value
+  # Benefits: More compact syntax, automatic optimization for BFS/DFS
+  # =========================================================================
+
+  - description: "Inline property filter on source node"
+    application: "Features: Inline filters (source node)"
+    query: |
+      MATCH (p:Person {name: 'Alice'})-[:KNOWS]->(f:Person)
+      RETURN p.name, f.name
+      LIMIT 20
+    notes: |
+      Inline property filter {name: 'Alice'} applied on source node.
+
+      EQUIVALENT TO:
+        MATCH (p:Person)-[:KNOWS]->(f:Person)
+        WHERE p.name = 'Alice'
+        RETURN p.name, f.name
+
+      SYNTAX: More compact and readable - filter is part of the pattern.
+
+      SQL PATTERN:
+        FROM (SELECT ... FROM Person WHERE name = 'Alice') AS p
+        JOIN Knows ON p.id = person_id
+        JOIN Person AS f ON f.id = friend_id
+
+  - description: "Inline property filter on target node"
+    application: "Features: Inline filters (target node)"
+    query: |
+      MATCH (p:Person)-[:KNOWS]->(f:Person {age: 30})
+      RETURN p.name, f.name
+      LIMIT 20
+    notes: |
+      Inline property filter {age: 30} applied on target node.
+
+      FILTER POSITION: Applied on right-hand side of the pattern.
+
+      SQL PATTERN:
+        FROM Person AS p
+        JOIN Knows ON p.id = person_id
+        JOIN (SELECT ... FROM Person WHERE age = 30) AS f ON f.id = friend_id
+
+  - description: "Inline property filter on relationship"
+    application: "Features: Inline filters (relationship)"
+    query: |
+      MATCH (p:Person)-[:KNOWS {since: 2020}]->(f:Person)
+      RETURN p.name, f.name
+      LIMIT 20
+    notes: |
+      Inline property filter {since: 2020} applied on relationship.
+
+      USE CASE: Filter edges by their properties (timestamps, weights, etc).
+
+      SQL PATTERN:
+        FROM Person AS p
+        JOIN (SELECT ... FROM Knows WHERE since = 2020) AS e ON p.id = e.person_id
+        JOIN Person AS f ON f.id = e.friend_id
+
+  - description: "Multiple inline property filters on same element"
+    application: "Features: Multiple inline filters"
+    query: |
+      MATCH (p:Person {name: 'Alice', age: 30, active: true})-[:KNOWS]->(f:Person)
+      RETURN p.name, p.age, f.name
+      LIMIT 20
+    notes: |
+      Multiple inline properties combined with AND automatically.
+
+      EQUIVALENT TO:
+        WHERE p.name = 'Alice' AND p.age = 30 AND p.active = true
+
+      READABILITY: All filters for one element are grouped together.
+
+      SQL PATTERN:
+        FROM (
+          SELECT ... FROM Person
+          WHERE name = 'Alice' AND age = 30 AND active = true
+        ) AS p
+
+  - description: "Combined inline filters - source, target, and relationship"
+    application: "Features: Inline filters (combined)"
+    query: |
+      MATCH (p:Person {name: 'Alice'})-[:KNOWS {since: 2020}]->(f:Person {age: 30})
+      RETURN p.name, f.name
+      LIMIT 20
+    notes: |
+      Inline filters on ALL three elements: source, relationship, target.
+
+      EQUIVALENT TO:
+        WHERE p.name = 'Alice' AND r.since = 2020 AND f.age = 30
+
+      READABILITY BENEFIT: Filters are positioned next to the elements they constrain.
+
+      SQL PATTERN:
+        FROM (SELECT ... FROM Person WHERE name = 'Alice') AS p
+        JOIN (SELECT ... FROM Knows WHERE since = 2020) AS e ON ...
+        JOIN (SELECT ... FROM Person WHERE age = 30) AS f ON ...
+
+  - description: "Inline filter combined with explicit WHERE clause"
+    application: "Features: Inline + WHERE"
+    query: |
+      MATCH (p:Person {name: 'Alice'})-[:KNOWS]->(f:Person)
+      WHERE f.age > 25
+      RETURN p.name, f.name
+      LIMIT 20
+    notes: |
+      Inline filters can be combined with explicit WHERE clause.
+
+      COMBINED AS: (p.name = 'Alice') AND (f.age > 25)
+
+      BEST PRACTICE:
+        - Use inline for equality filters (property = value)
+        - Use WHERE for complex predicates (>, <, BETWEEN, etc.)
+
+      SQL PATTERN:
+        FROM (SELECT ... FROM Person WHERE name = 'Alice') AS p
+        JOIN Knows ON ...
+        JOIN Person AS f ON ...
+        WHERE f.age > 25
+
+  - description: "BFS with inline source filter (CRITICAL OPTIMIZATION)"
+    application: "Features: Inline filters (BFS optimization)"
+    query: |
+      MATCH path = (a:Person {name: 'Alice'})-[:KNOWS*1..3]->(b:Person)
+      RETURN b.name, length(path) AS hops
+      ORDER BY hops
+      LIMIT 50
+    notes: |
+      CRITICAL OPTIMIZATION for variable-length paths!
+
+      Inline filter on SOURCE node {name: 'Alice'} is pushed to the
+      BASE CASE of the recursive CTE, so BFS starts ONLY from Alice,
+      not from all nodes in the graph.
+
+      PERFORMANCE IMPACT:
+        - Without filter: O(N * E^k) - starts from ALL N nodes
+        - With inline filter: O(1 * E^k) - starts from 1 node only
+        - For large graphs, this is the difference between seconds and hours!
+
+      EQUIVALENT TO:
+        MATCH path = (a:Person)-[:KNOWS*1..3]->(b:Person)
+        WHERE a.name = 'Alice'
+
+      SQL PATTERN:
+        WITH RECURSIVE bfs AS (
+          -- BASE CASE: Filter applied HERE (before traversal)
+          SELECT e.src, e.dst, 1 AS depth
+          FROM Knows e
+          JOIN Person src ON src.id = e.src
+          WHERE (src.name) = ('Alice')  ← INLINE FILTER OPTIMIZATION
+
+          UNION ALL
+
+          -- RECURSIVE CASE: No source filter (only depth check)
+          SELECT e.src, e.dst, depth + 1
+          FROM bfs b
+          JOIN Knows e ON b.dst = e.src
+          WHERE depth < 3
+        )
+
+  - description: "BFS with inline filter on target node"
+    application: "Features: Inline filters (target in BFS)"
+    query: |
+      MATCH path = (a:Person)-[:KNOWS*1..3]->(b:Person {active: true})
+      RETURN a.name, b.name, length(path) AS hops
+      ORDER BY hops
+      LIMIT 50
+    notes: |
+      Inline filter on TARGET node {active: true} is applied AFTER traversal.
+
+      DIFFERENCE FROM SOURCE FILTER:
+        - Source filter: Applied in BASE CASE (optimizes starting point)
+        - Target filter: Applied in FINAL WHERE (filters results)
+
+      BFS BEHAVIOR:
+        1. Traverse graph from ALL source nodes (no starting point filter)
+        2. Follow KNOWS edges for 1-3 hops
+        3. Filter final results where b.active = true
+
+      SQL PATTERN:
+        WITH RECURSIVE bfs AS (...)  -- Full traversal
+        SELECT a.name, b.name, depth AS hops
+        FROM bfs
+        JOIN Person b ON b.id = bfs.dst
+        WHERE (b.active) = (true)  ← TARGET FILTER (post-traversal)
+
+  - description: "Anonymous node with inline filter"
+    application: "Features: Inline filters (anonymous nodes)"
+    query: |
+      MATCH (:Person {name: 'Alice'})-[:KNOWS]->(f:Person)
+      RETURN f.name
+      LIMIT 20
+    notes: |
+      Inline filters work on anonymous nodes (nodes without variables).
+
+      USE CASE: Filter starting/ending nodes that aren't returned.
+
+      TRANSPILER HANDLING:
+        1. Auto-assign alias: (:Person {name: 'Alice'}) → (_anon1:Person)
+        2. Convert filter: _anon1.name = 'Alice'
+        3. Push to DataSource
+
+      SQL PATTERN:
+        FROM (SELECT ... FROM Person WHERE name = 'Alice') AS _anon1
+        JOIN Knows ON _anon1.id = person_id
+        JOIN Person AS f ON f.id = friend_id
+
+  - description: "Inline filter comparison with WHERE (semantics)"
+    application: "Features: Inline vs WHERE semantics"
+    query: |
+      MATCH (p:Person {name: 'Alice'})-[:KNOWS]->(f:Person)
+      RETURN COUNT(*) AS count_inline
+    notes: |
+      SEMANTIC EQUIVALENCE: Inline filters generate identical SQL to WHERE.
+
+      COMPARE WITH:
+        MATCH (p:Person)-[:KNOWS]->(f:Person)
+        WHERE p.name = 'Alice'
+        RETURN COUNT(*)
+
+      Both queries produce the SAME SQL and SAME results.
+
+      WHEN TO USE INLINE:
+        ✅ Equality filters (property = literal_value)
+        ✅ Structural constraints (part of the pattern)
+        ✅ BFS/DFS source filters (visual clarity of optimization)
+
+      WHEN TO USE WHERE:
+        ✅ Complex predicates (>, <, BETWEEN, LIKE, IN)
+        ✅ Cross-variable filters (p.age > f.age)
+        ✅ Dynamic values (property = $parameter)
+
+      CURRENT LIMITATION:
+        ⚠️  Inline filters only support LITERAL values
+        ⚠️  Variable references not supported yet
+            Example that doesn't work: {id: $param}

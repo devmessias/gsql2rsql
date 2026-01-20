@@ -23,6 +23,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionAggregationFunction,
     QueryExpressionBinary,
     QueryExpressionFunction,
+    QueryExpressionMapLiteral,
     QueryExpressionProperty,
     QueryExpressionValue,
     QueryExpressionWithAlias,
@@ -31,6 +32,11 @@ from gsql2rsql.parser.ast import (
     RelationshipEntity,
     SingleQueryNode,
     UnwindClause,
+)
+from gsql2rsql.parser.operators import (
+    BinaryOperator,
+    BinaryOperatorInfo,
+    BinaryOperatorType,
 )
 from gsql2rsql.planner.operators import (
     AggregationBoundaryOperator,
@@ -790,6 +796,88 @@ class LogicalPlan:
 
         return current_op
 
+    def _convert_inline_properties_to_where(
+        self, match_clause: MatchClause
+    ) -> QueryExpression | None:
+        """Convert inline property filters to WHERE predicates.
+
+        Extracts inline properties from all entities in the MATCH pattern
+        and converts them to equality predicates combined with AND.
+
+        IMPORTANT: Currently only supports LITERAL values (strings, numbers,
+        booleans, null). Variable references (e.g., {id: variable}) are
+        skipped to avoid issues with UNWIND variable scoping.
+
+        Example:
+            MATCH (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(b)
+            Produces:
+            a.name = 'Alice' AND a.age = 30 AND r.since = 2020
+
+        Args:
+            match_clause: The MATCH clause containing pattern entities
+
+        Returns:
+            QueryExpression combining all inline property filters, or None
+            if no inline properties are present
+        """
+        predicates: list[QueryExpression] = []
+
+        # Extract inline properties from all entities (nodes and relationships)
+        for entity in match_clause.pattern_parts:
+            # Check if entity has inline_properties attribute
+            if not hasattr(entity, "inline_properties"):
+                continue
+
+            inline_props = entity.inline_properties
+            if not inline_props or not isinstance(
+                inline_props, QueryExpressionMapLiteral
+            ):
+                continue
+
+            # Convert each property to equality predicate: entity.prop = value
+            for prop_name, prop_value in inline_props.entries:
+                # LIMITATION: Skip variable references for now
+                # Variable references in inline properties (e.g., {id: txId}
+                # where txId comes from UNWIND) need special handling that
+                # isn't implemented yet. Only convert literal values.
+                if isinstance(prop_value, QueryExpressionProperty):
+                    # This is a variable/property reference, not a literal
+                    # Skip it to maintain backward compatibility with existing
+                    # tests that rely on inline properties being ignored
+                    # when they contain variables.
+                    continue
+
+                predicate = QueryExpressionBinary(
+                    left_expression=QueryExpressionProperty(
+                        variable_name=entity.alias, property_name=prop_name
+                    ),
+                    right_expression=prop_value,
+                    operator=BinaryOperatorInfo(
+                        BinaryOperator.EQ, BinaryOperatorType.COMPARISON
+                    ),
+                )
+                predicates.append(predicate)
+
+        if not predicates:
+            return None
+
+        # Combine all predicates with AND
+        if len(predicates) == 1:
+            return predicates[0]
+
+        and_op = BinaryOperatorInfo(
+            BinaryOperator.AND, BinaryOperatorType.LOGICAL
+        )
+        result = predicates[0]
+        for pred in predicates[1:]:
+            result = QueryExpressionBinary(
+                left_expression=result,
+                right_expression=pred,
+                operator=and_op,
+            )
+
+        return result
+
     def _create_match_tree(
         self,
         match_clause: MatchClause,
@@ -804,6 +892,45 @@ class LogicalPlan:
             return_exprs: RETURN clause expressions for path usage analysis.
                 Used to determine if edge collection is needed in recursive CTEs.
         """
+        # =====================================================================
+        # AUTO-ALIAS ASSIGNMENT
+        # =====================================================================
+        # Assign auto-generated aliases for entities without explicit aliases
+        # This must happen BEFORE inline property conversion so that anonymous
+        # nodes have valid aliases for filter generation.
+        # =====================================================================
+        auto_alias_counter = 0
+        for entity in match_clause.pattern_parts:
+            if not entity.alias:
+                auto_alias_counter += 1
+                entity.alias = f"_anon{auto_alias_counter}"
+
+        # =====================================================================
+        # INLINE PROPERTY FILTERS → WHERE CONVERSION
+        # =====================================================================
+        # Convert inline property filters from pattern entities to WHERE clause
+        # Example: (a:Person {name: 'Alice'}) → WHERE a.name = 'Alice'
+        # This happens after auto-alias assignment so all entities have
+        # valid aliases for filter generation.
+        # =====================================================================
+        inline_where = self._convert_inline_properties_to_where(match_clause)
+
+        # Merge inline filters with existing WHERE clause using AND
+        if inline_where:
+            if match_clause.where_expression:
+                # Combine: inline_filters AND existing_where
+                and_op = BinaryOperatorInfo(
+                    BinaryOperator.AND, BinaryOperatorType.LOGICAL
+                )
+                match_clause.where_expression = QueryExpressionBinary(
+                    left_expression=inline_where,
+                    right_expression=match_clause.where_expression,
+                    operator=and_op,
+                )
+            else:
+                # Use inline filters as the WHERE clause
+                match_clause.where_expression = inline_where
+
         # Check for variable-length relationships
         var_length_rel = None
         source_node = None
@@ -1202,15 +1329,12 @@ class LogicalPlan:
     def _create_standard_match_tree(
         self, match_clause: MatchClause, all_ops: list[LogicalOperator]
     ) -> LogicalOperator:
-        """Create standard logical tree for fixed-length MATCH clause."""
-        # Create data source operators for each entity
-        # First, assign auto-generated aliases for entities without explicit aliases
-        auto_alias_counter = 0
-        for entity in match_clause.pattern_parts:
-            if not entity.alias:
-                auto_alias_counter += 1
-                entity.alias = f"_anon{auto_alias_counter}"
+        """Create standard logical tree for fixed-length MATCH clause.
 
+        Note: Auto-alias assignment is now done in _create_match_tree()
+        before this method is called, so all entities have valid aliases.
+        """
+        # Create data source operators for each entity
         entity_ops: dict[str, DataSourceOperator] = {}
         prev_node: NodeEntity | None = None
         # Bug #2 Fix: Track node aliases that have already been seen

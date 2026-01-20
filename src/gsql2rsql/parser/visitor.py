@@ -412,9 +412,23 @@ class CypherVisitor:
         return entities
 
     def visit_oC_NodePattern(self, ctx: Any) -> NodeEntity:
-        """Visit a node pattern context."""
+        """Visit a node pattern context.
+
+        Extracts node alias, labels, and inline property filters.
+
+        Grammar:
+            oC_NodePattern: '(' SP? ( oC_Variable SP? )? ( oC_NodeLabels SP? )?
+                           ( oC_Properties SP? )? ')' ;
+
+        Example patterns:
+            (n)                          # Just variable
+            (n:Person)                   # Variable + label
+            (n:Person {name: 'Alice'})   # Variable + label + properties
+            (:Person {age: 30})          # Label + properties, no variable
+        """
         alias = ""
         entity_name = ""
+        inline_properties = None
 
         if ctx.oC_Variable():
             alias = ctx.oC_Variable().getText()
@@ -427,7 +441,19 @@ class CypherVisitor:
             if ":" in entity_name:
                 entity_name = entity_name.split(":")[0]
 
-        return NodeEntity(alias=alias, entity_name=entity_name)
+        # NEW: Extract inline properties if present
+        if ctx.oC_Properties():
+            # Visit oC_Properties (which can be oC_MapLiteral or oC_Parameter)
+            props = self.visit(ctx.oC_Properties())
+            # Only store if it's a map literal (not a parameter)
+            if isinstance(props, QueryExpressionMapLiteral):
+                inline_properties = props
+
+        return NodeEntity(
+            alias=alias,
+            entity_name=entity_name,
+            inline_properties=inline_properties
+        )
 
     def visit_oC_PatternElementChain(self, ctx: Any) -> list[Entity]:
         """Visit a pattern element chain context."""
@@ -449,7 +475,26 @@ class CypherVisitor:
         return entities
 
     def visit_oC_RelationshipPattern(self, ctx: Any) -> RelationshipEntity:
-        """Visit a relationship pattern context."""
+        """Visit a relationship pattern context.
+
+        Extracts relationship alias, type, direction, variable-length path
+        info, and inline property filters.
+
+        Grammar:
+            oC_RelationshipPattern: oC_LeftArrowHead? SP? oC_Dash
+                                   oC_RelationshipDetail? oC_Dash SP?
+                                   oC_RightArrowHead? ;
+            oC_RelationshipDetail: '[' SP? oC_Variable? SP?
+                                  oC_RelationshipTypes? SP?
+                                  oC_RangeLiteral? SP?
+                                  oC_Properties? SP? ']' ;
+
+        Example patterns:
+            -[r:KNOWS]->                              # Basic relationship
+            -[r:KNOWS {since: 2020}]->                # With properties
+            -[r:KNOWS*1..3]->                         # Variable-length
+            -[r:KNOWS*1..3 {weight: 1.0}]->          # Var-length + props
+        """
         # Determine direction
         text = ctx.getText()
         if "->" in text:
@@ -466,6 +511,7 @@ class CypherVisitor:
         entity_name = ""
         min_hops = None
         max_hops = None
+        inline_properties = None
 
         if detail_ctx:
             if detail_ctx.oC_Variable():
@@ -494,12 +540,19 @@ class CypherVisitor:
                     # Just * means any number of hops (default 1..unlimited)
                     min_hops = 1
 
+            # NEW: Extract inline properties if present
+            if detail_ctx.oC_Properties():
+                props = self.visit(detail_ctx.oC_Properties())
+                if isinstance(props, QueryExpressionMapLiteral):
+                    inline_properties = props
+
         return RelationshipEntity(
             alias=alias,
             entity_name=entity_name,
             direction=direction,
             min_hops=min_hops,
             max_hops=max_hops,
+            inline_properties=inline_properties,
         )
 
     # =========================================================================
