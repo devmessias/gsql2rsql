@@ -2,6 +2,15 @@
 
 
 
+## v0.1.3 (2026-01-20)
+
+### Fix
+
+* fix(ci): separa uv do semantic release ([`d10fe99`](https://github.com/devmessias/gsql2rsql/commit/d10fe9909d6265db1718b38702b042443760f380))
+
+* fix(ci): conflito uv e pip ([`f7752e8`](https://github.com/devmessias/gsql2rsql/commit/f7752e825f4a9cb8174f64d6b0e6d2d38a51591e))
+
+
 ## v0.1.2 (2026-01-20)
 
 ### Fix
