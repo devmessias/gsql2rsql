@@ -250,13 +250,13 @@ docs-generate-pages:  ## Generate documentation pages from artifacts
 docs-generate: docs-generate-artifacts docs-generate-pages  ## Generate all documentation content
 
 docs-serve:  ## Serve documentation locally
-	mkdocs serve
+	$(UV) run mkdocs serve
 
 docs-build:  ## Build documentation site
-	mkdocs build
+	$(UV) run mkdocs build
 
 docs-deploy:  ## Deploy documentation to GitHub Pages
-	mkdocs gh-deploy --force
+	$(UV) run mkdocs gh-deploy --force
 
 docs-clean:  ## Clean documentation build artifacts
 	rm -rf site/ examples/out/ docs/examples/*.md
