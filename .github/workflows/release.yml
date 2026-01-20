@@ -60,6 +60,7 @@ jobs:
       - name: Build package
         if: steps.release.outputs.released == 'true'
         run: |
+          rm -rf dist/
           uv pip install build
           uv run python -m build
 
