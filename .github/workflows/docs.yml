@@ -44,7 +44,7 @@ jobs:
 
       - name: Install documentation dependencies
         run: |
-          pip install -r requirements-docs.txt
+          uv pip install -r requirements-docs.txt
 
       - name: Generate transpilation artifacts
         run: |
@@ -56,8 +56,8 @@ jobs:
 
       - name: Build documentation
         run: |
-          mkdocs build --strict
+          uv run mkdocs build --strict
 
       - name: Deploy to GitHub Pages
         run: |
-          mkdocs gh-deploy --force
+          uv run mkdocs gh-deploy --force

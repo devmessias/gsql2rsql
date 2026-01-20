@@ -12,7 +12,18 @@
 
 ### Inspiration: Microsoft's openCypherTranspiler
 
-This project was inspired by Microsoft's [openCypherTranspiler](https://github.com/microsoft/openCypherTranspiler) which transpiled OpenCypher to T-SQL (SQL Server). However, **Databricks SQL is fundamentally different** from T-SQL:
+This project was inspired by Microsoft's [openCypherTranspiler](https://github.com/microsoft/openCypherTranspiler) (now **unmaintained**) which transpiled OpenCypher to T-SQL (SQL Server).
+
+**Why a new transpiler?** Two reasons:
+
+1. **Databricks SQL is fundamentally different** from T-SQL — WITH RECURSIVE, HOFs, and Delta Lake optimizations require different strategies
+2. **Security-first architecture** — gsql2rsql uses strict [4-phase separation of concerns](docs/decision-log.md#decision-1-strict-4-phase-separation-of-concerns) for correctness:
+   - **Parser**: Syntax only (no schema access)
+   - **Planner**: Semantics only (builds logical operators)
+   - **Resolver**: Validation only (schema checking, column resolution)
+   - **Renderer**: Code generation only (**intentionally "dumb"** — no semantic decisions, just SQL generation)
+
+This separation makes the transpiler **easier to audit, test, and trust**
 
 
 
