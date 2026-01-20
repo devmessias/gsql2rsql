@@ -2,6 +2,15 @@
 
 
 
+## v0.1.7 (2026-01-20)
+
+### Fix
+
+* fix: antes disso o where nao era aplicado caso o node_id fosse diferente de id
+
+ retrieve node ID columns from schema for recursive traversal ([`040640e`](https://github.com/devmessias/gsql2rsql/commit/040640e8033dd15748276547e4c3e3e06ef207b4))
+
+
 ## v0.1.6 (2026-01-20)
 
 ### Documentation
