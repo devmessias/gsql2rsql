@@ -952,6 +952,18 @@ class LogicalPlan:
                     f"from WHERE clause"
                 )
 
+        # Get node ID columns from schema
+        source_node_schema = self._graph_schema.get_node_definition(source_node.entity_name)
+        target_node_schema = self._graph_schema.get_node_definition(target_node.entity_name)
+
+        source_id_col = "id"  # Default
+        if source_node_schema and source_node_schema.node_id_property:
+            source_id_col = source_node_schema.node_id_property.property_name
+
+        target_id_col = "id"  # Default
+        if target_node_schema and target_node_schema.node_id_property:
+            target_id_col = target_node_schema.node_id_property.property_name
+
         # Create recursive traversal operator with optimized settings
         # collect_edges is now data-driven based on actual path usage
         #
@@ -980,8 +992,8 @@ class LogicalPlan:
             target_node_type=target_node.entity_name,
             min_hops=rel.min_hops if rel.min_hops is not None else 1,
             max_hops=rel.max_hops,
-            source_id_column="id",  # Default, could be from schema
-            target_id_column="id",  # Default, could be from schema
+            source_id_column=source_id_col,  # Read from schema
+            target_id_column=target_id_col,  # Read from schema
             start_node_filter=start_node_filter,
             sink_node_filter=sink_node_filter,
             cte_name=f"paths_{rel.alias or 'r'}",
