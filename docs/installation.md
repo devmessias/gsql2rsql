@@ -157,11 +157,11 @@ gsql2rsql needs a schema that maps your graph to SQL tables. You can use Python 
 #### Using Python (Recommended)
 
 ```python
-from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
-from gsql2rsql.planner.schema import SimpleGraphSchemaProvider
+from gsql2rsql.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
-# Create schema provider
-schema = SimpleGraphSchemaProvider()
+# Create graph schema provider (for logical planner)
+graph_schema = SimpleGraphSchemaProvider()
 
 # Define Person node
 person = NodeSchema(
@@ -197,10 +197,37 @@ works_at = EdgeSchema(
     ]
 )
 
-# Add to schema
-schema.add_node(person)
-schema.add_node(company)
-schema.add_edge(works_at)
+# Add to graph schema
+graph_schema.add_node(person)
+graph_schema.add_node(company)
+graph_schema.add_edge(works_at)
+
+# Create SQL schema provider (maps to Delta tables)
+sql_schema = SimpleSQLSchemaProvider()
+
+sql_schema.add_node(
+    person,
+    SQLTableDescriptor(
+        table_name="Person",  # or "catalog.schema.Person" for Databricks
+        node_id_columns=["id"],
+    )
+)
+
+sql_schema.add_node(
+    company,
+    SQLTableDescriptor(
+        table_name="Company",
+        node_id_columns=["id"],
+    )
+)
+
+sql_schema.add_edge(
+    works_at,
+    SQLTableDescriptor(
+        entity_id="Person@WORKS_AT@Company",
+        table_name="WorksAt",
+    )
+)
 ```
 
 #### Using JSON Schema
@@ -265,12 +292,10 @@ LIMIT 10
 from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.renderer.sql_renderer import SQLRenderer
-from gsql2rsql.planner.schema import DatabricksSchemaProvider
 
-# Setup (using schema from Step 1)
-schema_provider = DatabricksSchemaProvider(schema)
+# Setup (using schemas from Step 1)
 parser = OpenCypherParser()
-renderer = SQLRenderer(schema_provider)
+renderer = SQLRenderer(db_schema_provider=sql_schema)
 
 # Parse and transpile
 query = """
@@ -282,8 +307,8 @@ LIMIT 10
 """
 
 ast = parser.parse(query)
-plan = LogicalPlan.from_ast(ast, schema)
-plan.resolve(query)
+plan = LogicalPlan.process_query_tree(ast, graph_schema)
+plan.resolve(original_query=query)
 sql = renderer.render_plan(plan)
 
 print(sql)

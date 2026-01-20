@@ -170,11 +170,11 @@ uv pip install -e .
 from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.renderer.sql_renderer import SQLRenderer
-from gsql2rsql.planner.schema import DatabricksSchemaProvider, SimpleGraphSchemaProvider
-from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
-# 1. Define schema (map graph to Delta tables)
-schema = SimpleGraphSchemaProvider()
+# 1. Define graph schema (for logical planner)
+graph_schema = SimpleGraphSchemaProvider()
 
 person = NodeSchema(
     name="Person",
@@ -205,11 +205,38 @@ works_at = EdgeSchema(
     properties=[EntityProperty(property_name="since", data_type=int)]
 )
 
-schema.add_node(person)
-schema.add_node(company)
-schema.add_edge(works_at)
+graph_schema.add_node(person)
+graph_schema.add_node(company)
+graph_schema.add_edge(works_at)
 
-# 2. Write Cypher query
+# 2. Define SQL schema (maps to Delta tables)
+sql_schema = SimpleSQLSchemaProvider()
+
+sql_schema.add_node(
+    person,
+    SQLTableDescriptor(
+        table_name="Person",  # or "catalog.schema.Person" for Databricks
+        node_id_columns=["id"],
+    )
+)
+
+sql_schema.add_node(
+    company,
+    SQLTableDescriptor(
+        table_name="Company",
+        node_id_columns=["id"],
+    )
+)
+
+sql_schema.add_edge(
+    works_at,
+    SQLTableDescriptor(
+        entity_id="Person@WORKS_AT@Company",
+        table_name="WorksAt",
+    )
+)
+
+# 3. Write Cypher query
 query = """
 MATCH (p:Person)-[:WORKS_AT]->(c:Company)
 WHERE c.industry = 'Technology'
@@ -218,19 +245,18 @@ ORDER BY p.age DESC
 LIMIT 10
 """
 
-# 3. Transpile to SQL
+# 4. Transpile to SQL
 parser = OpenCypherParser()
-schema_provider = DatabricksSchemaProvider(schema)
-renderer = SQLRenderer(schema_provider)
+renderer = SQLRenderer(db_schema_provider=sql_schema)
 
 ast = parser.parse(query)
-plan = LogicalPlan.from_ast(ast, schema)
-plan.resolve(query)
+plan = LogicalPlan.process_query_tree(ast, graph_schema)
+plan.resolve(original_query=query)
 sql = renderer.render_plan(plan)
 
 print(sql)
 
-# 4. Execute on Databricks
+# 5. Execute on Databricks
 # spark.sql(sql).show()
 ```
 
