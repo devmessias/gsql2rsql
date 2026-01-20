@@ -90,7 +90,7 @@ class GraphContext:
         spark: "SparkSession | None" = None,
         nodes_table: str | None = None,
         edges_table: str | None = None,
-        node_type_col: str = "node_mltype",
+        node_type_col: str = "node_type",
         edge_type_col: str = "relationship_type",
         node_id_col: str = "node_id",
         edge_src_col: str = "src",
