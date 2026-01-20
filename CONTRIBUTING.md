@@ -172,31 +172,70 @@ git push origin feat/my-feature
 
 ## Release Process
 
-Releases are **fully automated** via GitHub Actions:
+Releases are **fully automated** via GitHub Actions. Just use conventional commits and merge to `main`.
 
-1. **Push commits to main** (with conventional commit messages)
-2. **GitHub Actions** will:
-   - Analyze commits since last release
-   - Determine next version (patch/minor/major)
-   - Generate CHANGELOG.md
-   - Create GitHub Release
-   - Publish to PyPI (via OIDC)
-   - Deploy documentation
+### How It Works
 
-### Manual Release (Not Recommended)
+1. **Commit with conventional format** (see types above)
+2. **Merge PR to main**
+3. **GitHub Actions automatically**:
+   - Runs tests (`make test-no-pyspark`)
+   - Analyzes commits since last release
+   - Determines next version:
+     - `feat:` → minor (0.1.0 → 0.2.0)
+     - `fix:`, `perf:` → patch (0.1.0 → 0.1.1)
+     - `feat!:` or `BREAKING CHANGE:` → major (0.1.0 → 1.0.0)
+   - Updates version in `pyproject.toml` and `__init__.py`
+   - Generates `CHANGELOG.md`
+   - Creates Git tag (`v0.2.0`)
+   - Creates GitHub Release with notes
+   - Builds Python package (`dist/`)
+   - Publishes to PyPI via OIDC (no secrets!)
+
+**Zero manual steps needed!**
+
+### PyPI Setup (One-Time)
+
+For automated PyPI publishing to work, configure **OIDC Trusted Publisher**:
+
+👉 **See**: [docs/development/PYPI_SETUP.md](docs/development/PYPI_SETUP.md)
+
+This is a one-time setup by the repo owner. Once configured, all contributors can trigger releases via conventional commits.
+
+### Example Release
+
+```bash
+# Your work
+git commit -m "feat: add UNION ALL support"
+gh pr create --fill
+# ... PR merged to main ...
+
+# GitHub Actions automatically:
+# ✅ Tests pass
+# ✅ Version bumped: 0.1.0 → 0.2.0
+# ✅ CHANGELOG.md updated
+# ✅ Tag v0.2.0 created
+# ✅ GitHub Release created
+# ✅ Published to PyPI
+# ✅ Users can: pip install gsql2rsql==0.2.0
+```
+
+### Manual Release (Emergency Only)
 
 ```bash
 make release-dry-run  # Preview what would be released
-make release          # Create release locally
+make release          # Create release locally (requires PyPI credentials)
 ```
 
-### Version Bumping
+### Manual Version Bumping (Testing Only)
 
 ```bash
 make version-bump-patch  # 0.1.0 → 0.1.1
 make version-bump-minor  # 0.1.0 → 0.2.0
 make version-bump-major  # 0.1.0 → 1.0.0
 ```
+
+**Note**: These are for local testing only. In production, versions are managed by semantic-release.
 
 ## Testing Guidelines
 

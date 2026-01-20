@@ -232,6 +232,7 @@ def transpile(
     parser = OpenCypherParser()
     ast = parser.parse(cypher)
     plan = LogicalPlan.process_query_tree(ast, graph_schema)
+    plan.resolve(original_query=cypher)
     renderer = SQLRenderer(db_schema_provider=sql_schema)
     return renderer.render_plan(plan)
 
@@ -293,9 +294,10 @@ def main() -> None:
     # Save if requested
     if args.save:
         ensure_output_dirs()
-        actual_path = ACTUAL_DIR / f"{args.test_id}_{args.test_name}.sql"
-        actual_path.write_text(normalize_sql(actual_sql))
-        print(f"\nSaved to: {actual_path}")
+        # Save to expected directory as the golden file
+        expected_path = EXPECTED_DIR / f"{args.test_id}_{args.test_name}.sql"
+        expected_path.write_text(normalize_sql(actual_sql))
+        print(f"\nSaved golden file to: {expected_path}")
 
     # Show diff if requested
     if args.diff:
