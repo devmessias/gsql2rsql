@@ -166,12 +166,62 @@ uv pip install -e .
 
 ## Quick Start
 
-**Example**: Find fraud networks using BFS (Breadth-First Search) up to depth 4, starting from a suspicious account and ignoring social relationships.
+### Simple API: GraphContext (Recommended for Triple Stores)
+
+**Most common case**: Graph data stored in two Delta tables (nodes + edges). GraphContext eliminates ~100 lines of schema boilerplate.
 
 ```python
-from gsql2rsql.parser.opencypher_parser import OpenCypherParser
-from gsql2rsql.planner.logical_plan import LogicalPlan
-from gsql2rsql.renderer.sql_renderer import SQLRenderer
+from gsql2rsql import GraphContext
+
+# 1. Create context (just 2 table paths!)
+graph = GraphContext(
+    nodes_table="catalog.fraud.nodes",
+    edges_table="catalog.fraud.edges",
+    extra_node_attrs={"name": str, "risk_score": float},
+    extra_edge_attrs={"amount": float, "timestamp": str}
+)
+
+# 2. Set types (or auto-discover with spark=...)
+graph.set_types(
+    node_types=["Person", "Account", "Merchant"],
+    edge_types=["TRANSACTION", "OWNS", "LOCATED_AT"]
+)
+
+# 3. Query with inline filters (optimized!)
+sql = graph.transpile("""
+    MATCH path = (origin:Person {id: 12345})-[:TRANSACTION*1..4]->(dest:Person)
+    WHERE dest.risk_score > 0.8
+    RETURN dest.id, dest.name, dest.risk_score, length(path) AS depth
+    ORDER BY depth, dest.risk_score DESC
+    LIMIT 100
+""")
+
+print(sql)
+
+# 4. Execute on Databricks (if spark session provided)
+# df = graph.execute(query)
+# df.show()
+```
+
+**Why this works at scale**:
+- **Delta partitioning**: `PARTITIONED BY (relationship_type, date)` → skip 90%+ of data
+- **Z-ordering**: `OPTIMIZE edges ZORDER BY (src, relationship_type)` → sub-second lookups
+- **Predicate pushdown**: Filters applied in DataSource (before joins)
+- **Horizontal scale**: Billions of edges = more partitions = more parallelism
+
+**Performance tip**: Use `discover_edge_combinations=True` to auto-discover real edge combinations from your database (10-100x fewer schemas for large graphs).
+
+---
+
+### Advanced: Manual Schema Setup (For Distributed Graph Data)
+
+<details>
+<summary><b>Click to expand</b> - Use this when graph data is distributed across multiple tables (not a simple triple store)</summary>
+
+When your graph data is **not** in a simple triple store pattern (e.g., different node types in separate tables, relationships in specialized tables), use the manual schema setup for full control:
+
+```python
+from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
@@ -191,26 +241,7 @@ person = NodeSchema(
 
 graph_schema.add_node(person)
 
-# Multiple edge types - we'll only query TRANSACAO_SUSPEITA
-# AMIGOS and FAMILIARES are in the schema but ignored in the query
-amigos = EdgeSchema(
-    name="AMIGOS",
-    source_node_id="Person",
-    sink_node_id="Person",
-    source_id_property=EntityProperty(property_name="person1_id", data_type=int),
-    sink_id_property=EntityProperty(property_name="person2_id", data_type=int),
-    properties=[]
-)
-
-familiares = EdgeSchema(
-    name="FAMILIARES",
-    source_node_id="Person",
-    sink_node_id="Person",
-    source_id_property=EntityProperty(property_name="person1_id", data_type=int),
-    sink_id_property=EntityProperty(property_name="person2_id", data_type=int),
-    properties=[]
-)
-
+# Multiple edge types with different source tables
 transacao_suspeita = EdgeSchema(
     name="TRANSACAO_SUSPEITA",
     source_node_id="Person",
@@ -223,8 +254,6 @@ transacao_suspeita = EdgeSchema(
     ]
 )
 
-graph_schema.add_edge(amigos)
-graph_schema.add_edge(familiares)
 graph_schema.add_edge(transacao_suspeita)
 
 # 2. Define SQL schema (maps to Delta tables)
@@ -233,24 +262,8 @@ sql_schema = SimpleSQLSchemaProvider()
 sql_schema.add_node(
     person,
     SQLTableDescriptor(
-        table_name="fraud.person",  # Databricks catalog.schema.table
+        table_name="fraud.person",  # Dedicated table for Person nodes
         node_id_columns=["id"],
-    )
-)
-
-sql_schema.add_edge(
-    amigos,
-    SQLTableDescriptor(
-        entity_id="Person@AMIGOS@Person",
-        table_name="fraud.amigos",
-    )
-)
-
-sql_schema.add_edge(
-    familiares,
-    SQLTableDescriptor(
-        entity_id="Person@FAMILIARES@Person",
-        table_name="fraud.familiares",
     )
 )
 
@@ -258,26 +271,22 @@ sql_schema.add_edge(
     transacao_suspeita,
     SQLTableDescriptor(
         entity_id="Person@TRANSACAO_SUSPEITA@Person",
-        table_name="fraud.transacao_suspeita",
+        table_name="fraud.transacao_suspeita",  # Dedicated table for this relationship
     )
 )
 
-# 3. BFS Query: Find fraud network up to depth 4 from suspicious root account
-# Only traverse TRANSACAO_SUSPEITA edges (ignore AMIGOS and FAMILIARES)
+# 3. Transpile query
 query = """
 MATCH path = (origem:Person {id: 12345})-[:TRANSACAO_SUSPEITA*1..4]->(destino:Person)
 RETURN
     origem.id AS origem_id,
-    origem.name AS origem_name,
     destino.id AS destino_id,
-    destino.name AS destino_name,
     destino.risk_score AS destino_risk_score,
     length(path) AS profundidade
 ORDER BY profundidade, destino.risk_score DESC
 LIMIT 100
 """
 
-# 4. Transpile to SQL with WITH RECURSIVE (for BFS traversal)
 parser = OpenCypherParser()
 renderer = SQLRenderer(db_schema_provider=sql_schema)
 
@@ -288,12 +297,21 @@ sql = renderer.render_plan(plan)
 
 print(sql)
 
-# 5. Execute on Databricks
+# 4. Execute on Databricks
 # df = spark.sql(sql)
 # df.show(100, truncate=False)
 ```
 
-**Output**: Databricks SQL with JOINs, WHERE filters, ORDER BY, and LIMIT — ready to execute on Delta Lake.
+**Use this approach when**:
+- Different node types are in separate tables (e.g., `customers`, `products`, `merchants`)
+- Relationships are in specialized tables (e.g., `purchases`, `friendships`, `follows`)
+- You need precise control over SQL table descriptors and filters
+
+</details>
+
+---
+
+**Output**: Databricks SQL with `WITH RECURSIVE`, JOINs, WHERE filters, ORDER BY, and LIMIT — ready to execute on Delta Lake.
 
 !!! tip "More Examples"
     See [Installation and Quick Start](installation.md) for detailed walkthrough, JSON schema format, and CLI usage.

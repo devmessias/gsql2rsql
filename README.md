@@ -188,9 +188,10 @@ uv pip install -e .
 from gsql2rsql import GraphContext
 
 # 1. Create context (just 2 table paths!)
+# Note: Table names without backticks - SQLRenderer adds them automatically
 graph = GraphContext(
-    nodes_table="`catalog`.`fraud`.`nodes`",
-    edges_table="`catalog`.`fraud`.`edges`",
+    nodes_table="catalog.fraud.nodes",
+    edges_table="catalog.fraud.edges",
     extra_node_attrs={"name": str, "risk_score": float},
     extra_edge_attrs={"amount": float, "timestamp": str}
 )
@@ -222,8 +223,8 @@ sql = graph.transpile(query, optimize=True)  # Predicate pushdown enabled!
 ```python
 graph = GraphContext(
     spark=spark,  # Required for discovery
-    nodes_table="`catalog`.`fraud`.`nodes`",
-    edges_table="`catalog`.`fraud`.`edges`",
+    nodes_table="catalog.fraud.nodes",
+    edges_table="catalog.fraud.edges",
     discover_edge_combinations=True  # Query DB for real combinations
 )
 # If you have 10 node types × 5 edge types = 500 possible schemas

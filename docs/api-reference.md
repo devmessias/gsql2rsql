@@ -21,8 +21,10 @@ This document provides a reference for the public API, CLI commands, and configu
 The transpiler can be used as a Python library. Import from the top-level package:
 
 ```python
-from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
+from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer, GraphContext
 ```
+
+**Recommended for Triple Store architectures**: Use `GraphContext` for simplified setup when your graph data is stored in two Delta tables (nodes + edges).
 
 ### Core Classes
 
@@ -302,6 +304,146 @@ class EntityProperty:
     name: str
     python_type: type  # int, str, float, bool, etc.
 ```
+
+---
+
+### `GraphContext` (Simplified API for Triple Stores)
+
+**Module**: `gsql2rsql.graph_context`
+
+**Purpose**: Simplified API for Triple Store architectures where graph data is stored in two Delta tables (nodes + edges). Eliminates ~100 lines of schema boilerplate.
+
+```python
+class GraphContext:
+    """High-level API for Triple Store graph queries."""
+
+    def __init__(
+        self,
+        spark: SparkSession | None = None,
+        nodes_table: str | None = None,
+        edges_table: str | None = None,
+        node_type_col: str = "type",
+        edge_type_col: str = "relationship_type",
+        node_id_col: str = "node_id",
+        edge_src_col: str = "src",
+        edge_dst_col: str = "dst",
+        extra_node_attrs: dict[str, type] | None = None,
+        extra_edge_attrs: dict[str, type] | None = None,
+        discover_edge_combinations: bool = False,
+    ):
+        """
+        Initialize GraphContext with Triple Store tables.
+
+        Args:
+            spark: PySpark SparkSession (optional, only needed for execute())
+            nodes_table: Fully qualified path to nodes table (e.g., "catalog.schema.nodes")
+            edges_table: Fully qualified path to edges table
+            node_type_col: Column name for node type (default: "type")
+            edge_type_col: Column name for edge type (default: "relationship_type")
+            node_id_col: Column name for node ID (default: "node_id")
+            edge_src_col: Column name for edge source (default: "src")
+            edge_dst_col: Column name for edge destination (default: "dst")
+            extra_node_attrs: Additional node properties with types (default: auto-discover)
+            extra_edge_attrs: Additional edge properties with types (default: auto-discover)
+            discover_edge_combinations: If True, queries DB to find actual edge
+                combinations instead of creating all possible combinations. Requires
+                spark session. Default: False for backward compatibility.
+        """
+
+    def set_types(
+        self,
+        node_types: list[str],
+        edge_types: list[str],
+        edge_combinations: list[tuple[str, str, str]] | None = None,
+    ) -> None:
+        """
+        Manually set node and edge types (for non-Spark usage).
+
+        Args:
+            node_types: List of node type names (e.g., ["Person", "Company"])
+            edge_types: List of edge type names (e.g., ["KNOWS", "WORKS_AT"])
+            edge_combinations: Optional list of actual edge combinations as
+                (source_type, edge_type, sink_type) tuples.
+        """
+
+    def transpile(self, query: str, optimize: bool = True) -> str:
+        """
+        Transpile OpenCypher query to Databricks SQL.
+
+        Args:
+            query: OpenCypher query string
+            optimize: Enable optimizations (predicate pushdown, flattening)
+
+        Returns:
+            Databricks SQL query string
+        """
+
+    def execute(self, query: str, optimize: bool = True) -> DataFrame:
+        """
+        Execute OpenCypher query and return results as DataFrame.
+
+        Args:
+            query: OpenCypher query string
+            optimize: Enable optimizations
+
+        Returns:
+            PySpark DataFrame with query results
+
+        Raises:
+            RuntimeError: If spark session not provided
+        """
+```
+
+**Example Usage (Basic)**:
+```python
+from gsql2rsql import GraphContext
+
+# Create context (just 2 table paths!)
+# Note: Table names without backticks - SQLRenderer adds them automatically
+graph = GraphContext(
+    nodes_table="catalog.fraud.nodes",
+    edges_table="catalog.fraud.edges",
+    extra_node_attrs={"name": str, "risk_score": float},
+    extra_edge_attrs={"amount": float}
+)
+
+# Set types
+graph.set_types(
+    node_types=["Person", "Account", "Merchant"],
+    edge_types=["TRANSACTION", "OWNS", "LOCATED_AT"]
+)
+
+# Transpile query
+sql = graph.transpile("""
+    MATCH (p:Person)-[:TRANSACTION]->(m:Merchant)
+    WHERE p.risk_score > 0.8
+    RETURN p.name, m.name
+""")
+
+print(sql)
+```
+
+**Example Usage (Auto-Discovery)**:
+```python
+# Auto-discover types and edge combinations from database
+graph = GraphContext(
+    spark=spark,  # Required for auto-discovery
+    nodes_table="catalog.fraud.nodes",
+    edges_table="catalog.fraud.edges",
+    discover_edge_combinations=True  # Query DB for real combinations!
+)
+
+# Types auto-discovered - ready to use
+df = graph.execute("""
+    MATCH path = (a:Person)-[:TRANSACTION*1..3]->(b:Account)
+    WHERE b.risk_score > 0.9
+    RETURN b.id, length(path) AS depth
+    ORDER BY depth
+""")
+df.show()
+```
+
+**Performance Tip**: For large graphs with many node/edge types, use `discover_edge_combinations=True` to only create schemas for **actual** edge combinations in your data. For example, if you have 10 node types × 5 edge types = 500 possible schemas, but only 15 combinations exist in your data, this creates only 15 schemas (33x faster!).
 
 ---
 
