@@ -1,10 +1,10 @@
-tests/output
+tests/output/actual/
+tests/output/diff/
 out/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
-tests/output/
 docs/development
 docs_help_dev
 .vscode
