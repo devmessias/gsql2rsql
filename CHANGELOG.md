@@ -2,6 +2,27 @@
 
 
 
+## v0.2.0 (2026-01-20)
+
+### Documentation
+
+* docs: sugere o uso de uma single triple store ([`79bd122`](https://github.com/devmessias/gsql2rsql/commit/79bd122744d0c13e9a0ec78fae73bbdec1b1ffa2))
+
+### Feature
+
+* feat: add GraphContext API for single Triple Store architectures ([`18b04c2`](https://github.com/devmessias/gsql2rsql/commit/18b04c22df5419a43ce5cdae1fab5462ba2bcfdb))
+
+* feat:  inline property filter ([`ffa3997`](https://github.com/devmessias/gsql2rsql/commit/ffa3997c8a13dc6ee2be0ef73483a7a44299dcc2))
+
+### Fix
+
+* fix: predictive pushdown ([`8bf3edc`](https://github.com/devmessias/gsql2rsql/commit/8bf3edc7564be20eca0c16c4790b0c2b55ee96b2))
+
+### Unknown
+
+* tests: inline context and backticks fix ([`ea5071f`](https://github.com/devmessias/gsql2rsql/commit/ea5071f0b5c73e578aa9a1586cb55eebbe7c2829))
+
+
 ## v0.1.7 (2026-01-20)
 
 ### Fix
