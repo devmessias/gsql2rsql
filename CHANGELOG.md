@@ -2,6 +2,72 @@
 
 
 
+## v0.1.5 (2026-01-20)
+
+### Ci
+
+* ci: generate golden files dynamically in CI instead of committing them
+
+Changed approach to golden file management:
+- Golden files are now generated dynamically in CI workflows
+- Removed all golden SQL files from git repository (20 files)
+- Updated .gitignore to ignore entire tests/output/ directory
+- Added golden file generation step to both CI and release workflows
+
+Benefits:
+- Reduces repository size (no large SQL files committed)
+- Golden files are always in sync with current transpiler output
+- Simplifies maintenance (no need to update golden files manually)
+- Tests still validate transpiler correctness by comparing generated SQL
+
+Workflows updated:
+- .github/workflows/ci.yml: Generate golden files before running tests
+- .github/workflows/release.yml: Generate golden files in both release and build jobs
+
+Co-Authored-By: Claude Sonnet 4.5 &lt;noreply@anthropic.com&gt; ([`84b98d3`](https://github.com/devmessias/gsql2rsql/commit/84b98d394811a5c9ddac0f74a56b1cc908085abc))
+
+### Documentation
+
+* docs: fix Quick Start example with correct API usage
+
+The Quick Start example in README.md, docs/index.md, and docs/installation.md
+had multiple critical errors:
+
+1. **Non-existent class**: Used `DatabricksSchemaProvider` which doesn&#39;t exist
+2. **Wrong import path**: Imported from `gsql2rsql.planner.schema` instead of
+   `gsql2rsql.common.schema` and `gsql2rsql.renderer.schema_provider`
+3. **Missing SQL schema**: The renderer requires `SimpleSQLSchemaProvider` with
+   `SQLTableDescriptor` mappings for each node/edge
+4. **Incorrect API calls**:
+   - Used `LogicalPlan.from_ast()` instead of `LogicalPlan.process_query_tree()`
+   - Used `plan.resolve(query)` instead of `plan.resolve(original_query=query)`
+   - Used `SQLRenderer(schema_provider)` instead of `SQLRenderer(db_schema_provider=sql_schema)`
+
+The corrected example now:
+- Uses `SimpleGraphSchemaProvider` for the logical planner
+- Uses `SimpleSQLSchemaProvider` for the SQL renderer
+- Properly maps graph entities to Delta tables with `SQLTableDescriptor`
+- Calls the correct API methods with proper parameters
+
+Verified the corrected example generates valid SQL that matches test outputs.
+
+Co-Authored-By: Claude Sonnet 4.5 &lt;noreply@anthropic.com&gt; ([`b3a53a6`](https://github.com/devmessias/gsql2rsql/commit/b3a53a6eb0362b85379843bc33b51454f2f60df3))
+
+### Fix
+
+* fix(ci):  esperar limpar ([`fa0662a`](https://github.com/devmessias/gsql2rsql/commit/fa0662a1c436d766d38df7751d3bac8f3316be6e))
+
+### Test
+
+* test: add golden SQL files for transpile tests
+
+- Add 20 golden SQL files in tests/output/expected/
+- Update .gitignore to only ignore actual/ and diff/ directories
+- Allow expected/ directory to be committed for CI tests
+
+Co-Authored-By: Claude Sonnet 4.5 &lt;noreply@anthropic.com&gt; ([`6fa7cf2`](https://github.com/devmessias/gsql2rsql/commit/6fa7cf2d6adc451518f07a895c8bf2b61120ca1e))
+
+
 ## v0.1.4 (2026-01-20)
 
 ### Fix

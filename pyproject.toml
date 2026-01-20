@@ -1,6 +1,6 @@
 [project]
 name = "gsql2rsql"
-version = "0.1.4"
+version = "0.1.5"
 description = "Transpile Graph Query Language (openCypher) to Recursive SQL (Databricks)"
 readme = "README.md"
 license = { text = "MIT" }
