@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 authors = [
-    { name = "Microsoft Corporation" },
+    { name = "Bruno Messias", email = "devmessias@gmail.com" },
 ]
 keywords = ["opencypher", "cypher", "sql", "databricks", "recursive", "graph", "query", "transpiler"]
 classifiers = [
@@ -100,3 +100,44 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+version_variables = ["src/gsql2rsql/__init__.py:__version__"]
+branch = "main"
+upload_to_vcs_release = true
+upload_to_pypi = false  # We use GitHub Actions OIDC
+build_command = "pip install build && python -m build"
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false
+
+[tool.semantic_release.changelog]
+template_dir = "templates"
+changelog_file = "CHANGELOG.md"
+exclude_commit_patterns = [
+    "^Merge",
+    "^Bump",
+    "^chore\\(deps\\):",
+]
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = [
+    "build",
+    "chore",
+    "ci",
+    "docs",
+    "feat",
+    "fix",
+    "perf",
+    "style",
+    "refactor",
+    "test",
+]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.remote]
+type = "github"
+ignore_token_for_push = false

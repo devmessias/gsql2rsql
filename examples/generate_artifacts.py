@@ -24,6 +24,8 @@ class TranspileResult:
     query_id: str
     description: str
     query: str
+    application: str | None = None
+    notes: str | None = None
     ast: str | None = None
     logical_plan: str | None = None
     sql: str | None = None
@@ -130,7 +132,14 @@ def sanitize_name(name: str) -> str:
     return sanitized[:50]  # Limit length
 
 
-def transpile_query(query: str, schema_provider: Any, description: str, query_id: str) -> TranspileResult:
+def transpile_query(
+    query: str,
+    schema_provider: Any,
+    description: str,
+    query_id: str,
+    application: str | None = None,
+    notes: str | None = None,
+) -> TranspileResult:
     """Transpile a single query and capture all artifacts."""
     from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
 
@@ -138,6 +147,8 @@ def transpile_query(query: str, schema_provider: Any, description: str, query_id
         query_id=query_id,
         description=description,
         query=query.strip(),
+        application=application,
+        notes=notes,
     )
 
     # Step 1: Parse to AST
@@ -163,7 +174,14 @@ def transpile_query(query: str, schema_provider: Any, description: str, query_id
         result.ast = result.ast  # Keep AST even on planner failure
         return result
 
-    # Step 3: Render SQL
+    # Step 3: Resolve columns
+    try:
+        plan.resolve(query)
+    except Exception as e:
+        result.error = f"RESOLVER ERROR:\n{e}\n\n{traceback.format_exc()}"
+        return result
+
+    # Step 4: Render SQL
     try:
         renderer = SQLRenderer(schema_provider)
         sql = renderer.render_plan(plan)
@@ -203,6 +221,8 @@ def save_artifacts(result: TranspileResult, output_dir: Path) -> None:
     metadata = {
         "query_id": result.query_id,
         "description": result.description,
+        "application": result.application,
+        "notes": result.notes,
         "success": result.success,
         "has_ast": result.ast is not None,
         "has_logical_plan": result.logical_plan is not None,
@@ -236,6 +256,8 @@ def process_yaml_file(yaml_path: Path, output_base: Path) -> list[TranspileResul
     for idx, example in enumerate(examples, 1):
         description = example.get("description", f"Query {idx}")
         query = example.get("query", "")
+        application = example.get("application")
+        notes = example.get("notes")
 
         if not query.strip():
             print(f"  [{idx}/{len(examples)}] SKIP: Empty query - {description[:50]}")
@@ -247,7 +269,14 @@ def process_yaml_file(yaml_path: Path, output_base: Path) -> list[TranspileResul
         print(f"  [{idx}/{len(examples)}] Processing: {description[:60]}...")
 
         # Transpile
-        result = transpile_query(query, schema_provider, description, query_id)
+        result = transpile_query(
+            query,
+            schema_provider,
+            description,
+            query_id,
+            application=application,
+            notes=notes,
+        )
 
         # Save artifacts
         output_dir = output_base / example_name / query_id

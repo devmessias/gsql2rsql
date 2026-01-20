@@ -1,0 +1,20 @@
+# Documentation dependencies for gsql2rsql
+# Install with: pip install -r requirements-docs.txt
+
+# Core MkDocs
+mkdocs>=1.5.3
+mkdocs-material>=9.5.3
+
+# Plugins for enhanced functionality
+mkdocs-mermaid2-plugin>=1.1.1        # Mermaid diagrams support
+mkdocs-git-revision-date-localized-plugin>=1.2.2  # Git-based modification dates
+mkdocs-minify-plugin>=0.8.0          # HTML/CSS/JS minification
+mkdocs-awesome-pages-plugin>=2.9.2   # Better page organization
+mkdocs-macros-plugin>=1.0.5          # Jinja2 macros and variables
+
+# Code highlighting and formatting
+pymdown-extensions>=10.7             # Enhanced markdown extensions
+Pygments>=2.17.2                     # Syntax highlighting
+
+# Search improvements
+mkdocs-material[imaging]>=9.5.3      # Social cards and better search
