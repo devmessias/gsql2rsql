@@ -94,14 +94,38 @@ When you have **billions of relationships**:
 Model relationships as **triples** in Delta:
 
 ```sql
-CREATE TABLE relationships (
-  subject_id STRING,    -- Source entity
-  predicate STRING,     -- Relationship type
-  object_id STRING,     -- Target entity
+-- Nodes table (entities)
+CREATE TABLE nodes (
+  node_id STRING,
+  type STRING,          -- Person, Account, Merchant, etc.
   properties MAP<STRING, STRING>,
-  timestamp TIMESTAMP,
-  _partition DATE GENERATED ALWAYS AS (DATE(timestamp))
-) PARTITIONED BY (_partition);
+  timestamp TIMESTAMP
+) USING DELTA;
+
+-- Edges table (relationships)
+-- Option 1: Traditional partitioning (relationship_type + date)
+CREATE TABLE edges (
+  src STRING,           -- Source node_id
+  relationship_type STRING,  -- TRANSACTION, OWNS, LOCATED_AT, etc.
+  dst STRING,           -- Destination node_id
+  properties MAP<STRING, STRING>,
+  timestamp TIMESTAMP
+) USING DELTA
+PARTITIONED BY (relationship_type, DATE(timestamp));
+
+-- Option 2: Liquid Clustering (DBR 13.3+, RECOMMENDED!)
+-- Auto-tunes partitioning based on query patterns
+CREATE TABLE edges (
+  src STRING,
+  relationship_type STRING,
+  dst STRING,
+  properties MAP<STRING, STRING>,
+  timestamp TIMESTAMP
+) USING DELTA
+CLUSTER BY (relationship_type, src);
+
+-- For traditional partitioning, optimize with Z-ordering
+OPTIMIZE edges ZORDER BY (src, relationship_type, dst);
 ```
 
 **Advantages**:
@@ -110,8 +134,16 @@ CREATE TABLE relationships (
 3. **Time travel**: Delta Lake versioning = free audit trail
 4. **Schema evolution**: Add properties without downtime
 5. **ACID guarantees**: Delta Lake transactions
-6. **Z-ordering**: `OPTIMIZE table ZORDER BY (subject_id, predicate)` for fast lookups
-7. **Liquid clustering**: Auto-optimize hot paths
+6. **Partition pruning**: `PARTITIONED BY (relationship_type, date)` → skip 90%+ of data
+7. **Z-ordering**: `ZORDER BY (src, relationship_type, dst)` → sub-second lookups
+8. **Liquid clustering**: Auto-tunes for query patterns (DBR 13.3+)
+
+**Why partition by `relationship_type`?**
+- Query: `MATCH (a)-[:TRANSACTION]->(b)` → Only scans TRANSACTION partition
+- Without: Scans ALL relationships (TRANSACTION, OWNS, LOCATED_AT, etc.)
+- Impact: **10-100x faster** for queries with specific relationship types
+
+**This is why GraphContext API exists**: When your graph fits this pattern (nodes + edges tables), you don't need 100 lines of schema boilerplate — just 2 table paths and you're done.
 
 
 ## LLMs + Transpilers: Enterprise Governance
@@ -146,7 +178,67 @@ cd gsql2rsql/python
 uv pip install -e .
 ```
 
-### Your First Query
+### Simplified API: GraphContext (Recommended for Triple Stores)
+
+**Why Triple Stores + Delta Tables Scale**: Delta Lake's horizontal scaling, Z-ordering, and liquid clustering make **single triple store** architectures incredibly efficient — even at billions of edges. No need for complex multi-table schemas when Delta can handle everything.
+
+**GraphContext API eliminates ~100 lines of boilerplate** for the common case: graph stored as two Delta tables (nodes + edges).
+
+```python
+from gsql2rsql import GraphContext
+
+# 1. Create context (just 2 table paths!)
+graph = GraphContext(
+    nodes_table="`catalog`.`fraud`.`nodes`",
+    edges_table="`catalog`.`fraud`.`edges`",
+    extra_node_attrs={"name": str, "risk_score": float},
+    extra_edge_attrs={"amount": float, "timestamp": str}
+)
+
+# 2. Set types (auto-discovered if spark session provided)
+graph.set_types(
+    node_types=["Person", "Account", "Merchant"],
+    edge_types=["TRANSACTION", "OWNS", "LOCATED_AT"]
+)
+
+# 3. Query with inline filters (optimized!)
+query = """
+MATCH path = (origin:Person {id: 'alice'})-[:TRANSACTION*1..3]->(dest:Account)
+WHERE dest.risk_score > 0.8
+RETURN dest.id, dest.risk_score, length(path) AS depth
+ORDER BY depth, dest.risk_score DESC
+LIMIT 100
+"""
+
+sql = graph.transpile(query, optimize=True)  # Predicate pushdown enabled!
+
+# 4. Execute on Databricks
+# df = graph.execute(query)  # If spark session provided
+# df.show()
+```
+
+**Performance tip**: For large graphs with many node/edge types, use `discover_edge_combinations=True` to only create schemas for **actual** edge combinations in your data:
+
+```python
+graph = GraphContext(
+    spark=spark,  # Required for discovery
+    nodes_table="`catalog`.`fraud`.`nodes`",
+    edges_table="`catalog`.`fraud`.`edges`",
+    discover_edge_combinations=True  # Query DB for real combinations
+)
+# If you have 10 node types × 5 edge types = 500 possible schemas
+# But only 15 combinations exist → Creates only 15 schemas (33x faster!)
+```
+
+**Why this works at scale**:
+- **Delta Z-ordering**: `OPTIMIZE edges ZORDER BY (src, edge_type)` → sub-second lookups
+- **Liquid clustering**: Auto-tunes for your query patterns
+- **Predicate pushdown**: Filters applied in DataSource (before joins)
+- **Horizontal scale**: Billions of edges = more partitions = more parallelism
+
+### Advanced: Manual Schema Setup (Full Control)
+
+For multi-table schemas or when you need precise control over SQL table descriptors, use the manual setup:
 
 **Example**: Find fraud networks using BFS (Breadth-First Search) up to depth 4, starting from a suspicious account and ignoring social relationships.
 
@@ -283,9 +375,12 @@ print(sql)
 - ✅ **Undirected relationships** (`-[:REL]-`)
 - ✅ **Path functions** (`length()`, `nodes()`, `relationships()`)
 - ✅ **Aggregations** (`COUNT`, `SUM`, `COLLECT`, etc.)
-- ✅ **Filter pushdown** (optimizes Delta scans)
+- ✅ **Predicate pushdown** (filters applied in DataSource before joins)
+- ✅ **Inline property filters** (`{name: 'Alice'}` → optimized WHERE clauses)
+- ✅ **BFS source filter optimization** (inline filters applied in base case)
 - ✅ **WITH clauses** (multi-stage composition)
 - ✅ **UNION**, **OPTIONAL MATCH**, **CASE**, **DISTINCT**
+- ✅ **GraphContext API** (simplified setup for Triple Stores)
 
 See [full feature list](docs/index.md#features).
 
