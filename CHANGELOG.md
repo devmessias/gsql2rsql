@@ -2,6 +2,13 @@
 
 
 
+## v0.1.2 (2026-01-20)
+
+### Fix
+
+* fix(release): clean dist directory before building package ([`0af9e6d`](https://github.com/devmessias/gsql2rsql/commit/0af9e6d0c29831c2bc115e261df091338b6aa331))
+
+
 ## v0.1.1 (2026-01-20)
 
 ### Fix
