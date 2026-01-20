@@ -1,5 +1,4 @@
-tests/output/actual/
-tests/output/diff/
+tests/output/
 out/
 # Byte-compiled / optimized / DLL files
 __pycache__/
