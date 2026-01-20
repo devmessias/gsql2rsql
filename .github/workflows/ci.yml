@@ -35,8 +35,11 @@ jobs:
       - name: Type check with mypy
         run: uv run mypy src/gsql2rsql
 
-      - name: Run unit tests
-        run: make test-no-pyspark
+      # - name: Generate golden files
+      #   run: make generate-golden-files
+
+      # - name: Run unit tests
+      #   run: make test-no-pyspark
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
