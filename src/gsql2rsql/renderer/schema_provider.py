@@ -122,10 +122,17 @@ class SQLTableDescriptor:
 
         For Databricks SQL, backticks are used for quoting.
         Only quote if necessary (contains spaces, special chars, or starts with digit).
+
+        If the identifier already has backticks, return it as-is to avoid double-quoting.
         """
+        # Already quoted with backticks - don't double-quote
+        if identifier.startswith("`") and identifier.endswith("`"):
+            return identifier
+
         # Simple identifiers don't need quoting
         if identifier.isidentifier() and not identifier[0].isdigit():
             return identifier
+
         # Quote with backticks for Databricks SQL
         return f"`{identifier}`"
 

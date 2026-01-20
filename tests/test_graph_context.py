@@ -240,9 +240,10 @@ class TestGraphContextVsManualSetup:
     def test_equivalent_to_manual_setup(self):
         """GraphContext SQL matches manual setup."""
         # GraphContext approach
+        # Note: Use table names WITHOUT backticks - renderer adds them automatically
         graph = GraphContext(
-            nodes_table="`catalog`.`demo`.`Person`",
-            edges_table="`catalog`.`demo`.`Knows`",
+            nodes_table="catalog.demo.Person",
+            edges_table="catalog.demo.Knows",
             node_id_col="id",  # Match manual setup
             edge_src_col="src",
             edge_dst_col="dst",
@@ -291,7 +292,7 @@ class TestGraphContextVsManualSetup:
         sql_schema.add_node(
             person,
             SQLTableDescriptor(
-                table_name="`catalog`.`demo`.`Person`",
+                table_name="catalog.demo.Person",  # No backticks - renderer adds them
                 node_id_columns=["id"],
                 filter="type = 'Person'"
             )
@@ -300,7 +301,7 @@ class TestGraphContextVsManualSetup:
             knows,
             SQLTableDescriptor(
                 entity_id="Person@KNOWS@Person",
-                table_name="`catalog`.`demo`.`Knows`",
+                table_name="catalog.demo.Knows",  # No backticks - renderer adds them
                 filter="relationship_type = 'KNOWS'",
                 node_id_columns=["src", "dst"]
             )
