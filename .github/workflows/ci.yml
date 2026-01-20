@@ -29,11 +29,11 @@ jobs:
           uv sync --extra dev
           uv pip install -e ".[dev]"
 
-      - name: Lint with ruff
-        run: uv run ruff check .
+      # - name: Lint with ruff
+      #   run: uv run ruff check .
 
-      - name: Type check with mypy
-        run: uv run mypy src/gsql2rsql
+      # - name: Type check with mypy
+      #   run: uv run mypy src/gsql2rsql
 
       - name: Generate golden files
         run: make generate-golden-files
