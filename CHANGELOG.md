@@ -2,6 +2,15 @@
 
 
 
+## v0.1.1 (2026-01-20)
+
+### Fix
+
+* fix(ci): use uv build for release ([`369caad`](https://github.com/devmessias/gsql2rsql/commit/369caadc9140d1ad5857ec948393983502235440))
+
+* fix: tests generate golden files ([`ee9b290`](https://github.com/devmessias/gsql2rsql/commit/ee9b2902d0679fff3ac3ce86e4112da52e86fcdf))
+
+
 ## v0.1.0 (2026-01-20)
 
 ### Ci
