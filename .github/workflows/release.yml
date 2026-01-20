@@ -61,7 +61,7 @@ jobs:
         if: steps.release.outputs.released == 'true'
         run: |
           uv pip install build
-          python -m build
+          uv run python -m build
 
       - name: Upload build artifacts
         if: steps.release.outputs.released == 'true'
