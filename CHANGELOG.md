@@ -2,6 +2,13 @@
 
 
 
+## v0.1.4 (2026-01-20)
+
+### Fix
+
+* fix(ci): comment out test step in release workflow ([`31bc885`](https://github.com/devmessias/gsql2rsql/commit/31bc885d55e39d37141a66dd3d8bd78913a6834d))
+
+
 ## v0.1.3 (2026-01-20)
 
 ### Fix
