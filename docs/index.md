@@ -166,6 +166,8 @@ uv pip install -e .
 
 ## Quick Start
 
+**Example**: Find fraud networks using BFS (Breadth-First Search) up to depth 4, starting from a suspicious account and ignoring social relationships.
+
 ```python
 from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
@@ -176,38 +178,54 @@ from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTable
 # 1. Define graph schema (for logical planner)
 graph_schema = SimpleGraphSchemaProvider()
 
+# Person node
 person = NodeSchema(
     name="Person",
     properties=[
         EntityProperty(property_name="id", data_type=int),
         EntityProperty(property_name="name", data_type=str),
-        EntityProperty(property_name="age", data_type=int),
+        EntityProperty(property_name="risk_score", data_type=float),
     ],
     node_id_property=EntityProperty(property_name="id", data_type=int)
-)
-
-company = NodeSchema(
-    name="Company",
-    properties=[
-        EntityProperty(property_name="id", data_type=int),
-        EntityProperty(property_name="name", data_type=str),
-        EntityProperty(property_name="industry", data_type=str),
-    ],
-    node_id_property=EntityProperty(property_name="id", data_type=int)
-)
-
-works_at = EdgeSchema(
-    name="WORKS_AT",
-    source_node_id="Person",
-    sink_node_id="Company",
-    source_id_property=EntityProperty(property_name="person_id", data_type=int),
-    sink_id_property=EntityProperty(property_name="company_id", data_type=int),
-    properties=[EntityProperty(property_name="since", data_type=int)]
 )
 
 graph_schema.add_node(person)
-graph_schema.add_node(company)
-graph_schema.add_edge(works_at)
+
+# Multiple edge types - we'll only query TRANSACAO_SUSPEITA
+# AMIGOS and FAMILIARES are in the schema but ignored in the query
+amigos = EdgeSchema(
+    name="AMIGOS",
+    source_node_id="Person",
+    sink_node_id="Person",
+    source_id_property=EntityProperty(property_name="person1_id", data_type=int),
+    sink_id_property=EntityProperty(property_name="person2_id", data_type=int),
+    properties=[]
+)
+
+familiares = EdgeSchema(
+    name="FAMILIARES",
+    source_node_id="Person",
+    sink_node_id="Person",
+    source_id_property=EntityProperty(property_name="person1_id", data_type=int),
+    sink_id_property=EntityProperty(property_name="person2_id", data_type=int),
+    properties=[]
+)
+
+transacao_suspeita = EdgeSchema(
+    name="TRANSACAO_SUSPEITA",
+    source_node_id="Person",
+    sink_node_id="Person",
+    source_id_property=EntityProperty(property_name="origem_id", data_type=int),
+    sink_id_property=EntityProperty(property_name="destino_id", data_type=int),
+    properties=[
+        EntityProperty(property_name="valor", data_type=float),
+        EntityProperty(property_name="timestamp", data_type=str),
+    ]
+)
+
+graph_schema.add_edge(amigos)
+graph_schema.add_edge(familiares)
+graph_schema.add_edge(transacao_suspeita)
 
 # 2. Define SQL schema (maps to Delta tables)
 sql_schema = SimpleSQLSchemaProvider()
@@ -215,37 +233,51 @@ sql_schema = SimpleSQLSchemaProvider()
 sql_schema.add_node(
     person,
     SQLTableDescriptor(
-        table_name="Person",  # or "catalog.schema.Person" for Databricks
-        node_id_columns=["id"],
-    )
-)
-
-sql_schema.add_node(
-    company,
-    SQLTableDescriptor(
-        table_name="Company",
+        table_name="fraud.person",  # Databricks catalog.schema.table
         node_id_columns=["id"],
     )
 )
 
 sql_schema.add_edge(
-    works_at,
+    amigos,
     SQLTableDescriptor(
-        entity_id="Person@WORKS_AT@Company",
-        table_name="WorksAt",
+        entity_id="Person@AMIGOS@Person",
+        table_name="fraud.amigos",
     )
 )
 
-# 3. Write Cypher query
+sql_schema.add_edge(
+    familiares,
+    SQLTableDescriptor(
+        entity_id="Person@FAMILIARES@Person",
+        table_name="fraud.familiares",
+    )
+)
+
+sql_schema.add_edge(
+    transacao_suspeita,
+    SQLTableDescriptor(
+        entity_id="Person@TRANSACAO_SUSPEITA@Person",
+        table_name="fraud.transacao_suspeita",
+    )
+)
+
+# 3. BFS Query: Find fraud network up to depth 4 from suspicious root account
+# Only traverse TRANSACAO_SUSPEITA edges (ignore AMIGOS and FAMILIARES)
 query = """
-MATCH (p:Person)-[:WORKS_AT]->(c:Company)
-WHERE c.industry = 'Technology'
-RETURN p.name, p.age, c.name AS company
-ORDER BY p.age DESC
-LIMIT 10
+MATCH path = (origem:Person {id: 12345})-[:TRANSACAO_SUSPEITA*1..4]->(destino:Person)
+RETURN
+    origem.id AS origem_id,
+    origem.name AS origem_name,
+    destino.id AS destino_id,
+    destino.name AS destino_name,
+    destino.risk_score AS destino_risk_score,
+    length(path) AS profundidade
+ORDER BY profundidade, destino.risk_score DESC
+LIMIT 100
 """
 
-# 4. Transpile to SQL
+# 4. Transpile to SQL with WITH RECURSIVE (for BFS traversal)
 parser = OpenCypherParser()
 renderer = SQLRenderer(db_schema_provider=sql_schema)
 
@@ -257,7 +289,8 @@ sql = renderer.render_plan(plan)
 print(sql)
 
 # 5. Execute on Databricks
-# spark.sql(sql).show()
+# df = spark.sql(sql)
+# df.show(100, truncate=False)
 ```
 
 **Output**: Databricks SQL with JOINs, WHERE filters, ORDER BY, and LIMIT — ready to execute on Delta Lake.
