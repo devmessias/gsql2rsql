@@ -1,6 +1,0 @@
---- expected+++ actual@@ -1,5 +1,6 @@ select
-  _gsql2rsql_p_id as p
-+ ,_gsql2rsql_p_name as _gsql2rsql_p_name
- from (
-  select *
-  from (
