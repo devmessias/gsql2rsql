@@ -2,6 +2,17 @@
 
 
 
+## v0.4.1 (2026-01-21)
+
+### Documentation
+
+* docs: create section Making tables graph-friendly ([`09a39f1`](https://github.com/devmessias/gsql2rsql/commit/09a39f16b845f0756699a82822470b2d90975ccd))
+
+### Fix
+
+* fix(ci): gen docs. ([`51525ba`](https://github.com/devmessias/gsql2rsql/commit/51525bab3154ea556921adcfec74939e95b4d5a8))
+
+
 ## v0.4.0 (2026-01-21)
 
 ### Documentation
