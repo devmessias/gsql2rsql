@@ -121,6 +121,31 @@ def load_schema_from_yaml(schema_data: dict) -> Any:
 
         provider.add_edge(edge_schema, table_desc)
 
+    # Enable no-label support if configured
+    no_label_config = schema_data.get("noLabelSupport")
+    if no_label_config and no_label_config.get("enabled", False):
+        table_name = no_label_config.get("tableName", "")
+        node_id_columns = no_label_config.get("nodeIdColumns", ["id"])
+        if table_name:
+            # Collect properties from all nodes for wildcard
+            all_properties: list[EntityProperty] = []
+            seen_props: set[str] = set()
+            for node_data in schema_data.get("nodes", []):
+                for prop in node_data.get("properties", []):
+                    if prop["name"] not in seen_props:
+                        all_properties.append(
+                            EntityProperty(
+                                property_name=prop["name"],
+                                data_type=type_mapping.get(prop.get("type", "string"), str),
+                            )
+                        )
+                        seen_props.add(prop["name"])
+            provider.enable_no_label_support(
+                table_name=table_name,
+                node_id_columns=node_id_columns,
+                properties=all_properties,
+            )
+
     return provider
 
 
