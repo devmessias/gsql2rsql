@@ -6,18 +6,15 @@ from gsql2rsql import GraphContext
 
 
 def test_relationship_or_syntax_simple():
-    """Relationship OR syntax (:KNOWS|FOLLOWS) FAIL in simple paths.
+    """Relationship OR syntax (:KNOWS|FOLLOWS) works in simple paths.
 
-    COMPORTAMENTO ATUAL: Falha com binding error
-    RAZÃO: DataSourceOperator.bind() procura por relationship type
-           'KNOWS|FOLLOWS' como um nome único, não splita em múltiplos
-           tipos.
+    After fix: DataSourceOperator.bind() correctly splits the entity_name
+    on '|' and resolves each edge type separately, storing results in
+    EntityField.bound_edge_types.
 
-    OR syntax SOMENTE funciona em variable-length paths onde o planner
-    splita explicitamente em logical_plan.py:1006
+    The renderer then generates OR-combined filters like:
+    (relationship_type = 'KNOWS') OR (relationship_type = 'FOLLOWS')
     """
-    from gsql2rsql.common.exceptions import TranspilerBindingException
-
     graph = GraphContext(
         nodes_table="catalog.schema.nodes",
         edges_table="catalog.schema.edges",
@@ -40,16 +37,17 @@ def test_relationship_or_syntax_simple():
     print("Query Cypher:")
     print(query)
     print("\nTentando transpilar...")
-    print("❌ ESPERADO: Falha com binding error")
 
-    with pytest.raises(TranspilerBindingException) as exc_info:
-        graph.transpile(query)
+    sql = graph.transpile(query)
+    print("\n✅ SUCESSO! SQL gerado:")
+    print(sql)
 
-    print("\n✅ Confirmado: Falha com erro esperado")
-    print("   Erro: %s" % exc_info.value)
-    assert "Failed to bind relationship 'r' of type 'KNOWS|FOLLOWS'" in str(
-        exc_info.value
-    )
+    # Verify both edge types are present in the filter
+    assert "'KNOWS'" in sql, "Expected KNOWS filter in SQL"
+    assert "'FOLLOWS'" in sql, "Expected FOLLOWS filter in SQL"
+    assert " OR " in sql, "Expected OR syntax combining edge filters"
+    # Should NOT have concatenated string
+    assert "'KNOWS|FOLLOWS'" not in sql, "Should not have concatenated type"
 
 
 def test_relationship_or_syntax_variable_path():

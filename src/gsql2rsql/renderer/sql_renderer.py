@@ -1609,8 +1609,36 @@ class SQLRenderer:
         # Collect all filters to apply
         filters: list[str] = []
 
-        # Add implicit filter if defined (e.g., edge_type = 'KNOWS')
-        if table_desc.filter:
+        # Add implicit filter(s) for edge type
+        # Handle OR syntax ([:KNOWS|WORKS_AT]) by combining filters with OR
+        if len(entity_field.bound_edge_types) > 1:
+            # Multiple edge types - collect filters from each type's descriptor
+            edge_filters: list[str] = []
+            # Get source type from bound_entity_name (format: "Source@TYPE@Target")
+            parts = entity_field.bound_entity_name.split("@")
+            source_type = parts[0] if len(parts) >= 1 else None
+
+            for edge_type in entity_field.bound_edge_types:
+                # Use find_edges_by_verb to find the correct edge schema for each type
+                # This handles cases where edge types have different target node types
+                # (e.g., KNOWS→Person, LIVES_IN→City, WORKS_AT→Company)
+                edges = self._graph_def.find_edges_by_verb(
+                    edge_type,
+                    from_node_name=source_type,
+                    to_node_name=None,  # Allow any target
+                )
+                if edges:
+                    edge_schema = edges[0]
+                    edge_id = edge_schema.id
+                    type_desc = self._graph_def.get_sql_table_descriptors(edge_id)
+                    if type_desc and type_desc.filter:
+                        edge_filters.append(type_desc.filter)
+            if edge_filters:
+                # Combine with OR: (filter1) OR (filter2)
+                combined_edge_filter = " OR ".join(f"({f})" for f in edge_filters)
+                filters.append(combined_edge_filter)
+        elif table_desc.filter:
+            # Single edge type - use its filter directly
             filters.append(table_desc.filter)
 
         # Add pushed-down filter from optimizer (e.g., p.name = 'Alice')

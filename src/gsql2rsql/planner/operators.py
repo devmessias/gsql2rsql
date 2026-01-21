@@ -314,8 +314,14 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
         elif isinstance(self.entity, RelationshipEntity):
             rel_entity = self.entity
             edge_def = None
+            resolved_edge_types: list[str] = []
 
             from gsql2rsql.parser.ast import RelationshipDirection
+
+            # Parse edge types (handle OR syntax like "KNOWS|WORKS_AT")
+            raw_edge_types = [
+                t.strip() for t in rel_entity.entity_name.split("|") if t.strip()
+            ]
 
             # Determine source/sink based on direction
             if rel_entity.direction == RelationshipDirection.FORWARD:
@@ -328,52 +334,61 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
                 source_type = rel_entity.left_entity_name or None
                 sink_type = rel_entity.right_entity_name or None
 
-            # Check if either endpoint is unknown (no label)
-            if source_type is None or sink_type is None:
-                # Partial lookup - find first matching edge
-                edges = graph_definition.find_edges_by_verb(
-                    rel_entity.entity_name,
-                    from_node_name=source_type,
-                    to_node_name=sink_type,
-                )
-                if edges:
-                    edge_def = edges[0]
-                # If direction is NONE, also try reverse
-                if not edge_def and rel_entity.direction == RelationshipDirection.NONE:
+            # Try to bind each edge type
+            for edge_type in raw_edge_types:
+                found_edge = None
+
+                # Check if either endpoint is unknown (no label)
+                if source_type is None or sink_type is None:
+                    # Partial lookup
                     edges = graph_definition.find_edges_by_verb(
-                        rel_entity.entity_name,
-                        from_node_name=sink_type,
-                        to_node_name=source_type,
+                        edge_type,
+                        from_node_name=source_type,
+                        to_node_name=sink_type,
                     )
                     if edges:
-                        edge_def = edges[0]
-            else:
-                # Exact lookup (existing behavior)
-                if rel_entity.direction == RelationshipDirection.FORWARD:
-                    edge_def = graph_definition.get_edge_definition(
-                        rel_entity.entity_name,
-                        rel_entity.left_entity_name,
-                        rel_entity.right_entity_name,
-                    )
-                elif rel_entity.direction == RelationshipDirection.BACKWARD:
-                    edge_def = graph_definition.get_edge_definition(
-                        rel_entity.entity_name,
-                        rel_entity.right_entity_name,
-                        rel_entity.left_entity_name,
-                    )
+                        found_edge = edges[0]
+                    # If direction is BOTH, also try reverse
+                    if not found_edge and rel_entity.direction == RelationshipDirection.BOTH:
+                        edges = graph_definition.find_edges_by_verb(
+                            edge_type,
+                            from_node_name=sink_type,
+                            to_node_name=source_type,
+                        )
+                        if edges:
+                            found_edge = edges[0]
                 else:
-                    # Try both directions
-                    edge_def = graph_definition.get_edge_definition(
-                        rel_entity.entity_name,
-                        rel_entity.left_entity_name,
-                        rel_entity.right_entity_name,
-                    )
-                    if not edge_def:
-                        edge_def = graph_definition.get_edge_definition(
-                            rel_entity.entity_name,
+                    # Exact lookup
+                    if rel_entity.direction == RelationshipDirection.FORWARD:
+                        found_edge = graph_definition.get_edge_definition(
+                            edge_type,
+                            rel_entity.left_entity_name,
+                            rel_entity.right_entity_name,
+                        )
+                    elif rel_entity.direction == RelationshipDirection.BACKWARD:
+                        found_edge = graph_definition.get_edge_definition(
+                            edge_type,
                             rel_entity.right_entity_name,
                             rel_entity.left_entity_name,
                         )
+                    else:
+                        # Try both directions
+                        found_edge = graph_definition.get_edge_definition(
+                            edge_type,
+                            rel_entity.left_entity_name,
+                            rel_entity.right_entity_name,
+                        )
+                        if not found_edge:
+                            found_edge = graph_definition.get_edge_definition(
+                                edge_type,
+                                rel_entity.right_entity_name,
+                                rel_entity.left_entity_name,
+                            )
+
+                if found_edge:
+                    resolved_edge_types.append(edge_type)
+                    if edge_def is None:
+                        edge_def = found_edge  # Use first for schema
 
             if not edge_def:
                 from gsql2rsql.common.exceptions import (
@@ -423,6 +438,9 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
                 entity_field.node_join_field = node_id_field
                 entity_field.rel_source_join_field = edge_src_id_field
                 entity_field.rel_sink_join_field = edge_sink_id_field
+                # Store resolved edge types for OR syntax ([:KNOWS|WORKS_AT])
+                if isinstance(self.entity, RelationshipEntity):
+                    entity_field.bound_edge_types = resolved_edge_types
 
     def introduced_symbols(self) -> set[str]:
         """Return symbols introduced by this data source.

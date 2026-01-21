@@ -155,6 +155,9 @@ class EntityField(Field):
     bound_entity_name: str = ""
     bound_source_entity_name: str = ""
     bound_sink_entity_name: str = ""
+    # For OR syntax ([:KNOWS|WORKS_AT]), stores resolved edge types
+    # Empty list = single type (use bound_entity_name), non-empty = multiple types
+    bound_edge_types: list[str] = field(default_factory=list)
     node_join_field: ValueField | None = None
     rel_source_join_field: ValueField | None = None
     rel_sink_join_field: ValueField | None = None
@@ -169,6 +172,7 @@ class EntityField(Field):
             bound_entity_name=self.bound_entity_name,
             bound_source_entity_name=self.bound_source_entity_name,
             bound_sink_entity_name=self.bound_sink_entity_name,
+            bound_edge_types=list(self.bound_edge_types),
             node_join_field=self.node_join_field.clone() if self.node_join_field else None,
             rel_source_join_field=(
                 self.rel_source_join_field.clone() if self.rel_source_join_field else None
@@ -187,6 +191,7 @@ class EntityField(Field):
             self.bound_entity_name = other.bound_entity_name
             self.bound_source_entity_name = other.bound_source_entity_name
             self.bound_sink_entity_name = other.bound_sink_entity_name
+            self.bound_edge_types = list(other.bound_edge_types)
             self.node_join_field = (
                 other.node_join_field.clone() if other.node_join_field else None
             )
