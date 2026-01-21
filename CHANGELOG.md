@@ -2,6 +2,23 @@
 
 
 
+## v0.4.0 (2026-01-21)
+
+### Documentation
+
+* docs: refactor documentation and simplify it ([`24fffbd`](https://github.com/devmessias/gsql2rsql/commit/24fffbd95b9c5c8ec1f63d4f6c6ad8627ba70c23))
+
+### Feature
+
+* feat: add BFS tests for social graph ([`a5dae48`](https://github.com/devmessias/gsql2rsql/commit/a5dae48ddba72dffac3c621df9eced1552133335))
+
+* feat: add BFS tests ([`1986322`](https://github.com/devmessias/gsql2rsql/commit/1986322be535b12f818cba4b4a6e313b3fd70336))
+
+### Fix
+
+* fix: node_id hard coded ([`16ebc5b`](https://github.com/devmessias/gsql2rsql/commit/16ebc5b708d641a440c3b3e917b441e98af5e24c))
+
+
 ## v0.3.0 (2026-01-21)
 
 ### Feature
