@@ -127,6 +127,7 @@ markdown_extensions:
       custom_checkbox: true
   - pymdownx.tilde
   - pymdownx.snippets:
+      base_path: docs/includes
       check_paths: true
 
 # Extra configuration
@@ -173,7 +174,7 @@ nav:
     - CLI Commands: cli-commands.md
   - Contributing:
     - Architecture: architecture.md
-    - Development: contributing.md
+    # - Development: contributing.md
   - About: about.md
 
 # Extra CSS/JS

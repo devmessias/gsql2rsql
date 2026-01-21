@@ -8,6 +8,9 @@
 
 > **Project Status**: This is a hobby/research project being developed towards production quality. While it handles complex queries and includes comprehensive tests, it's not yet  at enterprise scale. Contributions welcome!
 
+!!! warning "Not for OLTP (obviously) or end-user queries"
+    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
+
 ## Why This Project?
 
 ### Inspiration: Microsoft's openCypherTranspiler

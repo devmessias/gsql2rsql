@@ -2,7 +2,7 @@
 
 **Query your Delta Tables as a Graph**
 
-No need for a separate graph database. Write intuitive OpenCypher queries, get optimized Spark SQL automatically.
+No need for a separate graph database. Write intuitive OpenCypher queries, get Spark SQL automatically.
 
 ---
 
@@ -14,10 +14,18 @@ No need for a separate graph database. Write intuitive OpenCypher queries, get o
 | Need to maintain a separate graph database | Query Delta Lake directly |
 | Hand-written recursive SQL is error-prone | Automatic cycle detection and path tracking |
 | LLM-generated complex SQL is hard to audit | Human-readable Cypher + deterministic transpilation (optionally pass to LLM for final optimization) |
+| Scaling to tens of billions of triples is costly in graph DBs | Delta Lake stores billions of triples efficiently, with Spark scalability |
+
+!!! success "Why Databricks"
+    It has tables designed for massive scale: they efficiently store and query tens of billions of triples, time travel, and native Spark integration. No ETL, no migration—just query your data lake as a graph.
 
 ---
 
 ## See It in Action
+
+```bash
+pip install gsql2rsql
+```
 
 ```python
 from gsql2rsql import GraphContext
@@ -100,16 +108,9 @@ print(sql)  # Production-ready Spark SQL
 
 ---
 
-## Why gsql2rsql?
+!!! warning "Not for OLTP (obviously) or end-user queries"
+    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
 
-| Problem | Solution |
-|---------|----------|
-| Graph queries are complex SQL | Write 5 lines of Cypher instead of 60+ |
-| Need a separate graph database | Query Delta Lake directly |
-| LLM-generated SQL is unauditable | Human-readable Cypher + deterministic transpilation |
-| `WITH RECURSIVE` is error-prone | Automatically generated with cycle detection |
-
----
 
 ## Real-World Examples
 
@@ -148,13 +149,8 @@ print(sql)  # Production-ready Spark SQL
 
 ---
 
-## Installation
 
-```bash
-pip install gsql2rsql
-```
 
----
 
 **That's it!** No schema boilerplate, no complex setup.
 
@@ -216,6 +212,7 @@ API Reference →[](api-reference.md)
 | **Variable-length paths** | `[:REL*1..5]` via `WITH RECURSIVE` |
 | **Cycle detection** | Automatic `ARRAY_CONTAINS` checks |
 | **Path functions** | `length(path)`, `nodes(path)`, `relationships(path)` |
+| **No-label nodes** | `(a)-[:REL]->(b:Label)` matches any node type for `a` |
 | **Inline filters** | `(n:Person {id: 123})` pushes predicates to source |
 | **Undirected edges** | `(a)-[:KNOWS]-(b)` via optimized UNION ALL |
 | **Aggregations** | COUNT, SUM, AVG, COLLECT, etc. |
@@ -257,9 +254,8 @@ This separation ensures each phase has clear responsibilities and can be tested 
 ## Project Status
 
 !!! info "Research Project"
-    This is a hobby/research project with **682+ tests** and comprehensive
-    PySpark validation. While not yet battle-tested at enterprise scale,
-    it handles complex queries correctly. **Contributions welcome!**
+ **Contributions welcome!**
+
 
 - [GitHub Repository](https://github.com/devmessias/gsql2rsql)
 - [Issue Tracker](https://github.com/devmessias/gsql2rsql/issues)
@@ -270,3 +266,6 @@ This separation ensures each phase has clear responsibilities and can be tested 
 ## License
 
 MIT License - see [LICENSE](https://github.com/devmessias/gsql2rsql/blob/main/LICENSE)
+
+---
+--8<-- "inspiration.md"

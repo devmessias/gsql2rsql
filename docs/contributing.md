@@ -691,6 +691,10 @@ SELECT * FROM Node  -- WHERE clause missing!
 
 ---
 
+--8<-- "inspiration.md"
+
+---
+
 ## Where to Look Next
 
 - [contributing.md](contributing.md) — Detailed extension guide

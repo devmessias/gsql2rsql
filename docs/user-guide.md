@@ -193,6 +193,29 @@ print(sql)
 
 ---
 
+## No-Label Nodes (Wildcard Matching)
+
+GraphContext automatically enables **no-label support**, allowing nodes without explicit labels in queries:
+
+```python
+# Node 'a' has no label - matches ANY node type
+sql = graph.transpile("""
+    MATCH (a)-[:WORKS_AT]->(c:Company)
+    RETURN a, c.name
+""")
+```
+
+This is useful when:
+
+- You don't know or care about the source node type
+- You want to match multiple node types at once
+- You're exploring relationships without type constraints
+
+!!! warning "Performance Impact"
+    No-label nodes cause **full table scans** on the nodes table (no `WHERE node_type = '...'` filter). Use explicit labels whenever possible for production queries.
+
+---
+
 ## Variable-Length Paths
 
 One of gsql2rsql's most powerful features is support for variable-length paths using `WITH RECURSIVE`.
