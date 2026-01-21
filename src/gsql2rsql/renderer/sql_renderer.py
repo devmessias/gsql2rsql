@@ -591,35 +591,55 @@ class SQLRenderer:
         if edge_types:
             # Specific edge types provided
             for edge_type in edge_types:
-                edge_id = EdgeSchema.get_edge_id(
-                    edge_type,
-                    op.source_node_type,
-                    op.target_node_type,
-                )
-                edge_table = self._graph_def.get_sql_table_descriptors(edge_id)
-                if not edge_table:
-                    # Try with just the edge name
-                    edge_table = self._graph_def.get_sql_table_descriptors(edge_type)
-                if edge_table:
-                    edge_tables.append((edge_type, edge_table))
+                edge_table = None
+                edge_schema = None
 
-                # Get column names and properties from first edge schema
-                if len(edge_tables) == 1:
+                # Check if either endpoint is unknown (no label) - use partial lookup
+                if not op.source_node_type or not op.target_node_type:
+                    # Partial lookup - find matching edges
+                    edges = self._graph_def.find_edges_by_verb(
+                        edge_type,
+                        from_node_name=op.source_node_type or None,
+                        to_node_name=op.target_node_type or None,
+                    )
+                    if edges:
+                        edge_schema = edges[0]
+                        edge_table = self._graph_def.get_sql_table_descriptors(
+                            edge_schema.id
+                        )
+                else:
+                    # Exact lookup (existing behavior)
+                    edge_id = EdgeSchema.get_edge_id(
+                        edge_type,
+                        op.source_node_type,
+                        op.target_node_type,
+                    )
+                    edge_table = self._graph_def.get_sql_table_descriptors(edge_id)
+                    if not edge_table:
+                        # Try with just the edge name
+                        edge_table = self._graph_def.get_sql_table_descriptors(edge_type)
+
+                    # Get edge schema for column info
                     edge_schema = self._graph_def.get_edge_definition(
                         edge_type,
                         op.source_node_type,
                         op.target_node_type,
                     )
-                    if edge_schema:
-                        if edge_schema.source_id_property:
-                            source_id_col = edge_schema.source_id_property.property_name
-                        if edge_schema.sink_id_property:
-                            target_id_col = edge_schema.sink_id_property.property_name
-                        # Auto-collect edge properties if not specified
-                        if op.collect_edges and not edge_props:
-                            for prop in edge_schema.properties:
-                                if prop.property_name not in (source_id_col, target_id_col):
-                                    edge_props.append(prop.property_name)
+
+                if edge_table:
+                    edge_tables.append((edge_type, edge_table))
+
+                # Get column names and properties from first edge schema
+                if len(edge_tables) == 1 and edge_schema:
+                    if edge_schema.source_id_property:
+                        source_id_col = edge_schema.source_id_property.property_name
+                    if edge_schema.sink_id_property:
+                        target_id_col = edge_schema.sink_id_property.property_name
+                    # Auto-collect edge properties if not specified
+                    if op.collect_edges and not edge_props:
+                        for prop in edge_schema.properties:
+                            if prop.property_name not in (source_id_col, target_id_col):
+                                edge_props.append(prop.property_name)
         else:
             # No specific types - would need to get all edges between nodes
             # For now, raise an error - this could be improved later
@@ -735,8 +755,8 @@ class SQLRenderer:
         source_node_filter_sql: str | None = None
         source_node_table: SQLTableDescriptor | None = None
         if op.start_node_filter:
-            # Get source node table for JOIN
-            source_node_table = self._graph_def.get_sql_table_descriptors(
+            # Get source node table for JOIN (supports no-label via wildcard)
+            source_node_table = self._get_table_descriptor_with_wildcard(
                 op.source_node_type
             )
             if source_node_table:
@@ -752,8 +772,8 @@ class SQLRenderer:
 
         # If min_depth is 0, add zero-length path base case first
         if min_depth == 0:
-            # Get source node table descriptor
-            zero_len_source_table = self._graph_def.get_sql_table_descriptors(
+            # Get source node table descriptor (supports no-label via wildcard)
+            zero_len_source_table = self._get_table_descriptor_with_wildcard(
                 op.source_node_type
             )
             if not zero_len_source_table:
@@ -1057,9 +1077,9 @@ class SQLRenderer:
         cte_name = getattr(recursive_op, "cte_name", "paths")
         min_depth = recursive_op.min_hops if recursive_op.min_hops is not None else 1
 
-        # Get target node's table info
+        # Get target node's table info (supports no-label via wildcard)
         target_entity = target_op.entity
-        target_table = self._graph_def.get_sql_table_descriptors(
+        target_table = self._get_table_descriptor_with_wildcard(
             target_entity.entity_name
         )
         if not target_table:
@@ -1078,9 +1098,9 @@ class SQLRenderer:
         target_alias = target_entity.alias or "n"
         source_alias = recursive_op.source_alias or "src"
 
-        # Get source node's table info (may be same type as target)
+        # Get source node's table info (supports no-label via wildcard)
         source_node_type = recursive_op.source_node_type
-        source_table = self._graph_def.get_sql_table_descriptors(source_node_type)
+        source_table = self._get_table_descriptor_with_wildcard(source_node_type)
         if not source_table:
             # Fallback to target table if source not found
             source_table = target_table
@@ -1460,6 +1480,28 @@ class SQLRenderer:
         """Get indentation string for a given depth."""
         return "  " * depth
 
+    def _get_table_descriptor_with_wildcard(
+        self, entity_name: str
+    ) -> SQLTableDescriptor | None:
+        """Get table descriptor, falling back to wildcard for wildcard nodes.
+
+        This method supports no-label nodes by returning the wildcard table
+        descriptor when entity_name is empty or is the wildcard type.
+
+        Args:
+            entity_name: The entity name (node type or edge id).
+                Empty string or WILDCARD_NODE_TYPE means no-label node.
+
+        Returns:
+            SQLTableDescriptor if found, None otherwise.
+        """
+        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE
+
+        if not entity_name or entity_name == WILDCARD_NODE_TYPE:
+            # No label or wildcard type - use wildcard table descriptor
+            return self._graph_def.get_wildcard_table_descriptor()
+        return self._graph_def.get_sql_table_descriptors(entity_name)
+
     def _render_data_source(self, op: DataSourceOperator, depth: int) -> str:
         """Render a data source operator."""
         lines: list[str] = []
@@ -1472,8 +1514,8 @@ class SQLRenderer:
         if not isinstance(entity_field, EntityField):
             return ""
 
-        # Get SQL table descriptor
-        table_desc = self._graph_def.get_sql_table_descriptors(
+        # Get SQL table descriptor (supports no-label nodes via wildcard)
+        table_desc = self._get_table_descriptor_with_wildcard(
             entity_field.bound_entity_name
         )
         if not table_desc:

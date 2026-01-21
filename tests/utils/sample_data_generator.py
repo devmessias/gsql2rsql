@@ -520,6 +520,62 @@ class SchemaDataGenerator:
         for name, df in self.generated_dfs.items():
             df.createOrReplaceTempView(name)
 
+        # Create AllNodes view if noLabelSupport is configured
+        no_label_config = self.yaml_schema.get("schema", {}).get("noLabelSupport")
+        if no_label_config and no_label_config.get("enabled", False):
+            table_name = no_label_config.get("tableName", "")
+            if table_name:
+                # Extract short name (e.g., "AllNodes" from "catalog.demo.AllNodes")
+                short_name = table_name.split(".")[-1]
+                self._create_all_nodes_view(short_name)
+
+    def _create_all_nodes_view(self, view_name: str) -> None:
+        """Create a union view of all node tables for no-label support.
+
+        The view includes all unique properties across all node types.
+        Missing properties are filled with NULL.
+        """
+        schema = self.yaml_schema.get("schema", {})
+        nodes = schema.get("nodes", [])
+
+        if not nodes:
+            return
+
+        # Collect all unique property names across all node types
+        all_props: set[str] = {"id"}  # id is always present
+        node_props: dict[str, set[str]] = {}
+
+        for node in nodes:
+            props = {p["name"] for p in node.get("properties", [])}
+            props.add(node.get("idProperty", {}).get("name", "id"))
+            node_props[node["name"]] = props
+            all_props.update(props)
+
+        # Sort for consistent column order
+        sorted_props = sorted(all_props)
+
+        # Build UNION ALL query with NULL for missing properties
+        union_parts = []
+        for node in nodes:
+            table_name = node["tableName"]
+            short_name = table_name.split(".")[-1]
+            props = node_props[node["name"]]
+
+            # Build SELECT clause with NULL for missing columns
+            select_cols = []
+            for prop in sorted_props:
+                if prop in props:
+                    select_cols.append(prop)
+                else:
+                    select_cols.append(f"NULL as {prop}")
+
+            select_clause = ", ".join(select_cols)
+            union_parts.append(f"SELECT {select_clause} FROM {short_name}")
+
+        if union_parts:
+            union_sql = " UNION ALL ".join(union_parts)
+            self.spark.sql(f"CREATE OR REPLACE TEMP VIEW {view_name} AS {union_sql}")
+
     def get_dataframe(self, short_name: str) -> DataFrame | None:
         """Get a generated DataFrame by short table name."""
         return self.generated_dfs.get(short_name)

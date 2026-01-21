@@ -270,15 +270,29 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
         edge_sink_id_field: ValueField | None = None
 
         if isinstance(self.entity, NodeEntity):
-            node_def = graph_definition.get_node_definition(self.entity.entity_name)
-            if not node_def:
-                from gsql2rsql.common.exceptions import (
-                    TranspilerBindingException,
-                )
-                raise TranspilerBindingException(
-                    f"Failed to bind entity '{self.entity.alias}' "
-                    f"of type '{self.entity.entity_name}'"
-                )
+            entity_name = self.entity.entity_name
+
+            if not entity_name:
+                # No label provided - try wildcard support
+                node_def = graph_definition.get_wildcard_node_definition()
+                if not node_def:
+                    from gsql2rsql.common.exceptions import (
+                        TranspilerBindingException,
+                    )
+                    raise TranspilerBindingException(
+                        f"No-label node '{self.entity.alias}' not supported. "
+                        f"Specify a label or enable no_label_support."
+                    )
+            else:
+                node_def = graph_definition.get_node_definition(entity_name)
+                if not node_def:
+                    from gsql2rsql.common.exceptions import (
+                        TranspilerBindingException,
+                    )
+                    raise TranspilerBindingException(
+                        f"Failed to bind entity '{self.entity.alias}' "
+                        f"of type '{entity_name}'"
+                    )
 
             entity_unique_name = node_def.id
             if node_def.node_id_property:
@@ -303,39 +317,71 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
 
             from gsql2rsql.parser.ast import RelationshipDirection
 
+            # Determine source/sink based on direction
             if rel_entity.direction == RelationshipDirection.FORWARD:
-                edge_def = graph_definition.get_edge_definition(
-                    rel_entity.entity_name,
-                    rel_entity.left_entity_name,
-                    rel_entity.right_entity_name,
-                )
+                source_type = rel_entity.left_entity_name or None
+                sink_type = rel_entity.right_entity_name or None
             elif rel_entity.direction == RelationshipDirection.BACKWARD:
-                edge_def = graph_definition.get_edge_definition(
-                    rel_entity.entity_name,
-                    rel_entity.right_entity_name,
-                    rel_entity.left_entity_name,
-                )
+                source_type = rel_entity.right_entity_name or None
+                sink_type = rel_entity.left_entity_name or None
             else:
-                # Try both directions
-                edge_def = graph_definition.get_edge_definition(
+                source_type = rel_entity.left_entity_name or None
+                sink_type = rel_entity.right_entity_name or None
+
+            # Check if either endpoint is unknown (no label)
+            if source_type is None or sink_type is None:
+                # Partial lookup - find first matching edge
+                edges = graph_definition.find_edges_by_verb(
                     rel_entity.entity_name,
-                    rel_entity.left_entity_name,
-                    rel_entity.right_entity_name,
+                    from_node_name=source_type,
+                    to_node_name=sink_type,
                 )
-                if not edge_def:
+                if edges:
+                    edge_def = edges[0]
+                # If direction is NONE, also try reverse
+                if not edge_def and rel_entity.direction == RelationshipDirection.NONE:
+                    edges = graph_definition.find_edges_by_verb(
+                        rel_entity.entity_name,
+                        from_node_name=sink_type,
+                        to_node_name=source_type,
+                    )
+                    if edges:
+                        edge_def = edges[0]
+            else:
+                # Exact lookup (existing behavior)
+                if rel_entity.direction == RelationshipDirection.FORWARD:
+                    edge_def = graph_definition.get_edge_definition(
+                        rel_entity.entity_name,
+                        rel_entity.left_entity_name,
+                        rel_entity.right_entity_name,
+                    )
+                elif rel_entity.direction == RelationshipDirection.BACKWARD:
                     edge_def = graph_definition.get_edge_definition(
                         rel_entity.entity_name,
                         rel_entity.right_entity_name,
                         rel_entity.left_entity_name,
                     )
+                else:
+                    # Try both directions
+                    edge_def = graph_definition.get_edge_definition(
+                        rel_entity.entity_name,
+                        rel_entity.left_entity_name,
+                        rel_entity.right_entity_name,
+                    )
+                    if not edge_def:
+                        edge_def = graph_definition.get_edge_definition(
+                            rel_entity.entity_name,
+                            rel_entity.right_entity_name,
+                            rel_entity.left_entity_name,
+                        )
 
             if not edge_def:
                 from gsql2rsql.common.exceptions import (
                     TranspilerBindingException,
                 )
                 raise TranspilerBindingException(
-                    f"Failed to bind entity '{self.entity.alias}' "
-                    f"of type '{self.entity.entity_name}'"
+                    f"Failed to bind relationship '{rel_entity.alias}' "
+                    f"of type '{rel_entity.entity_name}'"
                 )
 
             entity_unique_name = edge_def.id

@@ -135,6 +135,16 @@ class ISQLDBSchemaProvider(IGraphSchemaProvider, ABC):
         """
         ...
 
+    @abstractmethod
+    def get_wildcard_table_descriptor(self) -> SQLTableDescriptor | None:
+        """
+        Get the SQL table descriptor for wildcard nodes (no type filter).
+
+        Returns:
+            SQLTableDescriptor if wildcard support is enabled, None otherwise.
+        """
+        ...
+
     def find_edge_by_verb(
         self, verb: str, target_node_name: str | None = None
     ) -> tuple[EdgeSchema, SQLTableDescriptor] | None:
@@ -160,6 +170,8 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         self._nodes: dict[str, NodeSchema] = {}
         self._edges: dict[str, EdgeSchema] = {}
         self._table_descriptors: dict[str, SQLTableDescriptor] = {}
+        self._wildcard_node: NodeSchema | None = None
+        self._wildcard_table_desc: SQLTableDescriptor | None = None
 
     def add_node(
         self,
@@ -179,6 +191,82 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         self._edges[schema.id] = schema
         self._table_descriptors[schema.id] = table_descriptor
 
+    def set_wildcard_node(
+        self,
+        schema: NodeSchema,
+        table_descriptor: SQLTableDescriptor,
+    ) -> None:
+        """Register wildcard node with its SQL descriptor.
+
+        WARNING: No-label support causes full table scans for unlabeled nodes.
+        Use labels whenever possible for production queries.
+
+        Args:
+            schema: Node schema for wildcard nodes.
+            table_descriptor: SQL table descriptor with filter=None (no type filter).
+        """
+        self._wildcard_node = schema
+        self._wildcard_table_desc = table_descriptor
+
+    def enable_no_label_support(
+        self,
+        table_name: str,
+        node_id_columns: list[str],
+        properties: list[EntityProperty] | None = None,
+    ) -> None:
+        """Enable support for nodes without labels in MATCH patterns.
+
+        This method configures the schema provider to handle queries like:
+            MATCH (a)-[:REL]->(b:Label)
+        where node 'a' has no label specified.
+
+        WARNING: No-label support causes full table scans for unlabeled nodes.
+        Use labels whenever possible for production queries.
+
+        Args:
+            table_name: The nodes table name (e.g., "catalog.schema.nodes").
+            node_id_columns: List of node ID column names (e.g., ["node_id"]).
+            properties: Optional list of node properties available on all nodes.
+
+        Example:
+            >>> provider = SimpleSQLSchemaProvider()
+            >>> # Add node types...
+            >>> provider.enable_no_label_support(
+            ...     table_name="catalog.schema.nodes",
+            ...     node_id_columns=["node_id"],
+            ...     properties=[EntityProperty("name", str)],
+            ... )
+        """
+        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE
+
+        # Create wildcard schema with provided properties
+        wildcard_schema = NodeSchema(
+            name=WILDCARD_NODE_TYPE,
+            node_id_property=EntityProperty(
+                property_name=node_id_columns[0] if node_id_columns else "id",
+                data_type=str,
+            ),
+            properties=properties or [],
+        )
+
+        # Create table descriptor without type filter (matches all nodes)
+        wildcard_desc = SQLTableDescriptor(
+            table_name=table_name,
+            node_id_columns=node_id_columns,
+            filter=None,  # No type filter - matches all nodes
+        )
+
+        # Register the wildcard node
+        self.set_wildcard_node(wildcard_schema, wildcard_desc)
+
+    def get_wildcard_node_definition(self) -> NodeSchema | None:
+        """Get the wildcard node schema if enabled."""
+        return self._wildcard_node
+
+    def get_wildcard_table_descriptor(self) -> SQLTableDescriptor | None:
+        """Get SQL descriptor for wildcard nodes (no type filter)."""
+        return self._wildcard_table_desc
+
     def get_node_definition(self, node_name: str) -> NodeSchema | None:
         """Get a node schema by name."""
         return self._nodes.get(node_name)
@@ -189,6 +277,30 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         """Get an edge schema by verb and connected node names."""
         edge_id = EdgeSchema.get_edge_id(edge_verb, from_node_name, to_node_name)
         return self._edges.get(edge_id)
+
+    def find_edges_by_verb(
+        self,
+        edge_verb: str,
+        from_node_name: str | None = None,
+        to_node_name: str | None = None,
+    ) -> list[EdgeSchema]:
+        """Find edges matching verb and optionally source/sink types.
+
+        Args:
+            edge_verb: Relationship type (required, exact match).
+            from_node_name: Source type (None/empty = match any).
+            to_node_name: Target type (None/empty = match any).
+        """
+        results = []
+        for edge_schema in self._edges.values():
+            if edge_schema.name != edge_verb:
+                continue
+            if from_node_name and edge_schema.source_node_id != from_node_name:
+                continue
+            if to_node_name and edge_schema.sink_node_id != to_node_name:
+                continue
+            results.append(edge_schema)
+        return results
 
     def get_sql_table_descriptors(self, entity_name: str) -> SQLTableDescriptor | None:
         """Get the SQL table descriptor for an entity."""

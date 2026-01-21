@@ -338,6 +338,26 @@ def _load_schema(schema_data: dict) -> Any:
 
         provider.add_edge(edge_schema, table_desc)
 
+    # Enable no-label support if configured
+    no_label_config = schema_data.get("noLabelSupport")
+    if no_label_config and no_label_config.get("enabled", False):
+        table_name = no_label_config.get("tableName", "")
+        node_id_columns = no_label_config.get("nodeIdColumns", ["id"])
+        if table_name:
+            # Collect properties from all nodes for wildcard
+            all_properties: list[EntityProperty] = []
+            seen_props: set[str] = set()
+            for node_schema in provider._nodes.values():
+                for prop in node_schema.properties:
+                    if prop.property_name not in seen_props:
+                        all_properties.append(prop)
+                        seen_props.add(prop.property_name)
+            provider.enable_no_label_support(
+                table_name=table_name,
+                node_id_columns=node_id_columns,
+                properties=all_properties,
+            )
+
     return provider
 
 
@@ -477,6 +497,26 @@ def _load_schema_from_yaml(schema_data: dict) -> Any:
         )
 
         provider.add_edge(edge_schema, table_desc)
+
+    # Enable no-label support if configured
+    no_label_config = schema_data.get("noLabelSupport")
+    if no_label_config and no_label_config.get("enabled", False):
+        table_name = no_label_config.get("tableName", "")
+        node_id_columns = no_label_config.get("nodeIdColumns", ["id"])
+        if table_name:
+            # Collect properties from all nodes for wildcard
+            all_properties: list[EntityProperty] = []
+            seen_props: set[str] = set()
+            for node_schema in provider._nodes.values():
+                for prop in node_schema.properties:
+                    if prop.property_name not in seen_props:
+                        all_properties.append(prop)
+                        seen_props.add(prop.property_name)
+            provider.enable_no_label_support(
+                table_name=table_name,
+                node_id_columns=node_id_columns,
+                properties=all_properties,
+            )
 
     return provider
 

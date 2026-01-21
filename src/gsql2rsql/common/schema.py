@@ -4,6 +4,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+# Sentinel value for wildcard nodes (no-label support)
+WILDCARD_NODE_TYPE = "__wildcard__"
+
 
 @dataclass
 class EntityProperty:
@@ -99,6 +102,38 @@ class IGraphSchemaProvider(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_wildcard_node_definition(self) -> NodeSchema | None:
+        """
+        Return the wildcard node schema for no-label support.
+
+        Returns:
+            NodeSchema if wildcard support is enabled, None otherwise.
+        """
+        ...
+
+    @abstractmethod
+    def find_edges_by_verb(
+        self,
+        edge_verb: str,
+        from_node_name: str | None = None,
+        to_node_name: str | None = None,
+    ) -> list[EdgeSchema]:
+        """
+        Find edges matching verb and optionally source/sink types.
+
+        This method supports partial matching for no-label support.
+
+        Args:
+            edge_verb: The relationship type (required, exact match).
+            from_node_name: Source node type (None/empty = match any).
+            to_node_name: Target node type (None/empty = match any).
+
+        Returns:
+            List of matching EdgeSchema objects.
+        """
+        ...
+
 
 class SimpleGraphSchemaProvider(IGraphSchemaProvider):
     """A simple in-memory graph schema provider."""
@@ -106,6 +141,7 @@ class SimpleGraphSchemaProvider(IGraphSchemaProvider):
     def __init__(self) -> None:
         self._nodes: dict[str, NodeSchema] = {}
         self._edges: dict[str, EdgeSchema] = {}
+        self._wildcard_node: NodeSchema | None = None
 
     def add_node(self, schema: NodeSchema) -> None:
         """Add a node schema to the provider."""
@@ -114,6 +150,14 @@ class SimpleGraphSchemaProvider(IGraphSchemaProvider):
     def add_edge(self, schema: EdgeSchema) -> None:
         """Add an edge schema to the provider."""
         self._edges[schema.id] = schema
+
+    def set_wildcard_node(self, schema: NodeSchema) -> None:
+        """Register a wildcard node schema for no-label support.
+
+        WARNING: No-label support causes full table scans for unlabeled nodes.
+        Use labels whenever possible for production queries.
+        """
+        self._wildcard_node = schema
 
     def get_node_definition(self, node_name: str) -> NodeSchema | None:
         """Get a node schema by name."""
@@ -125,3 +169,31 @@ class SimpleGraphSchemaProvider(IGraphSchemaProvider):
         """Get an edge schema by verb and connected node names."""
         edge_id = EdgeSchema.get_edge_id(edge_verb, from_node_name, to_node_name)
         return self._edges.get(edge_id)
+
+    def get_wildcard_node_definition(self) -> NodeSchema | None:
+        """Get the wildcard node schema if enabled."""
+        return self._wildcard_node
+
+    def find_edges_by_verb(
+        self,
+        edge_verb: str,
+        from_node_name: str | None = None,
+        to_node_name: str | None = None,
+    ) -> list[EdgeSchema]:
+        """Find edges matching verb and optionally source/sink types.
+
+        Args:
+            edge_verb: Relationship type (required, exact match).
+            from_node_name: Source type (None/empty = match any).
+            to_node_name: Target type (None/empty = match any).
+        """
+        results = []
+        for edge_schema in self._edges.values():
+            if edge_schema.name != edge_verb:
+                continue
+            if from_node_name and edge_schema.source_node_id != from_node_name:
+                continue
+            if to_node_name and edge_schema.sink_node_id != to_node_name:
+                continue
+            results.append(edge_schema)
+        return results

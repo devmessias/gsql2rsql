@@ -29,7 +29,7 @@ class TestGraphContextCreation:
 
         assert graph.nodes_table == "`catalog`.`schema`.`nodes`"
         assert graph.edges_table == "`catalog`.`schema`.`edges`"
-        assert graph.node_type_col == "type"
+        assert graph.node_type_col == "node_type"
         assert graph.edge_type_col == "relationship_type"
 
     def test_custom_column_names(self):
@@ -103,11 +103,11 @@ class TestGraphContextTranspile:
         g = GraphContext(
             nodes_table="`catalog`.`demo`.`Person`",
             edges_table="`catalog`.`demo`.`Knows`",
-            node_type_col="type",
+            node_type_col="node_type",
             edge_type_col="relationship_type",
             node_id_col="id",
             extra_node_attrs={"name": str, "age": int},
-            extra_edge_attrs={"since": int}
+            extra_edge_attrs={"since": int},
         )
         g.set_types(node_types=["Person"], edge_types=["KNOWS"])
         return g
@@ -188,7 +188,7 @@ class TestGraphContextEdgeCases:
         )
 
         sql = graph.transpile("MATCH (p:Person) RETURN p")
-        assert "type = 'Person'" in sql
+        assert "node_type = 'Person'" in sql
 
     def test_multiple_edge_types(self):
         """Supports multiple edge types."""
@@ -294,8 +294,8 @@ class TestGraphContextVsManualSetup:
             SQLTableDescriptor(
                 table_name="catalog.demo.Person",  # No backticks - renderer adds them
                 node_id_columns=["id"],
-                filter="type = 'Person'"
-            )
+                filter="node_type = 'Person'",
+            ),
         )
         sql_schema.add_edge(
             knows,

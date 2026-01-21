@@ -83,6 +83,13 @@ schema:
         - { name: since, type: int }
         - { name: position, type: string }
 
+  # Enable no-label support for queries like MATCH (a)-[:REL]->(b:Label)
+  # Requires a view/table that unions all node types
+  noLabelSupport:
+    enabled: true
+    tableName: catalog.demo.AllNodes
+    nodeIdColumns: [id]
+
 examples:
   # =============================================================================
   # BASIC QUERIES
@@ -1049,3 +1056,191 @@ examples:
         ⚠️  Inline filters only support LITERAL values
         ⚠️  Variable references not supported yet
             Example that doesn't work: {id: $param}
+
+  # =========================================================================
+  # NO LABEL: Nodes Without Explicit Labels (OpenCypher Standard)
+  # =========================================================================
+  # Feature: Nodes without labels match ANY node type
+  # Syntax: (a) instead of (a:Label)
+  # Use case: Generic traversals, exploratory queries, multi-type patterns
+  # =========================================================================
+
+  - description: "NO LABEL: Source node without label"
+    application: "Features: No-label source node"
+    query: |
+      MATCH (a)-[:WORKS_AT]->(c:Company)
+      RETURN a.name, c.name
+      LIMIT 20
+    notes: |
+      Source node 'a' has no label - matches ANY node type.
+
+      OPENCYPHER STANDARD: Unlabeled nodes match all node types.
+
+      SQL PATTERN:
+        FROM nodes AS a  -- NO type filter for 'a'
+        JOIN edges ON a.id = edges.src
+        JOIN (SELECT ... FROM Company) AS c ON edges.dst = c.id
+        WHERE edges.relationship_type = 'WORKS_AT'
+
+      USE CASE: Find all entities that work at companies (could be Person, Bot, etc).
+
+      PERFORMANCE: Full table scan on source. Use labels when possible for filtering.
+
+  - description: "NO LABEL: Target node without label"
+    application: "Features: No-label target node"
+    query: |
+      MATCH (p:Person)-[:KNOWS]->(target)
+      RETURN p.name, target.name
+      LIMIT 20
+    notes: |
+      Target node 'target' has no label - matches ANY node type.
+
+      USE CASE: Find all connections of a person regardless of type.
+
+      SQL PATTERN:
+        FROM (SELECT ... FROM Person) AS p
+        JOIN edges ON p.id = edges.src
+        JOIN nodes AS target ON edges.dst = target.id  -- NO type filter
+        WHERE edges.relationship_type = 'KNOWS'
+
+      BENEFIT: Explore graph structure without knowing all node types.
+
+  - description: "NO LABEL: Both endpoints without labels"
+    application: "Features: No-label both nodes"
+    query: |
+      MATCH (a)-[:KNOWS]->(b)
+      RETURN a.name, b.name
+      LIMIT 20
+    notes: |
+      Both nodes 'a' and 'b' have no labels - match ANY node types.
+
+      SQL PATTERN:
+        FROM nodes AS a
+        JOIN edges ON a.id = edges.src
+        JOIN nodes AS b ON edges.dst = b.id
+        WHERE edges.relationship_type = 'KNOWS'
+
+      USE CASE: Explore all KNOWS relationships regardless of node types.
+
+      WARNING: Can be expensive on large graphs - no type filtering applied!
+
+  - description: "NO LABEL: Variable-length path without labels"
+    application: "Features: No-label VLP"
+    query: |
+      MATCH path = (a)-[:KNOWS*1..2]->(b)
+      RETURN a.id, b.id, length(path) AS hops
+      LIMIT 50
+    notes: |
+      Variable-length path where both endpoints have no labels.
+
+      SQL PATTERN (WITH RECURSIVE):
+        WITH RECURSIVE paths AS (
+          -- Base case: no type filters on source
+          UNION ALL
+          -- Recursive case: traverses any matching edge
+        )
+        SELECT ... FROM paths
+        JOIN nodes AS a ON ...  -- No type filter
+        JOIN nodes AS b ON ...  -- No type filter
+
+      USE CASE: Generic graph traversal - find all paths of any type.
+
+      COMPLEXITY: O(k^d) where k=avg degree, d=max depth
+      WARNING: Expensive without labels. Use sparingly on large graphs.
+
+  - description: "NO LABEL: VLP with labeled source, unlabeled target"
+    application: "Features: No-label VLP (partial)"
+    query: |
+      MATCH path = (a:Person)-[:KNOWS*1..2]->(b)
+      RETURN a.name, b.id, length(path) AS hops
+      LIMIT 50
+    notes: |
+      Variable-length path: source has label, target has no label.
+
+      SOURCE FILTER: a:Person adds WHERE node_type = 'Person' to base case
+      TARGET: No filter applied - matches any node type
+
+      SQL PATTERN:
+        WITH RECURSIVE paths AS (
+          -- Base case: source filter applied
+          SELECT ... FROM edges
+          JOIN (SELECT ... FROM Person) AS src ON ...
+          WHERE ...
+
+          UNION ALL
+          ...
+        )
+        SELECT ... FROM paths
+        JOIN nodes AS b ON ...  -- No type filter for target
+
+      USE CASE: "Find everything a Person can reach via KNOWS relationships"
+
+  - description: "NO LABEL: VLP with unlabeled source, labeled target"
+    application: "Features: No-label VLP (reverse partial)"
+    query: |
+      MATCH path = (a)-[:KNOWS*1..2]->(b:Person)
+      RETURN a.id, b.name, length(path) AS hops
+      LIMIT 50
+    notes: |
+      Variable-length path: source has no label, target has label.
+
+      SOURCE: No filter - starts from any node type
+      TARGET FILTER: b:Person applied in final join
+
+      SQL PATTERN:
+        WITH RECURSIVE paths AS (
+          -- Base case: no source filter (all nodes)
+          UNION ALL
+          ...
+        )
+        SELECT ... FROM paths
+        JOIN (SELECT ... FROM Person) AS b ON ...  -- Target filter
+
+      USE CASE: "Find all paths ending at a Person, regardless of start"
+
+      NOTE: VLP type filter rendering for labeled nodes may be a pre-existing
+      gap in some cases - but binding and SQL generation work correctly.
+
+  - description: "NO LABEL: Node reused after WITH (type already bound)"
+    application: "Features: No-label after WITH"
+    query: |
+      MATCH (a:Person)-[:WORKS_AT]->(c:Company)
+      WITH a, COUNT(c) AS company_count
+      MATCH (a)-[:KNOWS]->(friend:Person)
+      RETURN a.name, company_count, friend.name
+      LIMIT 20
+    notes: |
+      Node 'a' has no label in second MATCH, but type was already bound in first MATCH.
+
+      BEHAVIOR:
+        - First MATCH: 'a' is bound to Person (label specified)
+        - WITH: 'a' is passed through with its type
+        - Second MATCH: 'a' reuses existing binding (no label needed)
+
+      SQL PATTERN:
+        WITH first_match AS (
+          SELECT a.*, COUNT(c.id) AS company_count
+          FROM Person AS a
+          JOIN ... Company AS c
+          GROUP BY a.id
+        )
+        SELECT ... FROM first_match
+        JOIN edges ON ...
+        JOIN Person AS friend ON ...
+
+      USE CASE: Multi-stage queries where type is established early.
+
+  # NOTE: The following pattern is NOT supported due to parser limitations:
+  #
+  #   MATCH (start:Person)-[:KNOWS]->(mid)-[:WORKS_AT]->(end:Company)
+  #
+  # The parser fails with: "no viable alternative at input '...->(mid)-[:WORKS_AT]'"
+  # This is because the ANTLR grammar doesn't recognize unlabeled nodes
+  # in the middle of a chained relationship pattern.
+  #
+  # WORKAROUND: Use comma-separated patterns:
+  #   MATCH (start:Person)-[:KNOWS]->(mid:Person), (mid)-[:WORKS_AT]->(end:Company)
+  #
+  # But even with comma syntax, unlabeled nodes after -> have parser issues.
+  # This is a known OpenCypher parser limitation, not a transpiler bug.
+

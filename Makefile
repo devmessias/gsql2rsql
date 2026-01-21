@@ -38,6 +38,9 @@ test-no-pyspark:  ## Run all tests except PySpark tests
 test-bfs:  ## Run BFS/recursive tests only
 	$(UV) run pytest tests/test_renderer.py::TestBFSWithRecursive -v
 
+test-no-label:  ## Run no-label solution tests (TDD for Solution 2.5)
+	$(UV) run pytest tests/test_no_label_solution.py -v -s
+
 test-verbose:  ## Run tests with verbose output
 	$(UV) run pytest tests/ -v --tb=long
 

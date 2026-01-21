@@ -320,6 +320,29 @@ class GraphContext:
                 )
             )
 
+        # Enable no-label support (Triple Store always has single nodes table)
+        # This allows MATCH (a)-[:REL]->(b:Label) where 'a' has no label
+        assert self.nodes_table is not None  # Validated in __init__
+        properties = [
+            EntityProperty(property_name=prop_name, data_type=data_type)
+            for prop_name, data_type in self.extra_node_attrs.items()
+        ]
+        self._sql_schema.enable_no_label_support(
+            table_name=self.nodes_table,
+            node_id_columns=[self.node_id_col],
+            properties=properties,
+        )
+        # Also set on graph schema (planner needs it for binding)
+        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE
+        wildcard_schema = NodeSchema(
+            name=WILDCARD_NODE_TYPE,
+            node_id_property=EntityProperty(
+                property_name=self.node_id_col, data_type=str
+            ),
+            properties=properties,
+        )
+        self._graph_schema.set_wildcard_node(wildcard_schema)
+
     def transpile(self, query: str, optimize: bool = True) -> str:
         """Transpile OpenCypher query to Databricks SQL.
 
