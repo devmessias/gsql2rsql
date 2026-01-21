@@ -160,6 +160,7 @@ extra:
 # Page tree
 nav:
   - Home: index.md
+  - Making tables graph-friendly: table-design.md
   - User Guide:
     - Getting Started: user-guide.md
     - Examples:

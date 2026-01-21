@@ -1,8 +1,19 @@
 # gsql2rsql
 
-**OpenCypher to Databricks SQL Transpiler**
+**Query your Delta Tables as a Graph**
 
-Write graph queries in 5 lines. Get production-ready SQL automatically.
+No need for a separate graph database. Write intuitive OpenCypher queries, get optimized Spark SQL automatically.
+
+---
+
+## Why gsql2rsql?
+
+| Challenge | Solution |
+|-----------|----------|
+| Graph queries require complex SQL with `WITH RECURSIVE` | Write 5 lines of Cypher instead |
+| Need to maintain a separate graph database | Query Delta Lake directly |
+| Hand-written recursive SQL is error-prone | Automatic cycle detection and path tracking |
+| LLM-generated complex SQL is hard to audit | Human-readable Cypher + deterministic transpilation (optionally pass to LLM for final optimization) |
 
 ---
 
@@ -11,15 +22,13 @@ Write graph queries in 5 lines. Get production-ready SQL automatically.
 ```python
 from gsql2rsql import GraphContext
 
-# Define your graph schema (no database connection needed!)
-# GraphContext infer a bunch of stuff., customize column names if needed
+# Point to your existing Delta tables - no migration needed
 graph = GraphContext(
     nodes_table="catalog.fraud.nodes",
     edges_table="catalog.fraud.edges",
 )
 
-
-# Write a graph query - find suspicious transaction chains
+# Write graph queries with familiar Cypher syntax
 sql = graph.transpile("""
     MATCH path = (origin:Person {id: 12345})-[:TRANSACTION*1..4]->(dest:Person)
     WHERE dest.risk_score > 0.8
@@ -28,10 +37,10 @@ sql = graph.transpile("""
     LIMIT 100
 """)
 
-print(sql)  # Ready to run on Databricks!
+print(sql)  # Production-ready Spark SQL
 ```
 
-**5 lines of Cypher → a bunch of lines in SPARK SQL**
+**5 lines of Cypher → optimized Spark SQL with recursive CTEs**
 
 ??? example "Click to see the generated SQL"
 
