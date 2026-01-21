@@ -1087,8 +1087,11 @@ class SQLRenderer:
                 f"No table descriptor for {target_entity.entity_name}"
             )
 
-        # Get target node's ID column and schema
+        # Get target node's ID column and schema (supports wildcard for unlabeled nodes)
         target_node_schema = self._graph_def.get_node_definition(target_entity.entity_name)
+        if not target_node_schema and not target_entity.entity_name:
+            # Try wildcard for unlabeled nodes
+            target_node_schema = self._graph_def.get_wildcard_node_definition()
         if target_node_schema and target_node_schema.node_id_property:
             target_id_col = target_node_schema.node_id_property.property_name
         else:
@@ -1105,8 +1108,11 @@ class SQLRenderer:
             # Fallback to target table if source not found
             source_table = target_table
 
-        # Get source node's ID column and schema
+        # Get source node's ID column and schema (supports wildcard for unlabeled nodes)
         source_node_schema = self._graph_def.get_node_definition(source_node_type)
+        if not source_node_schema and not source_node_type:
+            # Try wildcard for unlabeled nodes
+            source_node_schema = self._graph_def.get_wildcard_node_definition()
         if source_node_schema and source_node_schema.node_id_property:
             source_id_col = source_node_schema.node_id_property.property_name
         else:

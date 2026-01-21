@@ -1079,9 +1079,16 @@ class LogicalPlan:
                     f"from WHERE clause"
                 )
 
-        # Get node ID columns from schema
+        # Get node ID columns from schema (supports wildcard for unlabeled nodes)
         source_node_schema = self._graph_schema.get_node_definition(source_node.entity_name)
+        if not source_node_schema and not source_node.entity_name:
+            # Try wildcard for unlabeled nodes
+            source_node_schema = self._graph_schema.get_wildcard_node_definition()
+
         target_node_schema = self._graph_schema.get_node_definition(target_node.entity_name)
+        if not target_node_schema and not target_node.entity_name:
+            # Try wildcard for unlabeled nodes
+            target_node_schema = self._graph_schema.get_wildcard_node_definition()
 
         source_id_col = "id"  # Default
         if source_node_schema and source_node_schema.node_id_property:
