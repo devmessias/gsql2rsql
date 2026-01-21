@@ -2,6 +2,17 @@
 
 
 
+## v0.5.0 (2026-01-21)
+
+### Documentation
+
+* docs: enhance documentation with warnings and new sections ([`6e5fb14`](https://github.com/devmessias/gsql2rsql/commit/6e5fb141e52936293ea227750b7f6a290cd99926))
+
+### Feature
+
+* feat: Implement OR syntax support for relationship types in DataSourceOperator ([`a687a07`](https://github.com/devmessias/gsql2rsql/commit/a687a073a557f730da1c5b6b137f9df4d73b59c0))
+
+
 ## v0.4.1 (2026-01-21)
 
 ### Documentation

@@ -5,7 +5,7 @@ from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.renderer.sql_renderer import SQLRenderer
 from gsql2rsql.graph_context import GraphContext
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 __all__ = [
     "OpenCypherParser",
     "LogicalPlan",
