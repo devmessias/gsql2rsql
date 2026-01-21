@@ -24,7 +24,7 @@ graph TD
 
 ## Separation of Concerns (4-Phase Design)
 
-The transpiler strictly separates concerns across phases to ensure correctness and maintainability. This architecture is documented in [CONTRIBUTING.md](../CONTRIBUTING.md).
+The transpiler strictly separates concerns across phases to ensure correctness and maintainability. This architecture is documented in [CONTRIBUTING.md](contributing.md).
 
 ### Design Principle
 
@@ -44,7 +44,7 @@ This prevents:
 
 ## Phase 1: Parser (Lexical/Syntactic Analysis)
 
-**Location**: [src/gsql2rsql/parser/](../src/gsql2rsql/parser/)
+**Location**: [src/gsql2rsql/parser/](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/)
 
 ### Responsibility
 Convert OpenCypher query string to Abstract Syntax Tree (AST). Validates **syntax only** — does NOT validate semantics, resolve references, or access schema.
@@ -53,11 +53,11 @@ Convert OpenCypher query string to Abstract Syntax Tree (AST). Validates **synta
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| [`opencypher_parser.py`](../src/gsql2rsql/parser/opencypher_parser.py) | Main entry point, ANTLR runtime invocation | ~60 |
-| [`ast.py`](../src/gsql2rsql/parser/ast.py) | AST node definitions (50+ node types) | ~1500 |
-| [`visitor.py`](../src/gsql2rsql/parser/visitor.py) | ANTLR visitor pattern implementation | ~800 |
-| [`operators.py`](../src/gsql2rsql/parser/operators.py) | Operator enums (binary, aggregation, functions) | ~300 |
-| [`grammar/`](../src/gsql2rsql/parser/grammar/) | ANTLR-generated parser/lexer | ~8000 |
+| [`opencypher_parser.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/opencypher_parser.py) | Main entry point, ANTLR runtime invocation | ~60 |
+| [`ast.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/ast.py) | AST node definitions (50+ node types) | ~1500 |
+| [`visitor.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/visitor.py) | ANTLR visitor pattern implementation | ~800 |
+| [`operators.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/operators.py) | Operator enums (binary, aggregation, functions) | ~300 |
+| [`grammar/`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/grammar/) | ANTLR-generated parser/lexer | ~8000 |
 
 ### Input/Output
 - **Input**: OpenCypher query string
@@ -143,7 +143,7 @@ QueryNode
 
 ## Phase 2: Planner (Logical Operator Construction)
 
-**Location**: [src/gsql2rsql/planner/](../src/gsql2rsql/planner/)
+**Location**: [src/gsql2rsql/planner/](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/)
 
 ### Responsibility
 Convert AST to logical relational algebra. Builds symbol table tracking variable definitions and scopes. Does NOT resolve column references or validate property access.
@@ -152,12 +152,12 @@ Convert AST to logical relational algebra. Builds symbol table tracking variable
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| [`logical_plan.py`](../src/gsql2rsql/planner/logical_plan.py) | Main orchestrator, AST → operator conversion | ~500 |
-| [`operators.py`](../src/gsql2rsql/planner/operators.py) | Logical operator definitions (11 operator types) | ~1200 |
-| [`symbol_table.py`](../src/gsql2rsql/planner/symbol_table.py) | Variable tracking with nested scopes | ~400 |
-| [`path_analyzer.py`](../src/gsql2rsql/planner/path_analyzer.py) | Variable-length path optimization | ~300 |
-| [`schema.py`](../src/gsql2rsql/planner/schema.py) | Internal schema representation | ~200 |
-| [`subquery_optimizer.py`](../src/gsql2rsql/planner/subquery_optimizer.py) | Conservative subquery flattening | ~400 |
+| [`logical_plan.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/logical_plan.py) | Main orchestrator, AST → operator conversion | ~500 |
+| [`operators.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/operators.py) | Logical operator definitions (11 operator types) | ~1200 |
+| [`symbol_table.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/symbol_table.py) | Variable tracking with nested scopes | ~400 |
+| [`path_analyzer.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/path_analyzer.py) | Variable-length path optimization | ~300 |
+| [`schema.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/schema.py) | Internal schema representation | ~200 |
+| [`subquery_optimizer.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/subquery_optimizer.py) | Conservative subquery flattening | ~400 |
 
 ### Input/Output
 - **Input**: AST + GraphSchema
@@ -247,7 +247,7 @@ ProjectionOperator(projections=[p.name, COUNT(*) AS friends])
 
 ## Phase 3: Optimizer (Conservative Transformations)
 
-**Location**: [src/gsql2rsql/planner/subquery_optimizer.py](../src/gsql2rsql/planner/subquery_optimizer.py)
+**Location**: [src/gsql2rsql/planner/subquery_optimizer.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/subquery_optimizer.py)
 
 ### Responsibility
 Apply **conservative** transformations to reduce SQL nesting. Only flattens patterns guaranteed to preserve semantics.
@@ -270,7 +270,7 @@ Apply **conservative** transformations to reduce SQL nesting. Only flattens patt
 
 ## Phase 4: Resolver (Column Reference Validation)
 
-**Location**: [src/gsql2rsql/planner/column_resolver.py](../src/gsql2rsql/planner/column_resolver.py)
+**Location**: [src/gsql2rsql/planner/column_resolver.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/column_resolver.py)
 
 ### Responsibility
 Validate **ALL** column references before rendering. Query schema for entity properties. Build resolution context for SQL generation.
@@ -279,8 +279,8 @@ Validate **ALL** column references before rendering. Query schema for entity pro
 
 | File | Purpose |
 |------|---------|
-| [`column_resolver.py`](../src/gsql2rsql/planner/column_resolver.py) | Main resolver implementation |
-| [`column_ref.py`](../src/gsql2rsql/planner/column_ref.py) | Resolved reference objects |
+| [`column_resolver.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/column_resolver.py) | Main resolver implementation |
+| [`column_ref.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/column_ref.py) | Resolved reference objects |
 
 ### Resolution Process
 
@@ -329,7 +329,7 @@ Uses Levenshtein distance for typo suggestions.
 
 ## Phase 5: Renderer (SQL Generation)
 
-**Location**: [src/gsql2rsql/renderer/sql_renderer.py](../src/gsql2rsql/renderer/sql_renderer.py)
+**Location**: [src/gsql2rsql/renderer/sql_renderer.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/renderer/sql_renderer.py)
 
 ### Responsibility
 Generate Databricks Spark SQL from logical plan using pre-resolved column references. Handle SQL dialect specifics.
@@ -338,8 +338,8 @@ Generate Databricks Spark SQL from logical plan using pre-resolved column refere
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| [`sql_renderer.py`](../src/gsql2rsql/renderer/sql_renderer.py) | Main SQL code generator | ~2000 |
-| [`schema_provider.py`](../src/gsql2rsql/renderer/schema_provider.py) | Database schema provider interface | ~200 |
+| [`sql_renderer.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/renderer/sql_renderer.py) | Main SQL code generator | ~2000 |
+| [`schema_provider.py`](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/renderer/schema_provider.py) | Database schema provider interface | ~200 |
 
 ### Input/Output
 - **Input**: LogicalPlan + ResolutionResult + GraphSchema
@@ -484,7 +484,7 @@ src/gsql2rsql/
 
 ## Where to Look Next
 
-- [03-decision-log.md](03-decision-log.md) — Detailed design rationale
-- [CONTRIBUTING.md](../CONTRIBUTING.md) — Full architectural boundaries
-- [07-developer-guide.md](07-developer-guide.md) — How to extend the transpiler
-- [src/gsql2rsql/](../src/gsql2rsql/) — Source code
+- [#](#) — Detailed design rationale
+- [CONTRIBUTING.md](contributing.md) — Full architectural boundaries
+- [contributing.md](contributing.md) — How to extend the transpiler
+- [src/gsql2rsql/](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/) — Source code

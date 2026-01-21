@@ -1,6 +1,6 @@
 # Contributing Guide
 
-This document combines the architectural boundaries from [CONTRIBUTING.md](../CONTRIBUTING.md) with practical developer workflow guidance.
+This document combines the architectural boundaries from [CONTRIBUTING.md](contributing.md) with practical developer workflow guidance.
 
 ---
 
@@ -77,11 +77,11 @@ git push origin feature/map-projection
 
 The transpiler enforces strict separation of concerns across 4 phases. Violating these boundaries will cause architectural degradation and hard-to-debug issues.
 
-This section is derived from [CONTRIBUTING.md](../CONTRIBUTING.md).
+This section is derived from [CONTRIBUTING.md](contributing.md).
 
 ### Phase 1: Parser (OpenCypherParser)
 
-**Location**: [src/gsql2rsql/parser/](../src/gsql2rsql/parser/)
+**Location**: [src/gsql2rsql/parser/](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/parser/)
 
 **Input**: Cypher query string
 **Output**: Abstract Syntax Tree (AST)
@@ -122,7 +122,7 @@ class CypherVisitor:
 
 ### Phase 2: Planning (LogicalPlan)
 
-**Location**: [src/gsql2rsql/planner/logical_plan.py](../src/gsql2rsql/planner/logical_plan.py)
+**Location**: [src/gsql2rsql/planner/logical_plan.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/logical_plan.py)
 
 **Input**: AST + GraphSchema
 **Output**: Logical operator tree + SymbolTable
@@ -167,7 +167,7 @@ class LogicalPlan:
 
 ### Phase 3: Optimization (SubqueryFlatteningOptimizer)
 
-**Location**: [src/gsql2rsql/planner/subquery_optimizer.py](../src/gsql2rsql/planner/subquery_optimizer.py)
+**Location**: [src/gsql2rsql/planner/subquery_optimizer.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/subquery_optimizer.py)
 
 **Input**: LogicalPlan
 **Output**: Optimized LogicalPlan (modified in-place)
@@ -188,7 +188,7 @@ class LogicalPlan:
 
 ### Phase 4: Resolution (ColumnResolver)
 
-**Location**: [src/gsql2rsql/planner/column_resolver.py](../src/gsql2rsql/planner/column_resolver.py)
+**Location**: [src/gsql2rsql/planner/column_resolver.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/planner/column_resolver.py)
 
 **Input**: LogicalPlan + AST + GraphSchema
 **Output**: ResolutionResult (resolved column refs, expressions, projections)
@@ -223,7 +223,7 @@ class ColumnResolver:
 
 ### Phase 5: Rendering (SQLRenderer)
 
-**Location**: [src/gsql2rsql/renderer/sql_renderer.py](../src/gsql2rsql/renderer/sql_renderer.py)
+**Location**: [src/gsql2rsql/renderer/sql_renderer.py](https://github.com/devmessias/gsql2rsql/tree/main/python/src/gsql2rsql/renderer/sql_renderer.py)
 
 **Input**: LogicalPlan + ResolutionResult + GraphSchema
 **Output**: SQL string
@@ -334,7 +334,7 @@ Before submitting a PR:
 
 ### Python Style Guide
 
-**Formatter**: Ruff (configured in [pyproject.toml](../pyproject.toml))
+**Formatter**: Ruff (configured in [pyproject.toml](https://github.com/devmessias/gsql2rsql/blob/main/python/pyproject.toml))
 
 **Line length**: 100 characters
 
@@ -386,7 +386,7 @@ def render_expression(self, expr, context):
     ...
 ```
 
-**Mypy Configuration**: See [pyproject.toml](../pyproject.toml) `[tool.mypy]` section
+**Mypy Configuration**: See [pyproject.toml](https://github.com/devmessias/gsql2rsql/blob/main/python/pyproject.toml) `[tool.mypy]` section
 
 - `strict = true` (all strict checks enabled)
 - `disallow_untyped_defs = true` (no untyped functions)
@@ -592,7 +592,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 ### Modifying the Grammar
 
-**File**: [CypherParser.g4](../CypherParser.g4) (INFERRED - root level)
+**File**: [CypherParser.g4](https://github.com/devmessias/gsql2rsql/blob/main/python/CypherParser.g4) (INFERRED - root level)
 
 **After changes**:
 ```bash
@@ -626,7 +626,7 @@ Follow Semantic Versioning (SemVer): `MAJOR.MINOR.PATCH`
 
 - [ ] All tests pass on main branch
 - [ ] CHANGELOG.md updated (INFERRED - if exists)
-- [ ] Version bumped in [pyproject.toml](../pyproject.toml)
+- [ ] Version bumped in [pyproject.toml](https://github.com/devmessias/gsql2rsql/blob/main/python/pyproject.toml)
 - [ ] Documentation updated
 - [ ] Tag created: `git tag -a v0.2.0 -m "Release v0.2.0"`
 - [ ] Build package: `make build`
@@ -638,10 +638,8 @@ Follow Semantic Versioning (SemVer): `MAJOR.MINOR.PATCH`
 
 ### Resources
 
-- **Architecture**: [02-architecture.md](02-architecture.md)
-- **Decisions**: [03-decision-log.md](03-decision-log.md)
-- **Limitations**: [04-limitations.md](04-limitations.md)
-- **Developer Guide**: [07-developer-guide.md](07-developer-guide.md)
+- **Architecture**: [architecture.md](architecture.md)
+- **Developer Guide**: [contributing.md](contributing.md)
 
 ### Communication
 
@@ -695,6 +693,6 @@ SELECT * FROM Node  -- WHERE clause missing!
 
 ## Where to Look Next
 
-- [07-developer-guide.md](07-developer-guide.md) — Detailed extension guide
-- [05-testing-and-examples.md](05-testing-and-examples.md) — Testing patterns
-- [02-architecture.md](02-architecture.md) — Component details
+- [contributing.md](contributing.md) — Detailed extension guide
+- [examples/index.md](examples/index.md) — Testing patterns
+- [architecture.md](architecture.md) — Component details

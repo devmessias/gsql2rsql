@@ -278,7 +278,6 @@ If you get schema validation errors:
 If your OpenCypher query fails to parse:
 
 1. Check that your query uses supported Cypher syntax
-2. See [Limitations](limitations.md) for unsupported features
 3. Use `--debug` flag to see detailed parsing information
 
 ### SQL Rendering Errors
@@ -294,6 +293,6 @@ If transpilation succeeds but SQL execution fails:
 
 ## See Also
 
-- [Query Translation Guide](query-translation.md) - How transpilation works
+- [Query Translation Guide](architecture.md) - How transpilation works
 - [API Reference](api-reference.md) - Python API documentation
 - [Examples](examples/index.md) - Real-world query examples

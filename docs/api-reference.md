@@ -226,7 +226,7 @@ sql = renderer.render_plan(plan)
 
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
-| `undirected_strategy` | `"union_edges"` or `"or_join"` | `"union_edges"` | Strategy for undirected relationships (`-[:TYPE]-`). `"union_edges"` uses UNION ALL for O(n) performance. `"or_join"` uses OR conditions (legacy, slower). See [limitations.md](04-limitations.md#undirected-relationship-performance-optimized) for details. |
+| `undirected_strategy` | `"union_edges"` or `"or_join"` | `"union_edges"` | Strategy for undirected relationships (`-[:TYPE]-`). `"union_edges"` uses UNION ALL for O(n) performance. `"or_join"` uses OR conditions (legacy, slower). See performance documentation for details. |
 
 ---
 
@@ -984,7 +984,7 @@ gsql2rsql tui --schema my_schema.json --examples examples/my_queries.yaml
 
 ### pyproject.toml
 
-**Package Metadata**: [pyproject.toml](../pyproject.toml)
+**Package Metadata**: [pyproject.toml](https://github.com/devmessias/gsql2rsql/blob/main/python/pyproject.toml)
 
 ```toml
 [project]
@@ -1115,7 +1115,7 @@ except TranspilerNotSupportedException as e:
 
 ## Where to Look Next
 
-- [01-quickstart.md](01-quickstart.md) — Usage examples
-- [02-architecture.md](02-architecture.md) — Component details
-- [07-developer-guide.md](07-developer-guide.md) — Extending the API
-- [examples/](../examples/) — Example schemas and queries
+- [user-guide.md](user-guide.md) — Usage examples
+- [architecture.md](architecture.md) — Component details
+- [contributing.md](contributing.md) — Extending the API
+- [Examples](examples/index.md) — Example schemas and queries

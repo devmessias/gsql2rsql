@@ -421,7 +421,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for conventional commits and release proc
 - **PySpark** (optional, only for development/testing)
 
 
-See [full limitations](docs/limitations.md).
 
 ## Contributing
 

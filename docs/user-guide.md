@@ -1,0 +1,430 @@
+# User Guide
+
+This guide covers everything you need to start using gsql2rsql to transpile OpenCypher queries to Databricks SQL.
+
+!!! tip "Looking for examples?"
+    After learning the basics, check out complete query examples:
+
+    - [**Fraud Detection**](examples/fraud.md) - Fraud rings, money laundering patterns
+    - [**Credit Analysis**](examples/credit.md) - Risk assessment, guarantor chains
+    - [**All Features**](examples/features.md) - 69 queries covering every feature
+
+---
+
+## Installation
+
+```bash
+pip install gsql2rsql
+```
+
+**Requirements:**
+
+- Python 3.12+
+- Databricks Runtime 15+ only needed to **execute** the generated SQL
+
+---
+
+## Try It Now
+
+No database needed! Just define a schema and generate SQL:
+
+```python
+from gsql2rsql import GraphContext
+
+# Table names are just strings - no database connection required
+graph = GraphContext(
+    nodes_table="my_nodes",
+    edges_table="my_edges",
+)
+graph.set_types(
+    node_types=["Person", "Company"],
+    edge_types=["WORKS_AT"],
+)
+
+# Generate SQL from OpenCypher
+sql = graph.transpile("""
+    MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+    RETURN p.node_id, c.node_id
+""")
+
+print(sql)  # Copy this SQL to run on Databricks
+```
+
+??? example "Generated SQL Output"
+
+    ```sql
+    SELECT
+       _gsql2rsql_p_node_id AS node_id
+      ,_gsql2rsql_c_node_id AS node_id
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_node_id AS _gsql2rsql_p_node_id
+        ,_right._gsql2rsql_c_node_id AS _gsql2rsql_c_node_id
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_node_id AS _gsql2rsql_p_node_id
+        FROM (
+          SELECT node_id AS _gsql2rsql_p_node_id
+          FROM my_nodes WHERE (node_type = 'Person')
+        ) AS _left
+        INNER JOIN (
+          SELECT src AS _gsql2rsql__anon1_src, dst AS _gsql2rsql__anon1_dst
+          FROM my_edges WHERE (relationship_type = 'WORKS_AT')
+        ) AS _right
+        ON _left._gsql2rsql_p_node_id = _right._gsql2rsql__anon1_src
+      ) AS _left
+      INNER JOIN (
+        SELECT node_id AS _gsql2rsql_c_node_id
+        FROM my_nodes WHERE (node_type = 'Company')
+      ) AS _right
+      ON _right._gsql2rsql_c_node_id = _left._gsql2rsql__anon1_dst
+    ) AS _proj
+    ```
+
+---
+
+## GraphContext: Full Configuration
+
+**GraphContext** is the recommended API for graph data stored in the Triple Store pattern (one nodes table + one edges table). It eliminates ~100 lines of schema boilerplate.
+
+### With Node/Edge Attributes
+
+```python
+from gsql2rsql import GraphContext
+
+# Define schema with additional attributes
+graph = GraphContext(
+    nodes_table="catalog.schema.nodes",
+    edges_table="catalog.schema.edges",
+    extra_node_attrs={"name": str, "age": int, "score": float},
+    extra_edge_attrs={"weight": float, "timestamp": str},
+)
+
+graph.set_types(
+    node_types=["Person", "Company", "Account"],
+    edge_types=["KNOWS", "WORKS_AT", "OWNS"],
+)
+
+# Now you can use those attributes in queries
+sql = graph.transpile("""
+    MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+    WHERE c.industry = 'Technology'
+    RETURN p.name, c.name AS company
+    LIMIT 100
+""")
+
+print(sql)
+```
+
+??? example "Generated SQL"
+
+    ```sql
+    SELECT
+       _gsql2rsql_p_name AS name
+      ,_gsql2rsql_c_name AS company
+    FROM (
+      SELECT
+         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+        ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
+        ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
+        ,_right._gsql2rsql_c_industry AS _gsql2rsql_c_industry
+      FROM (
+        SELECT
+           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
+          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
+          ,_right._gsql2rsql__anon1_src AS _gsql2rsql__anon1_src
+          ,_right._gsql2rsql__anon1_dst AS _gsql2rsql__anon1_dst
+        FROM (
+          SELECT id AS _gsql2rsql_p_id, name AS _gsql2rsql_p_name
+          FROM catalog.schema.nodes
+          WHERE (node_type = 'Person')
+        ) AS _left
+        INNER JOIN (
+          SELECT src AS _gsql2rsql__anon1_src, dst AS _gsql2rsql__anon1_dst
+          FROM catalog.schema.edges
+          WHERE (relationship_type = 'WORKS_AT')
+        ) AS _right
+        ON _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_src
+      ) AS _left
+      INNER JOIN (
+        SELECT id AS _gsql2rsql_c_id, name AS _gsql2rsql_c_name, industry AS _gsql2rsql_c_industry
+        FROM catalog.schema.nodes
+        WHERE (node_type = 'Company') AND ((industry) = ('Technology'))
+      ) AS _right
+      ON _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_dst
+    ) AS _proj
+    LIMIT 100
+    ```
+
+### GraphContext Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `nodes_table` | str | Full path to nodes table (e.g., `catalog.schema.nodes`) |
+| `edges_table` | str | Full path to edges table |
+| `node_type_col` | str | Column for node type (default: `"node_type"`) |
+| `edge_type_col` | str | Column for edge type (default: `"relationship_type"`) |
+| `node_id_col` | str | Column for node ID (default: `"node_id"`) |
+| `edge_src_col` | str | Column for edge source (default: `"src"`) |
+| `edge_dst_col` | str | Column for edge destination (default: `"dst"`) |
+| `extra_node_attrs` | dict | Additional node properties `{name: type}` |
+| `extra_edge_attrs` | dict | Additional edge properties `{name: type}` |
+| `spark` | SparkSession | Optional: for auto-discovery and execution |
+
+### Expected Table Structure
+
+**Nodes table:**
+
+| Column | Description |
+|--------|-------------|
+| `node_id` | Unique node identifier |
+| `node_type` | Node label (Person, Company, etc.) |
+| `name`, `age`, ... | Node properties |
+
+**Edges table:**
+
+| Column | Description |
+|--------|-------------|
+| `src` | Source node ID |
+| `dst` | Destination node ID |
+| `relationship_type` | Edge label (KNOWS, WORKS_AT, etc.) |
+| `weight`, ... | Edge properties |
+
+---
+
+## Variable-Length Paths
+
+One of gsql2rsql's most powerful features is support for variable-length paths using `WITH RECURSIVE`.
+
+```python
+sql = graph.transpile("""
+    MATCH path = (origin:Person {id: 12345})-[:KNOWS*1..3]->(friend:Person)
+    RETURN friend.name, length(path) AS hops
+    ORDER BY hops
+""")
+```
+
+**Key features:**
+
+- **Depth bounds**: `*1..3` means 1 to 3 hops
+- **Cycle detection**: Automatic `ARRAY_CONTAINS` checks prevent infinite loops
+- **Path functions**: `length(path)`, `nodes(path)`, `relationships(path)`
+- **Path variable**: Captures the entire path for analysis
+
+---
+
+## Inline Filters
+
+Use inline property filters for better performance:
+
+```python
+# Inline filter (optimized - pushed to source scan)
+sql = graph.transpile("""
+    MATCH (p:Person {status: 'active'})-[:KNOWS]->(friend)
+    RETURN p.name, friend.name
+""")
+
+# Equivalent WHERE clause (less optimized)
+sql = graph.transpile("""
+    MATCH (p:Person)-[:KNOWS]->(friend)
+    WHERE p.status = 'active'
+    RETURN p.name, friend.name
+""")
+```
+
+Inline filters are pushed down to the data source scan, reducing the amount of data processed.
+
+---
+
+## Undirected Relationships
+
+Use `-[:REL]-` (without arrow) for undirected relationships:
+
+```python
+sql = graph.transpile("""
+    MATCH (a:Person)-[:KNOWS]-(b:Person)
+    WHERE a.id = 123
+    RETURN b.name
+""")
+```
+
+This generates a `UNION ALL` query to match both directions efficiently.
+
+---
+
+## Aggregations
+
+Standard aggregation functions are supported:
+
+```python
+sql = graph.transpile("""
+    MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+    RETURN c.name, COUNT(p) AS employees, AVG(p.salary) AS avg_salary
+    ORDER BY employees DESC
+""")
+```
+
+**Supported functions:** `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `COLLECT`, `COUNT(DISTINCT ...)`
+
+---
+
+## WITH Clauses
+
+Chain multiple query stages with `WITH`:
+
+```python
+sql = graph.transpile("""
+    MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+    WITH c, COUNT(p) AS employee_count
+    WHERE employee_count > 100
+    MATCH (c)-[:LOCATED_IN]->(city:City)
+    RETURN c.name, employee_count, city.name
+""")
+```
+
+---
+
+## UNION Queries
+
+Combine multiple result sets:
+
+```python
+sql = graph.transpile("""
+    MATCH (p:Person)-[:KNOWS]->(friend:Person)
+    RETURN p.name AS source, friend.name AS target, 'KNOWS' AS type
+    UNION
+    MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+    RETURN p.name AS source, c.name AS target, 'WORKS_AT' AS type
+""")
+```
+
+---
+
+## Execution on Databricks
+
+If you provide a SparkSession, you can execute queries directly:
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.getOrCreate()
+
+graph = GraphContext(
+    spark=spark,  # Enable execution
+    nodes_table="catalog.schema.nodes",
+    edges_table="catalog.schema.edges",
+)
+graph.set_types(node_types=["Person"], edge_types=["KNOWS"])
+
+# Transpile and execute
+sql = graph.transpile("MATCH (p:Person) RETURN p.name LIMIT 10")
+df = spark.sql(sql)
+df.show()
+```
+
+---
+
+## Low-Level API (Without GraphContext)
+
+For complex scenarios where graph data is spread across multiple tables (not a simple Triple Store), or when you need full control, use the components directly:
+
+```python
+from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
+from gsql2rsql.common.schema import (
+    SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
+)
+from gsql2rsql.renderer.schema_provider import (
+    SimpleSQLSchemaProvider, SQLTableDescriptor
+)
+
+# 1. Define graph schema
+graph_schema = SimpleGraphSchemaProvider()
+
+person = NodeSchema(
+    name="Person",
+    properties=[
+        EntityProperty(property_name="id", data_type=int),
+        EntityProperty(property_name="name", data_type=str),
+    ],
+    node_id_property=EntityProperty(property_name="id", data_type=int)
+)
+graph_schema.add_node(person)
+
+knows = EdgeSchema(
+    name="KNOWS",
+    source_node_id="Person",
+    sink_node_id="Person",
+    source_id_property=EntityProperty(property_name="person_id", data_type=int),
+    sink_id_property=EntityProperty(property_name="friend_id", data_type=int),
+)
+graph_schema.add_edge(knows)
+
+# 2. Define SQL schema (maps to tables)
+sql_schema = SimpleSQLSchemaProvider()
+
+sql_schema.add_node(
+    person,
+    SQLTableDescriptor(
+        table_name="catalog.schema.people",  # Separate table for Person nodes
+        node_id_columns=["id"],
+    )
+)
+
+sql_schema.add_edge(
+    knows,
+    SQLTableDescriptor(
+        entity_id="Person@KNOWS@Person",
+        table_name="catalog.schema.friendships",  # Separate table for KNOWS edges
+    )
+)
+
+# 3. Transpile
+parser = OpenCypherParser()
+ast = parser.parse("MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, f.name")
+plan = LogicalPlan.process_query_tree(ast, graph_schema)
+plan.resolve(original_query="...")
+
+renderer = SQLRenderer(db_schema_provider=sql_schema)
+sql = renderer.render_plan(plan)
+```
+
+This approach is useful when:
+
+- **Different tables for different node/edge types** (e.g., `people`, `companies`, `friendships`)
+- **Custom column mappings** beyond what GraphContext supports
+- **Integration with existing schemas** that don't follow Triple Store pattern
+
+See [API Reference](api-reference.md) for complete documentation of all classes.
+
+---
+
+## CLI Usage
+
+gsql2rsql includes a command-line interface:
+
+```bash
+# Transpile a query
+echo "MATCH (p:Person) RETURN p.name" | gsql2rsql translate --schema schema.json
+
+# Interactive TUI
+gsql2rsql tui --schema schema.json
+```
+
+See [CLI Commands](cli-commands.md) for full documentation.
+
+---
+
+## Limitations
+
+- **Databricks new Runtime** required for `WITH RECURSIVE` and HoF
+- **Write operations** not supported (`CREATE`, `DELETE`, `SET`)
+- **Some Cypher features** not yet implemented
+
+---
+
+## Next Steps
+
+- [**Examples Gallery**](examples/index.md) - 69 complete query examples
+- [**API Reference**](api-reference.md) - Full Python API documentation
+- [**Architecture**](architecture.md) - How the transpiler works
