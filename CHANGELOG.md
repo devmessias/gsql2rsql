@@ -2,6 +2,19 @@
 
 
 
+## v0.3.0 (2026-01-21)
+
+### Feature
+
+* feat: no label support ([`3f9c64d`](https://github.com/devmessias/gsql2rsql/commit/3f9c64df24a29ce43976bf39efbd88be82a02e57))
+
+### Fix
+
+* fix: typo ([`e8d92d2`](https://github.com/devmessias/gsql2rsql/commit/e8d92d26545e57cf19469d6169e10743072d24eb))
+
+* fix: preserve backticks ([`af305ec`](https://github.com/devmessias/gsql2rsql/commit/af305ec68fcc275b8e3289e656ad78822f64bdbf))
+
+
 ## v0.2.0 (2026-01-20)
 
 ### Documentation
