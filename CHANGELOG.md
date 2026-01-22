@@ -2,6 +2,17 @@
 
 
 
+## v0.6.0 (2026-01-22)
+
+### Feature
+
+* feat: allow query without edge type deifnitions ([`107dde0`](https://github.com/devmessias/gsql2rsql/commit/107dde08d9deea5cae786fcf2b4d2d47f62adc59))
+
+### Refactor
+
+* refactor: consolidate to single SimpleSQLSchemaProvider for planner and renderer ([`640c55f`](https://github.com/devmessias/gsql2rsql/commit/640c55f274bed34dc5f3cf85a632d91ec1cfaf4b))
+
+
 ## v0.5.0 (2026-01-21)
 
 ### Documentation
@@ -169,7 +180,7 @@ had multiple critical errors:
    - Used `SQLRenderer(schema_provider)` instead of `SQLRenderer(db_schema_provider=sql_schema)`
 
 The corrected example now:
-- Uses `SimpleSQLSchemaProvider` for the schema provider
+- Uses `SimpleGraphSchemaProvider` for the logical planner
 - Uses `SimpleSQLSchemaProvider` for the SQL renderer
 - Properly maps graph entities to Delta tables with `SQLTableDescriptor`
 - Calls the correct API methods with proper parameters
