@@ -333,7 +333,7 @@ class GraphContext:
             properties=properties,
         )
         # Also set on graph schema (planner needs it for binding)
-        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE
+        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE, WILDCARD_EDGE_TYPE
         wildcard_schema = NodeSchema(
             name=WILDCARD_NODE_TYPE,
             node_id_property=EntityProperty(
@@ -342,6 +342,37 @@ class GraphContext:
             properties=properties,
         )
         self._graph_schema.set_wildcard_node(wildcard_schema)
+
+        # Enable untyped edge support (allows MATCH (a)-[]-(b) without edge type)
+        # This creates a wildcard edge schema with no type filter
+        edge_properties = [
+            EntityProperty(property_name=prop_name, data_type=data_type)
+            for prop_name, data_type in self.extra_edge_attrs.items()
+        ]
+        wildcard_edge_schema = EdgeSchema(
+            name=WILDCARD_EDGE_TYPE,
+            source_node_id=WILDCARD_NODE_TYPE,
+            sink_node_id=WILDCARD_NODE_TYPE,
+            source_id_property=EntityProperty(
+                property_name=self.edge_src_col, data_type=str
+            ),
+            sink_id_property=EntityProperty(
+                property_name=self.edge_dst_col, data_type=str
+            ),
+            properties=edge_properties,
+        )
+        self._graph_schema.set_wildcard_edge(wildcard_edge_schema)
+
+        # SQL descriptor for wildcard edge (no relationship_type filter)
+        assert self.edges_table is not None  # Validated in __init__
+        self._sql_schema.set_wildcard_edge(
+            wildcard_edge_schema,
+            SQLTableDescriptor(
+                table_name=self.edges_table,
+                node_id_columns=[self.edge_src_col, self.edge_dst_col],
+                filter=None,  # No type filter - matches all edges
+            )
+        )
 
     def transpile(self, query: str, optimize: bool = True) -> str:
         """Transpile OpenCypher query to Databricks SQL.

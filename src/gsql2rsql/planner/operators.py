@@ -391,13 +391,19 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
                         edge_def = found_edge  # Use first for schema
 
             if not edge_def:
-                from gsql2rsql.common.exceptions import (
-                    TranspilerBindingException,
-                )
-                raise TranspilerBindingException(
-                    f"Failed to bind relationship '{rel_entity.alias}' "
-                    f"of type '{rel_entity.entity_name}'"
-                )
+                # No edge found - check if this is an untyped edge
+                if not raw_edge_types:
+                    # Untyped edge (e.g., -[]- or --), use wildcard edge
+                    edge_def = graph_definition.get_wildcard_edge_definition()
+
+                if not edge_def:
+                    from gsql2rsql.common.exceptions import (
+                        TranspilerBindingException,
+                    )
+                    raise TranspilerBindingException(
+                        f"Failed to bind relationship '{rel_entity.alias}' "
+                        f"of type '{rel_entity.entity_name}'"
+                    )
 
             entity_unique_name = edge_def.id
             source_entity_name = edge_def.source_node_id

@@ -641,12 +641,31 @@ class SQLRenderer:
                             if prop.property_name not in (source_id_col, target_id_col):
                                 edge_props.append(prop.property_name)
         else:
-            # No specific types - would need to get all edges between nodes
-            # For now, raise an error - this could be improved later
-            raise TranspilerInternalErrorException(
-                "Variable-length path without edge type not yet supported. "
-                "Please specify at least one edge type, e.g., -[:KNOWS*1..3]->"
-            )
+            # No specific edge types - use wildcard edge (no type filter)
+            from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE
+            wildcard_edge_table = self._graph_def.get_wildcard_edge_table_descriptor()
+
+            if not wildcard_edge_table:
+                raise TranspilerInternalErrorException(
+                    "Variable-length path without edge type requires wildcard edge support. "
+                    "Please specify at least one edge type, e.g., -[:KNOWS*1..3]->"
+                )
+
+            # Use wildcard edge table (no relationship_type filter)
+            edge_tables.append((WILDCARD_EDGE_TYPE, wildcard_edge_table))
+
+            # Get column names from wildcard edge schema
+            wildcard_edge_schema = self._graph_def.get_wildcard_edge_definition()
+            if wildcard_edge_schema:
+                if wildcard_edge_schema.source_id_property:
+                    source_id_col = wildcard_edge_schema.source_id_property.property_name
+                if wildcard_edge_schema.sink_id_property:
+                    target_id_col = wildcard_edge_schema.sink_id_property.property_name
+                # Auto-collect edge properties if needed
+                if op.collect_edges and not edge_props:
+                    for prop in wildcard_edge_schema.properties:
+                        if prop.property_name not in (source_id_col, target_id_col):
+                            edge_props.append(prop.property_name)
 
         if not edge_tables:
             edge_type_str = "|".join(edge_types)
@@ -1489,23 +1508,28 @@ class SQLRenderer:
     def _get_table_descriptor_with_wildcard(
         self, entity_name: str
     ) -> SQLTableDescriptor | None:
-        """Get table descriptor, falling back to wildcard for wildcard nodes.
+        """Get table descriptor, falling back to wildcard for wildcard nodes/edges.
 
-        This method supports no-label nodes by returning the wildcard table
-        descriptor when entity_name is empty or is the wildcard type.
+        This method supports no-label nodes and untyped edges by returning the
+        wildcard table descriptor when entity_name is empty or is a wildcard type.
 
         Args:
             entity_name: The entity name (node type or edge id).
                 Empty string or WILDCARD_NODE_TYPE means no-label node.
+                WILDCARD_EDGE_TYPE means untyped edge.
 
         Returns:
             SQLTableDescriptor if found, None otherwise.
         """
-        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE
+        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE, WILDCARD_EDGE_TYPE
 
         if not entity_name or entity_name == WILDCARD_NODE_TYPE:
-            # No label or wildcard type - use wildcard table descriptor
+            # No label or wildcard node type - use wildcard node table descriptor
             return self._graph_def.get_wildcard_table_descriptor()
+        # Check for wildcard edge (edge ID format: source@verb@sink)
+        if WILDCARD_EDGE_TYPE in entity_name:
+            # Wildcard edge type - use wildcard edge table descriptor
+            return self._graph_def.get_wildcard_edge_table_descriptor()
         return self._graph_def.get_sql_table_descriptors(entity_name)
 
     def _render_data_source(self, op: DataSourceOperator, depth: int) -> str:

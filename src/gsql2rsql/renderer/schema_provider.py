@@ -145,6 +145,16 @@ class ISQLDBSchemaProvider(IGraphSchemaProvider, ABC):
         """
         ...
 
+    @abstractmethod
+    def get_wildcard_edge_table_descriptor(self) -> SQLTableDescriptor | None:
+        """
+        Get the SQL table descriptor for wildcard edges (no type filter).
+
+        Returns:
+            SQLTableDescriptor if wildcard edge support is enabled, None otherwise.
+        """
+        ...
+
     def find_edge_by_verb(
         self, verb: str, target_node_name: str | None = None
     ) -> tuple[EdgeSchema, SQLTableDescriptor] | None:
@@ -172,6 +182,8 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         self._table_descriptors: dict[str, SQLTableDescriptor] = {}
         self._wildcard_node: NodeSchema | None = None
         self._wildcard_table_desc: SQLTableDescriptor | None = None
+        self._wildcard_edge: EdgeSchema | None = None
+        self._wildcard_edge_table_desc: SQLTableDescriptor | None = None
 
     def add_node(
         self,
@@ -207,6 +219,23 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         """
         self._wildcard_node = schema
         self._wildcard_table_desc = table_descriptor
+
+    def set_wildcard_edge(
+        self,
+        schema: EdgeSchema,
+        table_descriptor: SQLTableDescriptor,
+    ) -> None:
+        """Register wildcard edge with its SQL descriptor.
+
+        WARNING: Untyped edge support causes full table scans on the edges table.
+        Specify edge types whenever possible for production queries.
+
+        Args:
+            schema: Edge schema for wildcard edges.
+            table_descriptor: SQL table descriptor with filter=None (no type filter).
+        """
+        self._wildcard_edge = schema
+        self._wildcard_edge_table_desc = table_descriptor
 
     def enable_no_label_support(
         self,
@@ -266,6 +295,14 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
     def get_wildcard_table_descriptor(self) -> SQLTableDescriptor | None:
         """Get SQL descriptor for wildcard nodes (no type filter)."""
         return self._wildcard_table_desc
+
+    def get_wildcard_edge_definition(self) -> EdgeSchema | None:
+        """Get the wildcard edge schema if enabled."""
+        return self._wildcard_edge
+
+    def get_wildcard_edge_table_descriptor(self) -> SQLTableDescriptor | None:
+        """Get SQL descriptor for wildcard edges (no type filter)."""
+        return self._wildcard_edge_table_desc
 
     def get_node_definition(self, node_name: str) -> NodeSchema | None:
         """Get a node schema by name."""

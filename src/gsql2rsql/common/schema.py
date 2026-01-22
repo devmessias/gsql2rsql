@@ -5,7 +5,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # Sentinel value for wildcard nodes (no-label support)
-WILDCARD_NODE_TYPE = "__wildcard__"
+WILDCARD_NODE_TYPE = "__wildcard_node__"
+
+# Sentinel value for wildcard edges (untyped edge support)
+WILDCARD_EDGE_TYPE = "__wildcard_edge__"
 
 
 @dataclass
@@ -134,6 +137,16 @@ class IGraphSchemaProvider(ABC):
         """
         ...
 
+    @abstractmethod
+    def get_wildcard_edge_definition(self) -> EdgeSchema | None:
+        """
+        Return the wildcard edge schema for untyped edge support.
+
+        Returns:
+            EdgeSchema if wildcard edge support is enabled, None otherwise.
+        """
+        ...
+
 
 class SimpleGraphSchemaProvider(IGraphSchemaProvider):
     """A simple in-memory graph schema provider."""
@@ -142,6 +155,7 @@ class SimpleGraphSchemaProvider(IGraphSchemaProvider):
         self._nodes: dict[str, NodeSchema] = {}
         self._edges: dict[str, EdgeSchema] = {}
         self._wildcard_node: NodeSchema | None = None
+        self._wildcard_edge: EdgeSchema | None = None
 
     def add_node(self, schema: NodeSchema) -> None:
         """Add a node schema to the provider."""
@@ -159,6 +173,14 @@ class SimpleGraphSchemaProvider(IGraphSchemaProvider):
         """
         self._wildcard_node = schema
 
+    def set_wildcard_edge(self, schema: EdgeSchema) -> None:
+        """Register a wildcard edge schema for untyped edge support.
+
+        WARNING: Untyped edge support causes full table scans on the edges table.
+        Specify edge types whenever possible for production queries.
+        """
+        self._wildcard_edge = schema
+
     def get_node_definition(self, node_name: str) -> NodeSchema | None:
         """Get a node schema by name."""
         return self._nodes.get(node_name)
@@ -173,6 +195,10 @@ class SimpleGraphSchemaProvider(IGraphSchemaProvider):
     def get_wildcard_node_definition(self) -> NodeSchema | None:
         """Get the wildcard node schema if enabled."""
         return self._wildcard_node
+
+    def get_wildcard_edge_definition(self) -> EdgeSchema | None:
+        """Get the wildcard edge schema if enabled."""
+        return self._wildcard_edge
 
     def find_edges_by_verb(
         self,
