@@ -35,7 +35,6 @@ from gsql2rsql.common.schema import (
     EdgeSchema,
     EntityProperty,
     NodeSchema,
-    SimpleGraphSchemaProvider,
 )
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
@@ -52,39 +51,9 @@ class TestRecursiveSinkFilterPushdown:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        # Graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Account",
-                node_id_property=EntityProperty("id", int),
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("holder_name", str),
-                    EntityProperty("risk_score", int),
-                    EntityProperty("status", str),
-                ],
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="TRANSFER",
-                source_node_id="Account",
-                sink_node_id="Account",
-                source_id_property=EntityProperty("source_account_id", int),
-                sink_id_property=EntityProperty("target_account_id", int),
-                properties=[
-                    EntityProperty("source_account_id", int),
-                    EntityProperty("target_account_id", int),
-                    EntityProperty("amount", float),
-                    EntityProperty("timestamp", str),
-                ],
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # Schema
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 node_id_property=EntityProperty("id", int),
@@ -97,7 +66,7 @@ class TestRecursiveSinkFilterPushdown:
             ),
             SQLTableDescriptor(table_name="catalog.fraud.Account"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="TRANSFER",
                 source_node_id="Account",
@@ -117,17 +86,17 @@ class TestRecursiveSinkFilterPushdown:
     def _transpile(self, cypher: str, optimize: bool = True) -> str:
         """Transpile a Cypher query to SQL."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def _get_plan(self, cypher: str) -> LogicalPlan:
         """Get the logical plan for a Cypher query."""
         ast = self.parser.parse(cypher)
-        return LogicalPlan.process_query_tree(ast, self.graph_schema)
+        return LogicalPlan.process_query_tree(ast, self.schema)
 
     def test_sink_filter_pushed_to_recursive_join(self) -> None:
         """
@@ -280,8 +249,8 @@ class TestRecursiveTraversalOperatorSinkFilter:
     def setup_method(self) -> None:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 node_id_property=EntityProperty("id", int),
@@ -289,9 +258,10 @@ class TestRecursiveTraversalOperatorSinkFilter:
                     EntityProperty("id", int),
                     EntityProperty("risk_score", int),
                 ],
-            )
+            ),
+            SQLTableDescriptor(table_name="catalog.fraud.Account"),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="TRANSFER",
                 source_node_id="Account",
@@ -302,7 +272,8 @@ class TestRecursiveTraversalOperatorSinkFilter:
                     EntityProperty("source_account_id", int),
                     EntityProperty("target_account_id", int),
                 ],
-            )
+            ),
+            SQLTableDescriptor(table_name="catalog.fraud.Transfer"),
         )
 
     def test_operator_has_sink_node_filter_attribute(self) -> None:
@@ -313,7 +284,7 @@ class TestRecursiveTraversalOperatorSinkFilter:
         RETURN a.id, b.id
         """
         ast = self.parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=query)
 
         # Find the RecursiveTraversalOperator
@@ -337,8 +308,8 @@ class TestLogicalPlanSinkFilterExtraction:
     def setup_method(self) -> None:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 node_id_property=EntityProperty("id", int),
@@ -346,9 +317,10 @@ class TestLogicalPlanSinkFilterExtraction:
                     EntityProperty("id", int),
                     EntityProperty("risk_score", int),
                 ],
-            )
+            ),
+            SQLTableDescriptor(table_name="catalog.fraud.Account"),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="TRANSFER",
                 source_node_id="Account",
@@ -359,7 +331,8 @@ class TestLogicalPlanSinkFilterExtraction:
                     EntityProperty("source_account_id", int),
                     EntityProperty("target_account_id", int),
                 ],
-            )
+            ),
+            SQLTableDescriptor(table_name="catalog.fraud.Transfer"),
         )
 
     def test_extract_sink_filter_simple(self) -> None:
@@ -370,7 +343,7 @@ class TestLogicalPlanSinkFilterExtraction:
         RETURN a.id, b.id
         """
         ast = self.parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=query)
 
         # Find the RecursiveTraversalOperator
@@ -396,7 +369,7 @@ class TestLogicalPlanSinkFilterExtraction:
         RETURN a.id, b.id
         """
         ast = self.parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=query)
 
         # Find the RecursiveTraversalOperator
@@ -420,32 +393,8 @@ class TestSQLRendererSinkFilter:
     def setup_method(self) -> None:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Account",
-                node_id_property=EntityProperty("id", int),
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("risk_score", int),
-                ],
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="TRANSFER",
-                source_node_id="Account",
-                sink_node_id="Account",
-                source_id_property=EntityProperty("source_account_id", int),
-                sink_id_property=EntityProperty("target_account_id", int),
-                properties=[
-                    EntityProperty("source_account_id", int),
-                    EntityProperty("target_account_id", int),
-                ],
-            )
-        )
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 node_id_property=EntityProperty("id", int),
@@ -456,7 +405,7 @@ class TestSQLRendererSinkFilter:
             ),
             SQLTableDescriptor(table_name="catalog.fraud.Account"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="TRANSFER",
                 source_node_id="Account",
@@ -484,11 +433,11 @@ class TestSQLRendererSinkFilter:
         RETURN a.id, b.id
         """
         ast = self.parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=query)
         optimize_plan(plan)
 
-        sql = SQLRenderer(db_schema_provider=self.sql_schema).render_plan(plan)
+        sql = SQLRenderer(db_schema_provider=self.schema).render_plan(plan)
 
         # The sink filter should appear with 'sink.' prefix in the WHERE clause
         # For now, just verify the SQL is valid and contains the filter
@@ -503,33 +452,8 @@ class TestEdgeCases:
     def setup_method(self) -> None:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Account",
-                node_id_property=EntityProperty("id", int),
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("risk_score", int),
-                ],
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="TRANSFER",
-                source_node_id="Account",
-                sink_node_id="Account",
-                source_id_property=EntityProperty("source_account_id", int),
-                sink_id_property=EntityProperty("target_account_id", int),
-                properties=[
-                    EntityProperty("source_account_id", int),
-                    EntityProperty("target_account_id", int),
-                    EntityProperty("amount", float),
-                ],
-            )
-        )
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 node_id_property=EntityProperty("id", int),
@@ -540,7 +464,7 @@ class TestEdgeCases:
             ),
             SQLTableDescriptor(table_name="catalog.fraud.Account"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="TRANSFER",
                 source_node_id="Account",
@@ -559,10 +483,10 @@ class TestEdgeCases:
     def _transpile(self, cypher: str) -> str:
         """Transpile a Cypher query to SQL."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         optimize_plan(plan)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def test_no_filter_works(self) -> None:

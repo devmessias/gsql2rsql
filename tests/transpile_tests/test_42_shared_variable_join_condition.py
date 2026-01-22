@@ -8,7 +8,6 @@ This is a regression test for Bug #2: Missing join condition (Cartesian product)
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -32,62 +31,9 @@ class TestSharedVariableJoinCondition:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema with Person, City, and Company
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="City",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("country", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Company",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("industry", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="LIVES_IN",
-                source_node_id="Person",
-                sink_node_id="City",
-                source_id_property=EntityProperty("person_id", int),
-                sink_id_property=EntityProperty("city_id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="WORKS_AT",
-                source_node_id="Person",
-                sink_node_id="Company",
-                source_id_property=EntityProperty("person_id", int),
-                sink_id_property=EntityProperty("company_id", int),
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # SQL schema with Person, City, and Company
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -98,7 +44,7 @@ class TestSharedVariableJoinCondition:
             ),
             SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="City",
                 properties=[
@@ -110,7 +56,7 @@ class TestSharedVariableJoinCondition:
             ),
             SQLTableDescriptor(table_name="graph.City"),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Company",
                 properties=[
@@ -122,7 +68,7 @@ class TestSharedVariableJoinCondition:
             ),
             SQLTableDescriptor(table_name="graph.Company"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="LIVES_IN",
                 source_node_id="Person",
@@ -132,7 +78,7 @@ class TestSharedVariableJoinCondition:
             ),
             SQLTableDescriptor(table_name="graph.LivesIn"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="WORKS_AT",
                 source_node_id="Person",
@@ -147,9 +93,9 @@ class TestSharedVariableJoinCondition:
         """Helper to transpile a Cypher query."""
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def test_shared_variable_two_patterns_basic(self) -> None:
@@ -236,16 +182,7 @@ class TestSharedVariableJoinCondition:
     def test_shared_variable_three_patterns(self) -> None:
         """Test shared variable across three pattern parts."""
         # Add a third edge type for this test
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("person_id", int),
-                sink_id_property=EntityProperty("friend_id", int),
-            )
-        )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",

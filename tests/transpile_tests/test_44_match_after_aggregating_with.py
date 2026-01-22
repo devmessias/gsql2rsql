@@ -11,7 +11,6 @@ import pytest
 
 from gsql2rsql import OpenCypherParser, LogicalPlan
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -36,60 +35,9 @@ class TestMatchAfterAggregatingWith:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("age", int),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="City",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Company",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="LIVES_IN",
-                source_node_id="Person",
-                sink_node_id="City",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="WORKS_AT",
-                source_node_id="Person",
-                sink_node_id="Company",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-
-        # Set up SQL schema for rendering tests
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # SQL schema for Person, City, Company
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -103,7 +51,7 @@ class TestMatchAfterAggregatingWith:
                 "Person", "graph.Person", node_id_columns=["id"]
             ),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="City",
                 properties=[
@@ -116,7 +64,7 @@ class TestMatchAfterAggregatingWith:
                 "City", "graph.City", node_id_columns=["id"]
             ),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Company",
                 properties=[
@@ -129,7 +77,7 @@ class TestMatchAfterAggregatingWith:
                 "Company", "graph.Company", node_id_columns=["id"]
             ),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="LIVES_IN",
                 source_node_id="Person",
@@ -141,7 +89,7 @@ class TestMatchAfterAggregatingWith:
                 "LIVES_IN:Person->City", "graph.Lives_In"
             ),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="WORKS_AT",
                 source_node_id="Person",
@@ -168,7 +116,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, population, COUNT(company) AS employers
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         # Verify plan was created successfully
@@ -198,7 +146,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, total_age, COUNT(other)
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -218,7 +166,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, avg_age
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -238,7 +186,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, residents
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -258,7 +206,7 @@ class TestMatchAfterAggregatingWith:
         RETURN p.name, c.name, company.name
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -279,7 +227,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, population
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -300,7 +248,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, pop, avg_age
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -323,7 +271,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, doubled_pop
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -343,7 +291,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, pop
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -363,7 +311,7 @@ class TestMatchAfterAggregatingWith:
         RETURN c.name, population
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         boundary_ops = list(
@@ -384,40 +332,9 @@ class TestMatchAfterAggregatingWithSQL:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="City",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="LIVES_IN",
-                source_node_id="Person",
-                sink_node_id="City",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-
-        # Set up SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # SQL schema for Person and City
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -430,7 +347,7 @@ class TestMatchAfterAggregatingWithSQL:
                 "Person", "graph.Person", node_id_columns=["id"]
             ),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="City",
                 properties=[
@@ -443,7 +360,7 @@ class TestMatchAfterAggregatingWithSQL:
                 "City", "graph.City", node_id_columns=["id"]
             ),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="LIVES_IN",
                 source_node_id="Person",
@@ -470,10 +387,10 @@ class TestMatchAfterAggregatingWithSQL:
         RETURN c.name AS city, population, COUNT(other) AS total
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(self.sql_schema)
+        renderer = SQLRenderer(self.schema)
         sql = renderer.render_plan(plan)
 
         # Should use WITH (not WITH RECURSIVE)
@@ -498,10 +415,10 @@ class TestMatchAfterAggregatingWithSQL:
         RETURN c.name, population
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(self.sql_schema)
+        renderer = SQLRenderer(self.schema)
         sql = renderer.render_plan(plan)
 
         # The join should be on the city ID
@@ -518,10 +435,10 @@ class TestMatchAfterAggregatingWithSQL:
         RETURN c.name, population
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(self.sql_schema)
+        renderer = SQLRenderer(self.schema)
         sql = renderer.render_plan(plan)
 
         # The filter on population should be a HAVING clause in the CTE
@@ -534,8 +451,9 @@ class TestMatchAfterAggregatingWithEdgeCases:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        # SQL schema for Node and REL
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Node",
                 properties=[
@@ -543,16 +461,22 @@ class TestMatchAfterAggregatingWithEdgeCases:
                     EntityProperty("value", int),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor.from_table_name(
+                "Node", "graph.Node", node_id_columns=["id"]
+            ),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="REL",
                 source_node_id="Node",
                 sink_node_id="Node",
                 source_id_property=EntityProperty("source_id", int),
                 sink_id_property=EntityProperty("target_id", int),
-            )
+            ),
+            SQLTableDescriptor.from_table_name(
+                "REL:Node->Node", "graph.Rel"
+            ),
         )
 
     def _parse(self, cypher: str):
@@ -567,7 +491,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         RETURN a.id, b.id, COUNT(*)
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         assert plan is not None
 
@@ -580,7 +504,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         RETURN a.id, cnt
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         assert plan is not None
 
@@ -601,7 +525,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         RETURN a.id, cnt, c.id
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         assert plan is not None
@@ -621,7 +545,7 @@ class TestMatchAfterAggregatingWithEdgeCases:
         RETURN a.id, c.id
         """
         ast = self._parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         assert plan is not None
 

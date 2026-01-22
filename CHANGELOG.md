@@ -169,7 +169,7 @@ had multiple critical errors:
    - Used `SQLRenderer(schema_provider)` instead of `SQLRenderer(db_schema_provider=sql_schema)`
 
 The corrected example now:
-- Uses `SimpleGraphSchemaProvider` for the logical planner
+- Uses `SimpleSQLSchemaProvider` for the schema provider
 - Uses `SimpleSQLSchemaProvider` for the SQL renderer
 - Properly maps graph entities to Delta tables with `SQLTableDescriptor`
 - Calls the correct API methods with proper parameters

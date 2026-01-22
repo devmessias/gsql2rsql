@@ -174,34 +174,88 @@ class ISQLDBSchemaProvider(IGraphSchemaProvider, ABC):
 
 
 class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
-    """A simple in-memory SQL schema provider."""
+    """A simple in-memory SQL schema provider.
+
+    Automatically supports no-label nodes and untyped edges by detecting
+    the base table from the first node/edge added. When a query uses a node
+    without a label or an edge without a type, the base table is used without
+    any type filter.
+    """
 
     def __init__(self) -> None:
         self._nodes: dict[str, NodeSchema] = {}
         self._edges: dict[str, EdgeSchema] = {}
         self._table_descriptors: dict[str, SQLTableDescriptor] = {}
+        # Explicit wildcard configuration (optional, for backward compatibility)
         self._wildcard_node: NodeSchema | None = None
         self._wildcard_table_desc: SQLTableDescriptor | None = None
         self._wildcard_edge: EdgeSchema | None = None
         self._wildcard_edge_table_desc: SQLTableDescriptor | None = None
+        # Auto-detected base tables (from first node/edge added)
+        self._base_node_table: SQLTableDescriptor | None = None
+        self._base_node_schema: NodeSchema | None = None
+        self._base_edge_table: SQLTableDescriptor | None = None
+        self._base_edge_schema: EdgeSchema | None = None
 
     def add_node(
         self,
         schema: NodeSchema,
-        table_descriptor: SQLTableDescriptor,
+        table_descriptor: SQLTableDescriptor | None = None,
     ) -> None:
-        """Add a node schema with its SQL table descriptor."""
+        """Add a node schema with its SQL table descriptor.
+
+        Args:
+            schema: The node schema to add.
+            table_descriptor: SQL table descriptor. If None, a default one is
+                created using the schema name as table name.
+
+        The first node added is used as the base for no-label node support.
+        """
         self._nodes[schema.name] = schema
+
+        # Create default table descriptor if not provided
+        if table_descriptor is None:
+            table_descriptor = SQLTableDescriptor(
+                entity_id=schema.name,
+                table_name=schema.name,
+                node_id_columns=["id"],
+            )
+
         self._table_descriptors[schema.id] = table_descriptor
+        # Auto-detect base node table from first node added
+        if self._base_node_table is None:
+            self._base_node_table = table_descriptor
+            self._base_node_schema = schema
 
     def add_edge(
         self,
         schema: EdgeSchema,
-        table_descriptor: SQLTableDescriptor,
+        table_descriptor: SQLTableDescriptor | None = None,
     ) -> None:
-        """Add an edge schema with its SQL table descriptor."""
+        """Add an edge schema with its SQL table descriptor.
+
+        Args:
+            schema: The edge schema to add.
+            table_descriptor: SQL table descriptor. If None, a default one is
+                created using the edge id as table name.
+
+        The first edge added is used as the base for untyped edge support.
+        """
         self._edges[schema.id] = schema
+
+        # Create default table descriptor if not provided
+        if table_descriptor is None:
+            table_descriptor = SQLTableDescriptor(
+                entity_id=schema.id,
+                table_name=schema.name,
+                node_id_columns=["source_id", "target_id"],
+            )
+
         self._table_descriptors[schema.id] = table_descriptor
+        # Auto-detect base edge table from first edge added
+        if self._base_edge_table is None:
+            self._base_edge_table = table_descriptor
+            self._base_edge_schema = schema
 
     def set_wildcard_node(
         self,
@@ -288,21 +342,141 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         # Register the wildcard node
         self.set_wildcard_node(wildcard_schema, wildcard_desc)
 
+    def enable_untyped_edge_support(
+        self,
+        table_name: str,
+        source_id_column: str,
+        sink_id_column: str,
+        properties: list[EntityProperty] | None = None,
+    ) -> None:
+        """Enable support for edges without type in MATCH patterns.
+
+        This method configures the schema provider to handle queries like:
+            MATCH (a:Person)-[]-(b)
+            MATCH (a)-[*1..3]-(b)
+        where the edge has no type specified.
+
+        WARNING: Untyped edge support causes full table scans on the edges table.
+        Specify edge types whenever possible for production queries.
+
+        Args:
+            table_name: The edges table name (e.g., "catalog.schema.edges").
+            source_id_column: Column name for edge source (e.g., "src").
+            sink_id_column: Column name for edge destination (e.g., "dst").
+            properties: Optional list of edge properties available on all edges.
+
+        Example:
+            >>> provider = SimpleSQLSchemaProvider()
+            >>> # Add edge types...
+            >>> provider.enable_untyped_edge_support(
+            ...     table_name="catalog.schema.edges",
+            ...     source_id_column="src",
+            ...     sink_id_column="dst",
+            ...     properties=[EntityProperty("weight", float)],
+            ... )
+        """
+        from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
+
+        # Create wildcard edge schema
+        wildcard_edge_schema = EdgeSchema(
+            name=WILDCARD_EDGE_TYPE,
+            source_node_id=WILDCARD_NODE_TYPE,
+            sink_node_id=WILDCARD_NODE_TYPE,
+            source_id_property=EntityProperty(
+                property_name=source_id_column,
+                data_type=str,
+            ),
+            sink_id_property=EntityProperty(
+                property_name=sink_id_column,
+                data_type=str,
+            ),
+            properties=properties or [],
+        )
+
+        # Create table descriptor without type filter (matches all edges)
+        wildcard_desc = SQLTableDescriptor(
+            table_name=table_name,
+            node_id_columns=[source_id_column, sink_id_column],
+            filter=None,  # No type filter - matches all edges
+        )
+
+        # Register the wildcard edge
+        self.set_wildcard_edge(wildcard_edge_schema, wildcard_desc)
+
     def get_wildcard_node_definition(self) -> NodeSchema | None:
-        """Get the wildcard node schema if enabled."""
-        return self._wildcard_node
+        """Get the wildcard node schema.
+
+        Returns explicitly configured wildcard, or auto-generates one from
+        the base node table if available.
+        """
+        if self._wildcard_node is not None:
+            return self._wildcard_node
+        # Auto-generate from base node schema
+        if self._base_node_schema is not None:
+            from gsql2rsql.common.schema import WILDCARD_NODE_TYPE
+            return NodeSchema(
+                name=WILDCARD_NODE_TYPE,
+                node_id_property=self._base_node_schema.node_id_property,
+                properties=self._base_node_schema.properties,
+            )
+        return None
 
     def get_wildcard_table_descriptor(self) -> SQLTableDescriptor | None:
-        """Get SQL descriptor for wildcard nodes (no type filter)."""
-        return self._wildcard_table_desc
+        """Get SQL descriptor for wildcard nodes (no type filter).
+
+        Returns explicitly configured wildcard descriptor, or auto-generates
+        one from the base node table (same table, no filter).
+        """
+        if self._wildcard_table_desc is not None:
+            return self._wildcard_table_desc
+        # Auto-generate from base node table (same table, no filter)
+        if self._base_node_table is not None:
+            return SQLTableDescriptor(
+                table_name=self._base_node_table.table_name
+                or self._base_node_table.full_table_name,
+                node_id_columns=self._base_node_table.node_id_columns,
+                filter=None,  # No type filter for wildcard
+            )
+        return None
 
     def get_wildcard_edge_definition(self) -> EdgeSchema | None:
-        """Get the wildcard edge schema if enabled."""
-        return self._wildcard_edge
+        """Get the wildcard edge schema.
+
+        Returns explicitly configured wildcard, or auto-generates one from
+        the base edge table if available.
+        """
+        if self._wildcard_edge is not None:
+            return self._wildcard_edge
+        # Auto-generate from base edge schema
+        if self._base_edge_schema is not None:
+            from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
+            return EdgeSchema(
+                name=WILDCARD_EDGE_TYPE,
+                source_node_id=WILDCARD_NODE_TYPE,
+                sink_node_id=WILDCARD_NODE_TYPE,
+                source_id_property=self._base_edge_schema.source_id_property,
+                sink_id_property=self._base_edge_schema.sink_id_property,
+                properties=self._base_edge_schema.properties,
+            )
+        return None
 
     def get_wildcard_edge_table_descriptor(self) -> SQLTableDescriptor | None:
-        """Get SQL descriptor for wildcard edges (no type filter)."""
-        return self._wildcard_edge_table_desc
+        """Get SQL descriptor for wildcard edges (no type filter).
+
+        Returns explicitly configured wildcard descriptor, or auto-generates
+        one from the base edge table (same table, no filter).
+        """
+        if self._wildcard_edge_table_desc is not None:
+            return self._wildcard_edge_table_desc
+        # Auto-generate from base edge table (same table, no filter)
+        if self._base_edge_table is not None:
+            return SQLTableDescriptor(
+                table_name=self._base_edge_table.table_name
+                or self._base_edge_table.full_table_name,
+                node_id_columns=self._base_edge_table.node_id_columns,
+                filter=None,  # No type filter for wildcard
+            )
+        return None
 
     def get_node_definition(self, node_name: str) -> NodeSchema | None:
         """Get a node schema by name."""

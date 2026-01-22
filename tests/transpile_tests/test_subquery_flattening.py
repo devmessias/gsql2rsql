@@ -38,7 +38,6 @@ from gsql2rsql.planner.operators import (
     SelectionOperator,
 )
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -49,35 +48,8 @@ from gsql2rsql.renderer.schema_provider import (
 )
 
 
-def _create_graph_schema() -> SimpleGraphSchemaProvider:
-    """Create a graph schema for parsing."""
-    schema = SimpleGraphSchemaProvider()
-
-    schema.add_node(
-        NodeSchema(
-            name="Person",
-            properties=[
-                EntityProperty("id", int),
-                EntityProperty("name", str),
-                EntityProperty("age", int),
-            ],
-            node_id_property=EntityProperty("id", int),
-        )
-    )
-
-    schema.add_edge(
-        EdgeSchema(
-            name="KNOWS",
-            source_node_id="Person",
-            sink_node_id="Person",
-        )
-    )
-
-    return schema
-
-
-def _create_sql_schema() -> SimpleSQLSchemaProvider:
-    """Create a SQL schema for rendering."""
+def _create_schema() -> SimpleSQLSchemaProvider:
+    """Create a SQL schema for parsing and rendering."""
     schema = SimpleSQLSchemaProvider()
 
     schema.add_node(
@@ -112,9 +84,8 @@ def _create_sql_schema() -> SimpleSQLSchemaProvider:
     return schema
 
 
-# Shared test schemas
-GRAPH_SCHEMA = _create_graph_schema()
-SQL_SCHEMA = _create_sql_schema()
+# Shared test schema
+SCHEMA = _create_schema()
 
 
 class TestSubqueryFlatteningOptimizer:
@@ -124,7 +95,7 @@ class TestSubqueryFlatteningOptimizer:
         """Helper to transpile a query with optional optimization."""
         parser = OpenCypherParser()
         ast = parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        plan = LogicalPlan.process_query_tree(ast, SCHEMA)
 
         if optimize:
             optimizer = SubqueryFlatteningOptimizer(enabled=True)
@@ -133,14 +104,14 @@ class TestSubqueryFlatteningOptimizer:
         # Resolve before rendering
         plan.resolve(original_query=query)
 
-        renderer = SQLRenderer(SQL_SCHEMA)
+        renderer = SQLRenderer(SCHEMA)
         return renderer.render_plan(plan)
 
     def _get_plan(self, query: str) -> LogicalPlan:
         """Helper to get a logical plan without optimization."""
         parser = OpenCypherParser()
         ast = parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        plan = LogicalPlan.process_query_tree(ast, SCHEMA)
         # Resolve before returning
         plan.resolve(original_query=query)
         return plan
@@ -337,7 +308,7 @@ class TestFlatteningTradeoffs:
         """Helper to transpile a query."""
         parser = OpenCypherParser()
         ast = parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        plan = LogicalPlan.process_query_tree(ast, SCHEMA)
 
         if optimize:
             optimizer = SubqueryFlatteningOptimizer(enabled=True)
@@ -346,7 +317,7 @@ class TestFlatteningTradeoffs:
         # Resolve before rendering
         plan.resolve(original_query=query)
 
-        renderer = SQLRenderer(SQL_SCHEMA)
+        renderer = SQLRenderer(SCHEMA)
         return renderer.render_plan(plan)
 
     def test_distinct_preserved(self):
@@ -392,7 +363,7 @@ class TestSelectionIntoSelectionFlattening:
         """Helper to transpile a query."""
         parser = OpenCypherParser()
         ast = parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        plan = LogicalPlan.process_query_tree(ast, SCHEMA)
 
         if optimize:
             optimizer = SubqueryFlatteningOptimizer(enabled=True)
@@ -401,14 +372,14 @@ class TestSelectionIntoSelectionFlattening:
         # Resolve before rendering
         plan.resolve(original_query=query)
 
-        renderer = SQLRenderer(SQL_SCHEMA)
+        renderer = SQLRenderer(SCHEMA)
         return renderer.render_plan(plan)
 
     def _get_plan(self, query: str) -> LogicalPlan:
         """Helper to get a logical plan without optimization."""
         parser = OpenCypherParser()
         ast = parser.parse(query)
-        return LogicalPlan.process_query_tree(ast, GRAPH_SCHEMA)
+        return LogicalPlan.process_query_tree(ast, SCHEMA)
 
     def test_consecutive_wheres_anded(self):
         """Multiple WHERE clauses should be ANDed together.

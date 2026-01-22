@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
-from gsql2rsql.common.schema import SimpleGraphSchemaProvider
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 
 
@@ -256,8 +255,7 @@ class TranspilerTestCase:
     test_id: str
     test_name: str
     cypher_query: str
-    graph_schema: SimpleGraphSchemaProvider
-    sql_schema: SimpleSQLSchemaProvider
+    schema: SimpleSQLSchemaProvider
     expected_sql: str | None = None
     description: str = ""
     tags: list[str] = field(default_factory=list)
@@ -271,10 +269,10 @@ class TranspilerTestCase:
         """
         parser = OpenCypherParser()
         ast = parser.parse(self.cypher_query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         # Resolve before rendering (renderer now requires resolution)
         plan.resolve(original_query=self.cypher_query)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def get_golden_path(self) -> Path:
@@ -336,8 +334,7 @@ def generate_test_artifacts(
     test_id: str,
     test_name: str,
     cypher: str,
-    graph_schema: SimpleGraphSchemaProvider,
-    sql_schema: SimpleSQLSchemaProvider,
+    schema: SimpleSQLSchemaProvider,
 ) -> dict[str, Any]:
     """
     Generate test artifacts for a query (useful for Makefile targets).
@@ -346,8 +343,7 @@ def generate_test_artifacts(
         test_id: Test ID
         test_name: Test name
         cypher: OpenCypher query
-        graph_schema: Graph schema
-        sql_schema: SQL schema
+        schema: SQL schema provider (serves both planner and renderer)
 
     Returns:
         Dict with cypher, actual_sql, expected_sql, paths, and match status
@@ -358,8 +354,7 @@ def generate_test_artifacts(
         test_id=test_id,
         test_name=test_name,
         cypher_query=cypher,
-        graph_schema=graph_schema,
-        sql_schema=sql_schema,
+        schema=schema,
     )
 
     actual_sql = test_case.transpile()

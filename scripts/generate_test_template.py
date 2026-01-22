@@ -57,16 +57,8 @@ def generate_test_template(test_id: str, test_name: str) -> str:
     return f'''"""Test {test_id}: {test_name}."""
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
-from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
-    NodeSchema,
-    EdgeSchema,
-    EntityProperty,
-)
-from gsql2rsql.renderer.schema_provider import (
-    SimpleSQLSchemaProvider,
-    SQLTableDescriptor,
-)
+from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
 
 class Test{class_name}:
@@ -74,11 +66,11 @@ class Test{class_name}:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
+        # Schema (SimpleSQLSchemaProvider)
+        self.schema = SimpleSQLSchemaProvider()
 
         # TODO: Add nodes
-        self.graph_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -86,32 +78,25 @@ class Test{class_name}:
                     EntityProperty("name", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
-        )
-
-        # TODO: Add edges if needed
-        # self.graph_schema.add_edge(
-        #     EdgeSchema(
-        #         name="KNOWS",
-        #         source_node_id="Person",
-        #         sink_node_id="Person",
-        #     )
-        # )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-
-        # TODO: Add table mappings
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Person",
-                node_id_property=EntityProperty("id", int),
             ),
             SQLTableDescriptor(
                 table_name="dbo.Person",
                 node_id_columns=["id"],
             ),
         )
+
+        # TODO: Add edges if needed
+        # self.schema.add_edge(
+        #     EdgeSchema(
+        #         name="KNOWS",
+        #         source_node_id="Person",
+        #         sink_node_id="Person",
+        #     ),
+        #     SQLTableDescriptor(
+        #         entity_id="Person@KNOWS@Person",
+        #         table_name="dbo.Knows",
+        #     ),
+        # )
 
     def test_{test_name.lower().replace(" ", "_").replace("-", "_")}(
         self,
@@ -122,8 +107,8 @@ class Test{class_name}:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # TODO: Add semantic validations

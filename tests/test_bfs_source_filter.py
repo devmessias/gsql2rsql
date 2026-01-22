@@ -22,7 +22,6 @@ from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.renderer.sql_renderer import SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -37,35 +36,12 @@ class TestBFSSourceNodeFilter:
     """Tests for WHERE filter on source node in variable-length paths."""
 
     def setup_method(self) -> None:
-        """Set up test fixtures with graph schema."""
-        self.graph_schema = SimpleGraphSchemaProvider()
+        """Set up test fixtures with schema."""
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
 
         # Node with custom node_id_property (not "id")
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("node_id", str),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("node_id", str),
-            )
-        )
-
-        # Edge
-        edge = EdgeSchema(
-            name="KNOWS",
-            source_node_id="Person",
-            sink_node_id="Person",
-            source_id_property=EntityProperty("src", str),
-            sink_id_property=EntityProperty("dst", str),
-            properties=[],
-        )
-        self.graph_schema.add_edge(edge)
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -79,7 +55,17 @@ class TestBFSSourceNodeFilter:
                 node_id_columns=["node_id"],
             ),
         )
-        self.sql_schema.add_edge(
+
+        # Edge
+        edge = EdgeSchema(
+            name="KNOWS",
+            source_node_id="Person",
+            sink_node_id="Person",
+            source_id_property=EntityProperty("src", str),
+            sink_id_property=EntityProperty("dst", str),
+            properties=[],
+        )
+        self.schema.add_edge(
             edge,
             SQLTableDescriptor(
                 entity_id="Person@KNOWS@Person",
@@ -90,10 +76,10 @@ class TestBFSSourceNodeFilter:
     def _transpile(self, query: str) -> str:
         """Helper to transpile query to SQL."""
         parser = OpenCypherParser()
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
 
         ast = parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=query)
         return renderer.render_plan(plan)
 
@@ -187,8 +173,7 @@ class TestBFSSourceNodeFilter:
             sink_id_property=EntityProperty("dst", str),
             properties=[],
         )
-        self.graph_schema.add_edge(edge)
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             edge,
             SQLTableDescriptor(
                 entity_id="Person@FOLLOWS@Person",

@@ -22,7 +22,6 @@ from gsql2rsql.common.schema import (
     EdgeSchema,
     NodeSchema,
     EntityProperty,
-    SimpleGraphSchemaProvider,
 )
 from gsql2rsql.planner.subquery_optimizer import optimize_plan
 from gsql2rsql.renderer.schema_provider import (
@@ -41,37 +40,9 @@ class TestSourceNodeFilterPushdown:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        # Create graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("age", int),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("person_id", int),
-                sink_id_property=EntityProperty("friend_id", int),
-                properties=[
-                    EntityProperty("person_id", int),
-                    EntityProperty("friend_id", int),
-                    EntityProperty("since", str),
-                ],
-            )
-        )
-
-        # Create SQL schema with table descriptors
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # Create schema with table descriptors
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -83,7 +54,7 @@ class TestSourceNodeFilterPushdown:
             ),
             SQLTableDescriptor(table_name="test.Person"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -102,11 +73,11 @@ class TestSourceNodeFilterPushdown:
     def _transpile(self, cypher: str, optimize: bool = True) -> str:
         """Transpile a Cypher query to SQL."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def test_simple_name_filter_pushed_to_base_case(self) -> None:
@@ -234,8 +205,8 @@ class TestSourceNodeFilterDetection:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -243,9 +214,10 @@ class TestSourceNodeFilterDetection:
                     EntityProperty("name", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="test.Person"),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -256,7 +228,8 @@ class TestSourceNodeFilterDetection:
                     EntityProperty("person_id", int),
                     EntityProperty("friend_id", int),
                 ],
-            )
+            ),
+            SQLTableDescriptor(table_name="test.Knows"),
         )
 
     def test_references_only_source(self) -> None:

@@ -108,7 +108,7 @@ wheels = [
 
 [[package]]
 name = "gsql2rsql"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "antlr4-python3-runtime" },

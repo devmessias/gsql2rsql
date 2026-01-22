@@ -164,40 +164,39 @@ For advanced use cases or non-Triple-Store schemas, use the components directly:
 
 ```python
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
-from gsql2rsql.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
-# 1. Define graph schema
-graph_schema = SimpleGraphSchemaProvider()
-graph_schema.add_node(NodeSchema(
+# 1. Define schema (SimpleSQLSchemaProvider)
+schema = SimpleSQLSchemaProvider()
+
+person = NodeSchema(
     name="Person",
     node_id_property=EntityProperty("id", int),
     properties=[EntityProperty("name", str)],
-))
-graph_schema.add_edge(EdgeSchema(
+)
+schema.add_node(
+    person,
+    SQLTableDescriptor(table_name="people", node_id_columns=["id"]),
+)
+
+knows = EdgeSchema(
     name="KNOWS",
     source_node_id="Person",
     sink_node_id="Person",
-))
-
-# 2. Map to SQL tables
-sql_schema = SimpleSQLSchemaProvider()
-sql_schema.add_node(
-    graph_schema.get_node_definition("Person"),
-    SQLTableDescriptor(table_name="people", node_id_columns=["id"]),
 )
-sql_schema.add_edge(
-    graph_schema.get_edge_definition("KNOWS", "Person", "Person"),
+schema.add_edge(
+    knows,
     SQLTableDescriptor(table_name="friendships"),
 )
 
-# 3. Transpile
+# 2. Transpile
 parser = OpenCypherParser()
 ast = parser.parse("MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, f.name")
-plan = LogicalPlan.process_query_tree(ast, graph_schema)
+plan = LogicalPlan.process_query_tree(ast, schema)
 plan.resolve(original_query="...")
 
-renderer = SQLRenderer(db_schema_provider=sql_schema)
+renderer = SQLRenderer(db_schema_provider=schema)
 sql = renderer.render_plan(plan)
 ```
 

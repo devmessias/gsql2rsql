@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any
 
 from gsql2rsql.common.schema import (
     EntityProperty,
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
 )
@@ -134,9 +133,9 @@ class GraphContext:
             if discover_edge_combinations:
                 self._discover_edge_combinations()
 
-        # Setup internal schemas
-        self._graph_schema: SimpleGraphSchemaProvider | None = None
-        self._sql_schema: SimpleSQLSchemaProvider | None = None
+        # Setup internal schema (single provider for both planner and renderer)
+        # SimpleSQLSchemaProvider implements ISQLDBSchemaProvider which extends IGraphSchemaProvider
+        self._schema: SimpleSQLSchemaProvider | None = None
         self._setup_schemas()
 
         # Setup transpiler components
@@ -235,20 +234,22 @@ class GraphContext:
         self._setup_schemas()
 
     def _setup_schemas(self) -> None:
-        """Setup internal graph and SQL schemas."""
+        """Setup internal schema provider.
+
+        Uses SimpleSQLSchemaProvider which implements both IGraphSchemaProvider
+        (for the planner) and ISQLDBSchemaProvider (for the renderer).
+        """
         if self._node_types is None or self._edge_types is None:
             # Can't setup without types
             return
 
-        # Create graph schema provider
-        self._graph_schema = SimpleGraphSchemaProvider()
-        self._sql_schema = SimpleSQLSchemaProvider()
+        # Single schema provider for both planner and renderer
+        self._schema = SimpleSQLSchemaProvider()
 
         # Reset renderer so it gets recreated with new schema
         self._renderer = None
 
         # Create node schemas
-        node_schemas: dict[str, NodeSchema] = {}
         for node_type in self._node_types:
             node_schema = NodeSchema(
                 name=node_type,
@@ -260,11 +261,7 @@ class GraphContext:
                     property_name=self.node_id_col, data_type=str
                 )
             )
-            node_schemas[node_type] = node_schema
-            self._graph_schema.add_node(node_schema)
-
-            # Add SQL mapping
-            self._sql_schema.add_node(
+            self._schema.add_node(
                 node_schema,
                 SQLTableDescriptor(
                     table_name=self.nodes_table,
@@ -307,10 +304,7 @@ class GraphContext:
                     for prop_name, data_type in self.extra_edge_attrs.items()
                 ]
             )
-            self._graph_schema.add_edge(edge_schema)
-
-            # Add SQL mapping
-            self._sql_schema.add_edge(
+            self._schema.add_edge(
                 edge_schema,
                 SQLTableDescriptor(
                     entity_id=edge_id,
@@ -320,59 +314,9 @@ class GraphContext:
                 )
             )
 
-        # Enable no-label support (Triple Store always has single nodes table)
-        # This allows MATCH (a)-[:REL]->(b:Label) where 'a' has no label
-        assert self.nodes_table is not None  # Validated in __init__
-        properties = [
-            EntityProperty(property_name=prop_name, data_type=data_type)
-            for prop_name, data_type in self.extra_node_attrs.items()
-        ]
-        self._sql_schema.enable_no_label_support(
-            table_name=self.nodes_table,
-            node_id_columns=[self.node_id_col],
-            properties=properties,
-        )
-        # Also set on graph schema (planner needs it for binding)
-        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE, WILDCARD_EDGE_TYPE
-        wildcard_schema = NodeSchema(
-            name=WILDCARD_NODE_TYPE,
-            node_id_property=EntityProperty(
-                property_name=self.node_id_col, data_type=str
-            ),
-            properties=properties,
-        )
-        self._graph_schema.set_wildcard_node(wildcard_schema)
-
-        # Enable untyped edge support (allows MATCH (a)-[]-(b) without edge type)
-        # This creates a wildcard edge schema with no type filter
-        edge_properties = [
-            EntityProperty(property_name=prop_name, data_type=data_type)
-            for prop_name, data_type in self.extra_edge_attrs.items()
-        ]
-        wildcard_edge_schema = EdgeSchema(
-            name=WILDCARD_EDGE_TYPE,
-            source_node_id=WILDCARD_NODE_TYPE,
-            sink_node_id=WILDCARD_NODE_TYPE,
-            source_id_property=EntityProperty(
-                property_name=self.edge_src_col, data_type=str
-            ),
-            sink_id_property=EntityProperty(
-                property_name=self.edge_dst_col, data_type=str
-            ),
-            properties=edge_properties,
-        )
-        self._graph_schema.set_wildcard_edge(wildcard_edge_schema)
-
-        # SQL descriptor for wildcard edge (no relationship_type filter)
-        assert self.edges_table is not None  # Validated in __init__
-        self._sql_schema.set_wildcard_edge(
-            wildcard_edge_schema,
-            SQLTableDescriptor(
-                table_name=self.edges_table,
-                node_id_columns=[self.edge_src_col, self.edge_dst_col],
-                filter=None,  # No type filter - matches all edges
-            )
-        )
+        # No-label node support and untyped edge support are automatically
+        # enabled by SimpleSQLSchemaProvider when nodes/edges are added.
+        # The provider detects the base table and creates wildcards automatically.
 
     def transpile(self, query: str, optimize: bool = True) -> str:
         """Transpile OpenCypher query to Databricks SQL.
@@ -389,20 +333,20 @@ class GraphContext:
             >>> print(sql)
             SELECT name AS name FROM ...
         """
-        if self._graph_schema is None or self._sql_schema is None:
+        if self._schema is None:
             raise RuntimeError(
                 "Schema not initialized. Call set_types() or provide spark parameter."
             )
 
         # Lazy initialize renderer after schemas are ready
         if self._renderer is None:
-            self._renderer = SQLRenderer(db_schema_provider=self._sql_schema)
+            self._renderer = SQLRenderer(db_schema_provider=self._schema)
 
         # Parse query
         ast = self._parser.parse(query)
 
-        # Create logical plan
-        plan = LogicalPlan.process_query_tree(ast, self._graph_schema)
+        # Create logical plan (SimpleSQLSchemaProvider implements IGraphSchemaProvider)
+        plan = LogicalPlan.process_query_tree(ast, self._schema)
 
         # Apply optimizations
         if optimize:

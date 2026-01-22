@@ -9,13 +9,14 @@ import pytest
 
 from gsql2rsql import OpenCypherParser, LogicalPlan
 from gsql2rsql.common.exceptions import ColumnResolutionError
-from gsql2rsql.common.schema import EntityProperty, NodeSchema, EdgeSchema, SimpleGraphSchemaProvider
+from gsql2rsql.common.schema import EntityProperty, NodeSchema, EdgeSchema
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 
 
 def test_symbol_not_in_both_available_and_out_of_scope():
     """Test that re-defined symbols are removed from out-of-scope list."""
     # Setup schema
-    schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
     person_node = NodeSchema(
         name="Person",
         properties=[EntityProperty("name", str)],
@@ -81,7 +82,7 @@ RETURN c.name, person_count"""
 def test_no_duplicate_entries_in_out_of_scope_list():
     """Test that out-of-scope list doesn't contain duplicate entries."""
     # Setup schema
-    schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
     person_node = NodeSchema(
         name="Person",
         properties=[EntityProperty("name", str), EntityProperty("age", int)],

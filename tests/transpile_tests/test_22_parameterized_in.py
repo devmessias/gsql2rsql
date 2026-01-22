@@ -15,7 +15,6 @@ import pytest
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -41,44 +40,8 @@ class TestParameterizedIn:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema for fraud detection scenario
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Account",
-                properties=[
-                    EntityProperty("id", str),
-                    EntityProperty("name", str),
-                    EntityProperty("status", str),
-                    EntityProperty("balance", float),
-                ],
-                node_id_property=EntityProperty("id", str),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Transaction",
-                properties=[
-                    EntityProperty("id", str),
-                    EntityProperty("amount", float),
-                    EntityProperty("timestamp", str),
-                ],
-                node_id_property=EntityProperty("id", str),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="TRANSFER",
-                source_node_id="Account",
-                sink_node_id="Account",
-                source_id_property=EntityProperty("source_id", str),
-                sink_id_property=EntityProperty("target_id", str),
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 properties=[
@@ -91,7 +54,7 @@ class TestParameterizedIn:
             ),
             SQLTableDescriptor(table_name="graph.Account"),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Transaction",
                 properties=[
@@ -103,7 +66,7 @@ class TestParameterizedIn:
             ),
             SQLTableDescriptor(table_name="graph.Transaction"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="TRANSFER",
                 source_node_id="Account",
@@ -118,9 +81,9 @@ class TestParameterizedIn:
         """Helper to transpile a Cypher query."""
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def test_golden_file_match(self) -> None:

@@ -6,7 +6,6 @@ from gsql2rsql.common.schema import (
     EdgeSchema,
     EntityProperty,
     NodeSchema,
-    SimpleGraphSchemaProvider,
 )
 
 
@@ -70,45 +69,3 @@ class TestEdgeSchema:
         """Test static edge ID generation."""
         edge_id = EdgeSchema.get_edge_id("KNOWS", "Person", "Person")
         assert edge_id == "Person@KNOWS@Person"
-
-
-class TestSimpleGraphSchemaProvider:
-    """Tests for SimpleGraphSchemaProvider."""
-
-    def test_add_and_get_node(self) -> None:
-        """Test adding and retrieving node schema."""
-        provider = SimpleGraphSchemaProvider()
-
-        schema = NodeSchema(name="Person")
-        provider.add_node(schema)
-
-        result = provider.get_node_definition("Person")
-        assert result is not None
-        assert result.name == "Person"
-
-    def test_get_nonexistent_node(self) -> None:
-        """Test getting non-existent node returns None."""
-        provider = SimpleGraphSchemaProvider()
-        result = provider.get_node_definition("Unknown")
-        assert result is None
-
-    def test_add_and_get_edge(self) -> None:
-        """Test adding and retrieving edge schema."""
-        provider = SimpleGraphSchemaProvider()
-
-        schema = EdgeSchema(
-            name="KNOWS",
-            source_node_id="Person",
-            sink_node_id="Person",
-        )
-        provider.add_edge(schema)
-
-        result = provider.get_edge_definition("KNOWS", "Person", "Person")
-        assert result is not None
-        assert result.name == "KNOWS"
-
-    def test_get_nonexistent_edge(self) -> None:
-        """Test getting non-existent edge returns None."""
-        provider = SimpleGraphSchemaProvider()
-        result = provider.get_edge_definition("UNKNOWN", "A", "B")
-        assert result is None

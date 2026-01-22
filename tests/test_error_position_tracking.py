@@ -12,14 +12,14 @@ from gsql2rsql.common.schema import (
     EntityProperty,
     NodeSchema,
     EdgeSchema,
-    SimpleGraphSchemaProvider,
 )
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 
 
 def test_undefined_variable_shows_correct_position():
     """Test that undefined variable errors show correct position in query."""
     # Setup schema
-    schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
     person_node = NodeSchema(
         name="Person",
         properties=[
@@ -83,7 +83,7 @@ RETURN p.name, friends"""
 def test_invalid_property_shows_correct_position():
     """Test that invalid property errors show correct position in query."""
     # Setup schema
-    schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
     person_node = NodeSchema(
         name="Person",
         properties=[
@@ -127,7 +127,7 @@ RETURN p.name"""
 def test_multiline_query_correct_line_calculation():
     """Test that line numbers are calculated correctly for multiline queries."""
     # Setup schema
-    schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
     person_node = NodeSchema(
         name="Person",
         properties=[EntityProperty("name", str)],
@@ -177,7 +177,7 @@ def test_error_with_no_query_text():
     """Test that errors still work when query text is not available."""
     # This is a defensive test - errors should still be raised even without position info
 
-    schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
     person_node = NodeSchema(
         name="Person",
         properties=[EntityProperty("name", str)],

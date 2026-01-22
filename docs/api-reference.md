@@ -78,14 +78,14 @@ class LogicalPlan:
     @staticmethod
     def process_query_tree(
         ast: QueryNode,
-        graph_schema: IGraphSchemaProvider
+        schema: IGraphSchemaProvider
     ) -> "LogicalPlan":
         """
         Convert AST to logical plan.
 
         Args:
             ast: Abstract syntax tree from parser
-            graph_schema: Graph schema provider
+            schema: Schema provider (SimpleSQLSchemaProvider implements IGraphSchemaProvider)
 
         Returns:
             LogicalPlan: Logical plan with operators
@@ -126,14 +126,14 @@ class LogicalPlan:
 **Example Usage**:
 ```python
 from gsql2rsql import OpenCypherParser, LogicalPlan
-from gsql2rsql.common.schema import SimpleGraphSchemaProvider
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 
 # Parse
 parser = OpenCypherParser()
 ast = parser.parse("MATCH (n:Person) RETURN n")
 
-# Build schema
-schema = SimpleGraphSchemaProvider()
+# Build schema (SimpleSQLSchemaProvider)
+schema = SimpleSQLSchemaProvider()
 # ... add nodes and edges
 
 # Create logical plan
@@ -232,21 +232,21 @@ sql = renderer.render_plan(plan)
 
 ### Schema Classes
 
-#### `SimpleGraphSchemaProvider`
+#### `SimpleSQLSchemaProvider`
 
-**Module**: `gsql2rsql.common.schema`
+**Module**: `gsql2rsql.renderer.schema_provider`
 
-**Purpose**: In-memory graph schema provider.
+**Purpose**: In-memory schema provider (unified graph + SQL schema).
 
 ```python
-class SimpleGraphSchemaProvider(IGraphSchemaProvider):
-    """Simple in-memory graph schema provider."""
+class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
+    """Simple in-memory schema provider for graph and SQL mappings."""
 
-    def add_node(self, node: NodeSchema) -> None:
-        """Add node type to schema."""
+    def add_node(self, node: NodeSchema, table_descriptor: SQLTableDescriptor) -> None:
+        """Add node type to schema with SQL table mapping."""
 
-    def add_edge(self, edge: EdgeSchema) -> None:
-        """Add edge type to schema."""
+    def add_edge(self, edge: EdgeSchema, table_descriptor: SQLTableDescriptor) -> None:
+        """Add edge type to schema with SQL table mapping."""
 
     def get_node_schema(self, label: str) -> NodeSchema | None:
         """Get node schema by label."""
@@ -451,57 +451,36 @@ df.show()
 
 ```python
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
-from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
-    NodeSchema,
-    EdgeSchema,
-    EntityProperty,
-)
-from gsql2rsql.renderer.schema_provider import (
-    SimpleSQLSchemaProvider,
-    SQLTableDescriptor,
-)
+from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
-# 1. Define graph schema
-graph_schema = SimpleGraphSchemaProvider()
+# 1. Define schema (SimpleSQLSchemaProvider)
+schema = SimpleSQLSchemaProvider()
 
-graph_schema.add_node(
-    NodeSchema(
-        name="Person",
-        node_id_property=EntityProperty("id", int),
-        properties=[
-            EntityProperty("id", int),
-            EntityProperty("name", str),
-            EntityProperty("age", int),
-        ],
-    )
+person = NodeSchema(
+    name="Person",
+    node_id_property=EntityProperty("id", int),
+    properties=[
+        EntityProperty("id", int),
+        EntityProperty("name", str),
+        EntityProperty("age", int),
+    ],
 )
-
-graph_schema.add_edge(
-    EdgeSchema(
-        name="KNOWS",
-        source_node="Person",
-        sink_node="Person",
-        source_id_property=EntityProperty("source_id", int),
-        sink_id_property=EntityProperty("target_id", int),
-        properties=[],
-    )
-)
-
-# 2. Define SQL schema
-sql_schema = SimpleSQLSchemaProvider()
-sql_schema.add_node(
-    NodeSchema(name="Person", node_id_property=EntityProperty("id", int)),
+schema.add_node(
+    person,
     SQLTableDescriptor(table_name="graph.Person", node_id_columns=["id"]),
 )
-sql_schema.add_edge(
-    EdgeSchema(
-        name="KNOWS",
-        source_node="Person",
-        sink_node="Person",
-        source_id_property=EntityProperty("source_id", int),
-        sink_id_property=EntityProperty("target_id", int),
-    ),
+
+knows = EdgeSchema(
+    name="KNOWS",
+    source_node="Person",
+    sink_node="Person",
+    source_id_property=EntityProperty("source_id", int),
+    sink_id_property=EntityProperty("target_id", int),
+    properties=[],
+)
+schema.add_edge(
+    knows,
     SQLTableDescriptor(
         table_name="graph.Knows",
         source_id_columns=["source_id"],
@@ -509,24 +488,24 @@ sql_schema.add_edge(
     ),
 )
 
-# 3. Parse query
+# 2. Parse query
 query = "MATCH (p:Person)-[:KNOWS]->(f:Person) WHERE p.age > 30 RETURN p.name, f.name"
 parser = OpenCypherParser()
 ast = parser.parse(query)
 
-# 4. Create logical plan
-plan = LogicalPlan.process_query_tree(ast, graph_schema)
+# 3. Create logical plan
+plan = LogicalPlan.process_query_tree(ast, schema)
 
-# 5. Optimize (optional)
+# 4. Optimize (optional)
 from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
 optimizer = SubqueryFlatteningOptimizer(enabled=True)
 optimizer.optimize(plan)
 
-# 6. Resolve columns
+# 5. Resolve columns
 plan.resolve(original_query=query)
 
-# 7. Render SQL
-renderer = SQLRenderer(db_schema_provider=sql_schema)
+# 6. Render SQL
+renderer = SQLRenderer(db_schema_provider=schema)
 sql = renderer.render_plan(plan)
 
 print(sql)
@@ -542,10 +521,10 @@ You can define schemas programmatically using Python **dataclasses** instead of 
 
 ```python
 from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
-from gsql2rsql.planner.schema import SimpleGraphSchemaProvider
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
-# Create schema provider
-schema = SimpleGraphSchemaProvider()
+# Create schema provider (SimpleSQLSchemaProvider)
+schema = SimpleSQLSchemaProvider()
 
 # Define nodes
 person = NodeSchema(
@@ -580,39 +559,32 @@ works_at = EdgeSchema(
     sink_id_property=EntityProperty(property_name="company_id", data_type=int)
 )
 
-# Add to schema
-schema.add_node(person)
-schema.add_node(company)
-schema.add_edge(works_at)
-
-# Use with transpiler
-from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
-from gsql2rsql.renderer.schema_provider import DatabricksSchemaProvider
-
-# Map entities to SQL tables
-sql_schema = DatabricksSchemaProvider()
-sql_schema.add_table_mapping(
-    entity_id="Person",
-    table_name="catalog.mydb.Person",
-    node_id_columns=["id"],
-    column_mappings={"id": "id", "name": "name", "age": "age"}
+# Add to schema with SQL table mappings
+schema.add_node(
+    person,
+    SQLTableDescriptor(
+        table_name="catalog.mydb.Person",
+        node_id_columns=["id"],
+    )
 )
-sql_schema.add_table_mapping(
-    entity_id="Company",
-    table_name="catalog.mydb.Company",
-    node_id_columns=["id"]
+schema.add_node(
+    company,
+    SQLTableDescriptor(
+        table_name="catalog.mydb.Company",
+        node_id_columns=["id"],
+    )
 )
-sql_schema.add_table_mapping(
-    entity_id="Person@WORKS_AT@Company",
-    table_name="catalog.mydb.PersonWorksAt",
-    column_mappings={
-        "person_id": "person_id",
-        "company_id": "company_id",
-        "since": "since"
-    }
+schema.add_edge(
+    works_at,
+    SQLTableDescriptor(
+        entity_id="Person@WORKS_AT@Company",
+        table_name="catalog.mydb.PersonWorksAt",
+    )
 )
 
 # Transpile
+from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
+
 query = """
 MATCH (p:Person)-[:WORKS_AT]->(c:Company)
 WHERE c.industry = 'Technology'
@@ -622,11 +594,10 @@ RETURN p.name, c.name
 parser = OpenCypherParser()
 ast = parser.parse(query)
 
-plan = LogicalPlan(schema)
-plan.process_query_tree(ast, query)
-plan.resolve(query)
+plan = LogicalPlan.process_query_tree(ast, schema)
+plan.resolve(original_query=query)
 
-renderer = SQLRenderer(sql_schema)
+renderer = SQLRenderer(db_schema_provider=schema)
 sql = renderer.render_plan(plan)
 print(sql)
 ```
@@ -636,13 +607,14 @@ print(sql)
 You can also pass dictionaries directly:
 
 ```python
-from gsql2rsql.planner.schema import SimpleGraphSchemaProvider
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 
 schema_dict = {
     "nodes": [
         {
             "name": "Person",
             "idProperty": {"name": "id", "type": "int"},
+            "tableName": "catalog.mydb.Person",
             "properties": [
                 {"name": "name", "type": "string"},
                 {"name": "age", "type": "int"}
@@ -654,6 +626,7 @@ schema_dict = {
             "name": "KNOWS",
             "sourceNode": "Person",
             "sinkNode": "Person",
+            "tableName": "catalog.mydb.Knows",
             "sourceIdProperty": {"name": "person_id", "type": "int"},
             "sinkIdProperty": {"name": "friend_id", "type": "int"},
             "properties": []

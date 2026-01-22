@@ -16,7 +16,6 @@ are NOT currently supported and will be skipped.
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -39,37 +38,9 @@ class TestInlinePropertyFilters:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("node_id", str),
-                    EntityProperty("name", str),
-                    EntityProperty("age", int),
-                    EntityProperty("active", bool),
-                ],
-                node_id_property=EntityProperty("node_id", str),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("src", str),
-                sink_id_property=EntityProperty("dst", str),
-                properties=[
-                    EntityProperty("since", int),
-                    EntityProperty("strength", float),
-                ],
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # SQL schema for Person and KNOWS edge
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -85,7 +56,7 @@ class TestInlinePropertyFilters:
                 node_id_columns=["node_id"],
             ),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -107,9 +78,9 @@ class TestInlinePropertyFilters:
         """Helper to transpile a Cypher query."""
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     # =========================================================================

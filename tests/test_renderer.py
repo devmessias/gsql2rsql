@@ -33,7 +33,6 @@ from gsql2rsql.renderer.schema_provider import (
 from gsql2rsql.common.schema import (
     NodeSchema,
     EdgeSchema,
-    SimpleGraphSchemaProvider,
 )
 
 
@@ -42,35 +41,23 @@ class TestSQLRenderer:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(NodeSchema(name="Person"))
-        self.graph_schema.add_node(NodeSchema(name="Movie"))
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="ACTED_IN",
-                source_node_id="Person",
-                sink_node_id="Movie",
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_table(
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_table(
             SQLTableDescriptor(
                 entity_id="Person",
                 table_name="Person",
                 node_id_columns=["id"],
             )
         )
-        self.sql_schema.add_table(
+        self.schema.add_table(
             SQLTableDescriptor(
                 entity_id="Movie",
                 table_name="Movie",
                 node_id_columns=["id"],
             )
         )
-        self.sql_schema.add_table(
+        self.schema.add_table(
             SQLTableDescriptor(
                 entity_id="Person@ACTED_IN@Movie",
                 table_name="ActedIn",
@@ -79,8 +66,7 @@ class TestSQLRenderer:
         )
 
         self.renderer = SQLRenderer(
-            graph_schema_provider=self.graph_schema,
-            db_schema_provider=self.sql_schema,
+            db_schema_provider=self.schema,
         )
 
     def test_render_literal_value_string(self) -> None:
@@ -346,9 +332,9 @@ class TestBFSWithRecursive:
         """Set up test fixtures for BFS tests."""
         from gsql2rsql.common.schema import EntityProperty
 
-        # Graph schema with Person and KNOWS relationship
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -356,31 +342,13 @@ class TestBFSWithRecursive:
                     EntityProperty("name", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Person",
-                node_id_property=EntityProperty("id", int),
             ),
             SQLTableDescriptor(
                 table_name="graph.Person",
                 node_id_columns=["id"],
             ),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -402,9 +370,9 @@ class TestBFSWithRecursive:
         cypher = "MATCH (a:Person)-[:KNOWS*1..5]->(b:Person) RETURN b.id"
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should contain WITH RECURSIVE
@@ -421,9 +389,9 @@ class TestBFSWithRecursive:
         cypher = "MATCH (a:Person)-[:KNOWS*1..3]->(b:Person) RETURN b.id"
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should use source_id and target_id columns
@@ -441,9 +409,9 @@ class TestBFSWithRecursive:
         cypher = "MATCH (a:Person)-[:KNOWS*1..5]->(b:Person) RETURN b.id"
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should have ARRAY_CONTAINS for cycle detection
@@ -460,9 +428,9 @@ class TestBFSWithRecursive:
         cypher = "MATCH (a:Person)-[:KNOWS*1..7]->(b:Person) RETURN b.id"
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should have depth < 7 check
@@ -479,9 +447,9 @@ class TestBFSWithRecursive:
         cypher = "MATCH (a:Person)-[:KNOWS*1..3]->(b:Person) RETURN b.id"
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have ON TRUE (empty join condition)
@@ -504,9 +472,9 @@ class TestBFSWithRecursive:
         """
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should select id and name from Person table
@@ -528,40 +496,9 @@ class TestBFSMultipleEdgeTypes:
         """Set up test fixtures with multiple edge types."""
         from gsql2rsql.common.schema import EntityProperty
 
-        # Graph schema with two edge types (example names)
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="FOLLOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-
-        # SQL schema - single edge table with filter
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -572,7 +509,7 @@ class TestBFSMultipleEdgeTypes:
             ),
             SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -582,7 +519,7 @@ class TestBFSMultipleEdgeTypes:
             ),
             SQLTableDescriptor(table_name="graph.edges", filter="edge_type = 'KNOWS'"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="FOLLOWS",
                 source_node_id="Person",
@@ -610,9 +547,9 @@ class TestBFSMultipleEdgeTypes:
         """
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should generate SQL with UNION of both edge types
@@ -635,9 +572,9 @@ class TestBFSMultipleEdgeTypes:
         """
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Expected: edge_type IN ('KNOWS', 'FOLLOWS')

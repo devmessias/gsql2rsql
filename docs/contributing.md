@@ -551,12 +551,12 @@ uv run gsql2rsql parse -i debug_query.cypher
 ```python
 # In Python REPL or script
 from gsql2rsql import OpenCypherParser, LogicalPlan
-from gsql2rsql.common.schema import SimpleGraphSchemaProvider
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 
 parser = OpenCypherParser()
 ast = parser.parse(open("debug_query.cypher").read())
 
-schema = SimpleGraphSchemaProvider()
+schema = SimpleSQLSchemaProvider()
 # ... add schema
 
 plan = LogicalPlan.process_query_tree(ast, schema)

@@ -17,11 +17,11 @@ from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import SelectionOperator
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
 )
+from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 from gsql2rsql.parser.ast import (
     BinaryOperator,
     QueryExpressionBinary,
@@ -33,11 +33,12 @@ class TestPlannerInlineProperties:
     """Test suite for planner inline property conversion."""
 
     def setup_method(self):
-        """Set up test fixtures with graph schema."""
-        self.graph_schema = SimpleGraphSchemaProvider()
+        """Set up test fixtures with schema."""
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
 
         # Add Person node
-        self.graph_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -62,14 +63,14 @@ class TestPlannerInlineProperties:
                 EntityProperty("strength", float),
             ],
         )
-        self.graph_schema.add_edge(edge)
+        self.schema.add_edge(edge)
 
         self.parser = OpenCypherParser()
 
     def _create_plan(self, query: str) -> LogicalPlan:
         """Helper to create logical plan from query."""
         ast = self.parser.parse(query)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         return plan
 
     def _find_selection_operators(

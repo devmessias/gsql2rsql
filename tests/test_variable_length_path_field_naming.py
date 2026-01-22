@@ -15,7 +15,6 @@ from gsql2rsql.common.schema import (
     NodeSchema,
     EdgeSchema,
     EntityProperty,
-    SimpleGraphSchemaProvider,
 )
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
@@ -27,12 +26,12 @@ class TestVariableLengthPathFieldNaming:
     """Tests for correct field naming in variable-length path queries."""
 
     def setup_method(self) -> None:
-        """Set up test fixtures with graph schema for testing."""
-        # Graph schema: Customer -[:KNOWS]- Customer -[:HAS_LOAN]-> Loan
-        self.graph_schema = SimpleGraphSchemaProvider()
+        """Set up test fixtures with schema for testing."""
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
 
         # Nodes
-        self.graph_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Customer",
                 properties=[
@@ -41,9 +40,10 @@ class TestVariableLengthPathFieldNaming:
                     EntityProperty("status", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="catalog.credit.Customer"),
         )
-        self.graph_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Loan",
                 properties=[
@@ -52,9 +52,10 @@ class TestVariableLengthPathFieldNaming:
                     EntityProperty("status", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="catalog.credit.Loan"),
         )
-        self.graph_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Account",
                 properties=[
@@ -62,91 +63,41 @@ class TestVariableLengthPathFieldNaming:
                     EntityProperty("balance", float),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
-        )
-
-        # Edges
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Customer",
-                sink_node_id="Customer",
-                source_id_property=EntityProperty("customer_id", int),
-                sink_id_property=EntityProperty("knows_customer_id", int),
-                properties=[],
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="HAS_LOAN",
-                source_node_id="Customer",
-                sink_node_id="Loan",
-                source_id_property=EntityProperty("customer_id", int),
-                sink_id_property=EntityProperty("loan_id", int),
-                properties=[],
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="HAS_ACCOUNT",
-                source_node_id="Customer",
-                sink_node_id="Account",
-                source_id_property=EntityProperty("customer_id", int),
-                sink_id_property=EntityProperty("account_id", int),
-                properties=[],
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Customer",
-                node_id_property=EntityProperty("id", int),
-            ),
-            SQLTableDescriptor(table_name="catalog.credit.Customer"),
-        )
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Loan",
-                node_id_property=EntityProperty("id", int),
-            ),
-            SQLTableDescriptor(table_name="catalog.credit.Loan"),
-        )
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Account",
-                node_id_property=EntityProperty("id", int),
             ),
             SQLTableDescriptor(table_name="catalog.credit.Account"),
         )
-        self.sql_schema.add_edge(
+
+        # Edges
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Customer",
                 sink_node_id="Customer",
                 source_id_property=EntityProperty("customer_id", int),
                 sink_id_property=EntityProperty("knows_customer_id", int),
+                properties=[],
             ),
             SQLTableDescriptor(table_name="catalog.credit.CustomerKnows"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="HAS_LOAN",
                 source_node_id="Customer",
                 sink_node_id="Loan",
                 source_id_property=EntityProperty("customer_id", int),
                 sink_id_property=EntityProperty("loan_id", int),
+                properties=[],
             ),
             SQLTableDescriptor(table_name="catalog.credit.CustomerLoan"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="HAS_ACCOUNT",
                 source_node_id="Customer",
                 sink_node_id="Account",
                 source_id_property=EntityProperty("customer_id", int),
                 sink_id_property=EntityProperty("account_id", int),
+                properties=[],
             ),
             SQLTableDescriptor(table_name="catalog.credit.CustomerAccount"),
         )
@@ -166,10 +117,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # BUG CHECK: Should NOT have double-prefixed field names
@@ -200,10 +151,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names
@@ -223,10 +174,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names
@@ -246,10 +197,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names
@@ -280,10 +231,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names for either peer
@@ -308,10 +259,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names
@@ -333,10 +284,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names (baseline expectation)
@@ -351,7 +302,7 @@ class TestVariableLengthPathFieldNaming:
         not just KNOWS edges.
         """
         # First add a self-referential edge for Account (for testing purposes)
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="LINKED_TO",
                 source_node_id="Account",
@@ -361,7 +312,7 @@ class TestVariableLengthPathFieldNaming:
                 properties=[],
             )
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="LINKED_TO",
                 source_node_id="Account",
@@ -380,10 +331,10 @@ class TestVariableLengthPathFieldNaming:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should NOT have double-prefixed field names

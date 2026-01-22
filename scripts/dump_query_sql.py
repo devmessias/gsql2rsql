@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -63,79 +62,12 @@ DEFAULT_QUERIES: dict[str, str] = {
 }
 
 
-def create_default_schema() -> tuple[
-    SimpleGraphSchemaProvider, SimpleSQLSchemaProvider
-]:
+def create_default_schema() -> SimpleSQLSchemaProvider:
     """Create default Person/Movie schema for testing."""
-    graph_schema = SimpleGraphSchemaProvider()
+    schema = SimpleSQLSchemaProvider()
 
     # Nodes
-    graph_schema.add_node(
-        NodeSchema(
-            name="Person",
-            properties=[
-                EntityProperty("id", int),
-                EntityProperty("name", str),
-                EntityProperty("age", int),
-                EntityProperty("nickname", str),
-            ],
-            node_id_property=EntityProperty("id", int),
-        )
-    )
-    graph_schema.add_node(
-        NodeSchema(
-            name="Movie",
-            properties=[
-                EntityProperty("id", int),
-                EntityProperty("title", str),
-            ],
-            node_id_property=EntityProperty("id", int),
-        )
-    )
-    graph_schema.add_node(
-        NodeSchema(
-            name="City",
-            properties=[
-                EntityProperty("id", int),
-                EntityProperty("name", str),
-            ],
-            node_id_property=EntityProperty("id", int),
-        )
-    )
-
-    # Edges
-    graph_schema.add_edge(
-        EdgeSchema(
-            name="KNOWS",
-            source_node_id="Person",
-            sink_node_id="Person",
-            source_id_property=EntityProperty("source_id", int),
-            sink_id_property=EntityProperty("target_id", int),
-        )
-    )
-    graph_schema.add_edge(
-        EdgeSchema(
-            name="ACTED_IN",
-            source_node_id="Person",
-            sink_node_id="Movie",
-            source_id_property=EntityProperty("source_id", int),
-            sink_id_property=EntityProperty("target_id", int),
-        )
-    )
-    graph_schema.add_edge(
-        EdgeSchema(
-            name="LIVES_IN",
-            source_node_id="Person",
-            sink_node_id="City",
-            source_id_property=EntityProperty("source_id", int),
-            sink_id_property=EntityProperty("target_id", int),
-        )
-    )
-
-    # SQL schema
-    sql_schema = SimpleSQLSchemaProvider()
-
-    sql_schema.add_node(
+    schema.add_node(
         NodeSchema(
             name="Person",
             properties=[
@@ -151,7 +83,7 @@ def create_default_schema() -> tuple[
             node_id_columns=["id"],
         ),
     )
-    sql_schema.add_node(
+    schema.add_node(
         NodeSchema(
             name="Movie",
             properties=[
@@ -165,35 +97,7 @@ def create_default_schema() -> tuple[
             node_id_columns=["id"],
         ),
     )
-    sql_schema.add_edge(
-        EdgeSchema(
-            name="KNOWS",
-            source_node_id="Person",
-            sink_node_id="Person",
-            source_id_property=EntityProperty("source_id", int),
-            sink_id_property=EntityProperty("target_id", int),
-        ),
-        SQLTableDescriptor(
-            entity_id="Person@KNOWS@Person",
-            table_name="dbo.Knows",
-            node_id_columns=["person1_id", "person2_id"],
-        ),
-    )
-    sql_schema.add_edge(
-        EdgeSchema(
-            name="ACTED_IN",
-            source_node_id="Person",
-            sink_node_id="Movie",
-            source_id_property=EntityProperty("source_id", int),
-            sink_id_property=EntityProperty("target_id", int),
-        ),
-        SQLTableDescriptor(
-            entity_id="Person@ACTED_IN@Movie",
-            table_name="dbo.ActedIn",
-            node_id_columns=["person_id", "movie_id"],
-        ),
-    )
-    sql_schema.add_node(
+    schema.add_node(
         NodeSchema(
             name="City",
             properties=[
@@ -207,7 +111,37 @@ def create_default_schema() -> tuple[
             node_id_columns=["id"],
         ),
     )
-    sql_schema.add_edge(
+
+    # Edges
+    schema.add_edge(
+        EdgeSchema(
+            name="KNOWS",
+            source_node_id="Person",
+            sink_node_id="Person",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
+        ),
+        SQLTableDescriptor(
+            entity_id="Person@KNOWS@Person",
+            table_name="dbo.Knows",
+            node_id_columns=["person1_id", "person2_id"],
+        ),
+    )
+    schema.add_edge(
+        EdgeSchema(
+            name="ACTED_IN",
+            source_node_id="Person",
+            sink_node_id="Movie",
+            source_id_property=EntityProperty("source_id", int),
+            sink_id_property=EntityProperty("target_id", int),
+        ),
+        SQLTableDescriptor(
+            entity_id="Person@ACTED_IN@Movie",
+            table_name="dbo.ActedIn",
+            node_id_columns=["person_id", "movie_id"],
+        ),
+    )
+    schema.add_edge(
         EdgeSchema(
             name="LIVES_IN",
             source_node_id="Person",
@@ -220,20 +154,19 @@ def create_default_schema() -> tuple[
         ),
     )
 
-    return graph_schema, sql_schema
+    return schema
 
 
 def transpile(
     cypher: str,
-    graph_schema: SimpleGraphSchemaProvider,
-    sql_schema: SimpleSQLSchemaProvider,
+    schema: SimpleSQLSchemaProvider,
 ) -> str:
     """Transpile a Cypher query to SQL."""
     parser = OpenCypherParser()
     ast = parser.parse(cypher)
-    plan = LogicalPlan.process_query_tree(ast, graph_schema)
+    plan = LogicalPlan.process_query_tree(ast, schema)
     plan.resolve(original_query=cypher)
-    renderer = SQLRenderer(db_schema_provider=sql_schema)
+    renderer = SQLRenderer(db_schema_provider=schema)
     return renderer.render_plan(plan)
 
 
@@ -274,9 +207,9 @@ def main() -> None:
         print(f"Available defaults: {list(DEFAULT_QUERIES.keys())}")
         sys.exit(1)
 
-    # Create schemas and transpile
-    graph_schema, sql_schema = create_default_schema()
-    actual_sql = transpile(cypher, graph_schema, sql_schema)
+    # Create schema and transpile
+    schema = create_default_schema()
+    actual_sql = transpile(cypher, schema)
 
     # Print header
     print(f"{'=' * 60}")

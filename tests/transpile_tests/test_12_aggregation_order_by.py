@@ -6,7 +6,6 @@ or grouping columns with proper ASC/DESC modifiers.
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -36,42 +35,8 @@ class TestAggregationOrderBy:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("age", int),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="City",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="LIVES_IN",
-                source_node_id="Person",
-                sink_node_id="City",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -83,7 +48,7 @@ class TestAggregationOrderBy:
             ),
             SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="City",
                 properties=[
@@ -94,7 +59,7 @@ class TestAggregationOrderBy:
             ),
             SQLTableDescriptor(table_name="graph.City"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="LIVES_IN",
                 source_node_id="Person",
@@ -109,9 +74,9 @@ class TestAggregationOrderBy:
         """Helper to transpile a Cypher query."""
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def test_golden_file_match(self) -> None:

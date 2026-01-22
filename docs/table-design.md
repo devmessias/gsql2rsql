@@ -1,4 +1,4 @@
-# Designing Tables for Graph Queries
+# Making Databricks Delta  Tables Graph Friendly
 
 How to structure your Delta tables to enable graph queries with gsql2rsql.
 

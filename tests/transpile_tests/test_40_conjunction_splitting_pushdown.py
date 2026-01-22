@@ -35,7 +35,6 @@ TEST CASES
 import pytest
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -66,54 +65,9 @@ class TestConjunctionSplittingPushdown:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        # Graph schema with Person, Company, and relationships
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("age", int),
-                    EntityProperty("salary", float),
-                    EntityProperty("active", bool),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Company",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("industry", str),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="WORKS_AT",
-                source_node_id="Person",
-                sink_node_id="Company",
-                source_id_property=EntityProperty("person_id", int),
-                sink_id_property=EntityProperty("company_id", int),
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        # Schema with Person, Company, and relationships
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -127,7 +81,7 @@ class TestConjunctionSplittingPushdown:
             ),
             SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.sql_schema.add_node(
+        self.schema.add_node(
             NodeSchema(
                 name="Company",
                 properties=[
@@ -139,7 +93,7 @@ class TestConjunctionSplittingPushdown:
             ),
             SQLTableDescriptor(table_name="graph.Company"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -149,7 +103,7 @@ class TestConjunctionSplittingPushdown:
             ),
             SQLTableDescriptor(table_name="graph.Knows"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="WORKS_AT",
                 source_node_id="Person",
@@ -163,7 +117,7 @@ class TestConjunctionSplittingPushdown:
     def _get_plan(self, cypher: str, optimize: bool = True) -> LogicalPlan:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
@@ -172,7 +126,7 @@ class TestConjunctionSplittingPushdown:
     def _transpile(self, cypher: str, optimize: bool = True) -> str:
         """Helper to transpile a Cypher query."""
         plan = self._get_plan(cypher, optimize)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         return renderer.render_plan(plan)
 
     def _get_datasources_with_filters(
@@ -468,8 +422,8 @@ class TestPushdownOptimizerStats:
     def setup_method(self) -> None:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -478,16 +432,18 @@ class TestPushdownOptimizerStats:
                     EntityProperty("age", int),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
                 sink_node_id="Person",
                 source_id_property=EntityProperty("source_id", int),
                 sink_id_property=EntityProperty("target_id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="graph.Knows"),
         )
 
     def test_stats_track_pushed_predicates(self) -> None:
@@ -498,7 +454,7 @@ class TestPushdownOptimizerStats:
         RETURN f.name
         """
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         optimizer = SelectionPushdownOptimizer()
@@ -517,7 +473,7 @@ class TestPushdownOptimizerStats:
         RETURN f.name
         """
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         optimizer = SelectionPushdownOptimizer()
@@ -536,7 +492,7 @@ class TestPushdownOptimizerStats:
         RETURN f.name
         """
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         optimizer = SelectionPushdownOptimizer()
@@ -580,30 +536,8 @@ class TestOptionalMatchSafetyCheck:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
-            NodeSchema(
-                name="Person",
-                properties=[
-                    EntityProperty("id", int),
-                    EntityProperty("name", str),
-                    EntityProperty("age", int),
-                ],
-                node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("source_id", int),
-                sink_id_property=EntityProperty("target_id", int),
-            )
-        )
-
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -615,7 +549,7 @@ class TestOptionalMatchSafetyCheck:
             ),
             SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -629,7 +563,7 @@ class TestOptionalMatchSafetyCheck:
     def _get_plan(self, cypher: str, optimize: bool = True) -> LogicalPlan:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
@@ -781,8 +715,8 @@ class TestVolatileFunctionSafetyCheck:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -792,22 +726,24 @@ class TestVolatileFunctionSafetyCheck:
                     EntityProperty("created_at", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
                 sink_node_id="Person",
                 source_id_property=EntityProperty("source_id", int),
                 sink_id_property=EntityProperty("target_id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="graph.Knows"),
         )
 
     def _get_plan(self, cypher: str, optimize: bool = True) -> LogicalPlan:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)
@@ -939,8 +875,8 @@ class TestCorrelatedSubquerySafetyCheck:
         """Set up test fixtures."""
         self.parser = OpenCypherParser()
 
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -949,22 +885,24 @@ class TestCorrelatedSubquerySafetyCheck:
                     EntityProperty("age", int),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="graph.Person"),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
                 sink_node_id="Person",
                 source_id_property=EntityProperty("source_id", int),
                 sink_id_property=EntityProperty("target_id", int),
-            )
+            ),
+            SQLTableDescriptor(table_name="graph.Knows"),
         )
 
     def _get_plan(self, cypher: str, optimize: bool = True) -> LogicalPlan:
         """Helper to get logical plan for a query."""
         ast = self.parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
         if optimize:
             optimize_plan(plan)

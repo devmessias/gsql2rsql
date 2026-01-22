@@ -20,11 +20,11 @@ This project was inspired by Microsoft's [openCypherTranspiler](https://github.c
 **Why a new transpiler?** Two reasons:
 
 1. **Databricks SQL is fundamentally different** from T-SQL — WITH RECURSIVE, HOFs, and Delta Lake optimizations require different strategies
-2. **Security-first architecture** — gsql2rsql uses strict [4-phase separation of concerns](docs/decision-log.md#decision-1-strict-4-phase-separation-of-concerns) for correctness:
+2. **Security-first architecture** — gsql2rsql uses strict [ separation of concerns](docs/decision-log.md#decision-1-strict-4-phase-separation-of-concerns) for correctness:
    - **Parser**: Syntax only (no schema access)
    - **Planner**: Semantics only (builds logical operators)
    - **Resolver**: Validation only (schema checking, column resolution)
-   - **Renderer**: Code generation only (**intentionally "dumb"** — no semantic decisions, just SQL generation)
+   - **Renderer**: Code generation only (**intentionally "dumb"**)
 
 This separation makes the transpiler **easier to audit, test, and trust**
 
@@ -133,20 +133,15 @@ OPTIMIZE edges ZORDER BY (src, relationship_type, dst);
 
 **Advantages**:
 1. **Horizontal scale**: Petabytes, billions of rows, no problem
-2. **Cost-effective**: S3 storage ($0.023/GB) vs RAM ($10+/GB)
+2. **Cost-effective**: S3 storage ($0.0something/GB) vs RAM ($something+/GB)
 3. **Time travel**: Delta Lake versioning = free audit trail
 4. **Schema evolution**: Add properties without downtime
 5. **ACID guarantees**: Delta Lake transactions
-6. **Partition pruning**: `PARTITIONED BY (relationship_type, date)` → skip 90%+ of data
-7. **Z-ordering**: `ZORDER BY (src, relationship_type, dst)` → sub-second lookups
-8. **Liquid clustering**: Auto-tunes for query patterns (DBR 13.3+)
+8. **Liquid clustering**: Auto-tunes for query patterns
 
-**Why partition by `relationship_type`?**
-- Query: `MATCH (a)-[:TRANSACTION]->(b)` → Only scans TRANSACTION partition
-- Without: Scans ALL relationships (TRANSACTION, OWNS, LOCATED_AT, etc.)
-- Impact: **10-100x faster** for queries with specific relationship types
 
-**This is why GraphContext API exists**: When your graph fits this pattern (nodes + edges tables), you don't need 100 lines of schema boilerplate — just 2 table paths and you're done.
+
+**This is why GraphContext API exists**: When your graph fits this pattern (nodes + edges tables), you don't need bunch lines of schema boilerplate — just 2 table paths and you're done.
 
 
 ## LLMs + Transpilers: Enterprise Governance
@@ -221,7 +216,6 @@ sql = graph.transpile(query, optimize=True)  # Predicate pushdown enabled!
 # df.show()
 ```
 
-**Performance tip**: For large graphs with many node/edge types, use `discover_edge_combinations=True` to only create schemas for **actual** edge combinations in your data:
 
 ```python
 graph = GraphContext(
@@ -234,11 +228,6 @@ graph = GraphContext(
 # But only 15 combinations exist → Creates only 15 schemas (33x faster!)
 ```
 
-**Why this works at scale**:
-- **Delta Z-ordering**: `OPTIMIZE edges ZORDER BY (src, edge_type)` → sub-second lookups
-- **Liquid clustering**: Auto-tunes for your query patterns
-- **Predicate pushdown**: Filters applied in DataSource (before joins)
-- **Horizontal scale**: Billions of edges = more partitions = more parallelism
 
 ### Advanced: Manual Schema Setup (Full Control)
 
@@ -250,11 +239,11 @@ For multi-table schemas or when you need precise control over SQL table descript
 from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.renderer.sql_renderer import SQLRenderer
-from gsql2rsql.common.schema import SimpleGraphSchemaProvider, NodeSchema, EdgeSchema, EntityProperty
+from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
-# 1. Define graph schema (for logical planner)
-graph_schema = SimpleGraphSchemaProvider()
+# 1. Define schema (SimpleSQLSchemaProvider)
+schema = SimpleSQLSchemaProvider()
 
 # Person node
 person = NodeSchema(
@@ -267,7 +256,13 @@ person = NodeSchema(
     node_id_property=EntityProperty(property_name="id", data_type=int)
 )
 
-graph_schema.add_node(person)
+schema.add_node(
+    person,
+    SQLTableDescriptor(
+        table_name="fraud.person",  # Databricks catalog.schema.table
+        node_id_columns=["id"],
+    )
+)
 
 # Multiple edge types - we'll only query TRANSACAO_SUSPEITA
 # AMIGOS and FAMILIARES are in the schema but ignored in the query
@@ -301,22 +296,7 @@ transacao_suspeita = EdgeSchema(
     ]
 )
 
-graph_schema.add_edge(amigos)
-graph_schema.add_edge(familiares)
-graph_schema.add_edge(transacao_suspeita)
-
-# 2. Define SQL schema (maps to Delta tables)
-sql_schema = SimpleSQLSchemaProvider()
-
-sql_schema.add_node(
-    person,
-    SQLTableDescriptor(
-        table_name="fraud.person",  # Databricks catalog.schema.table
-        node_id_columns=["id"],
-    )
-)
-
-sql_schema.add_edge(
+schema.add_edge(
     amigos,
     SQLTableDescriptor(
         entity_id="Person@AMIGOS@Person",
@@ -324,7 +304,7 @@ sql_schema.add_edge(
     )
 )
 
-sql_schema.add_edge(
+schema.add_edge(
     familiares,
     SQLTableDescriptor(
         entity_id="Person@FAMILIARES@Person",
@@ -332,7 +312,7 @@ sql_schema.add_edge(
     )
 )
 
-sql_schema.add_edge(
+schema.add_edge(
     transacao_suspeita,
     SQLTableDescriptor(
         entity_id="Person@TRANSACAO_SUSPEITA@Person",
@@ -340,7 +320,7 @@ sql_schema.add_edge(
     )
 )
 
-# 3. BFS Query: Find fraud network up to depth 4 from suspicious root account
+# 2. BFS Query: Find fraud network up to depth 4 from suspicious root account
 # Only traverse TRANSACAO_SUSPEITA edges (ignore AMIGOS and FAMILIARES)
 query = """
 MATCH path = (origem:Person {id: 12345})-[:TRANSACAO_SUSPEITA*1..4]->(destino:Person)
@@ -355,18 +335,18 @@ ORDER BY profundidade, destino.risk_score DESC
 LIMIT 100
 """
 
-# 4. Transpile to SQL with WITH RECURSIVE (for BFS traversal)
+# 3. Transpile to SQL with WITH RECURSIVE (for BFS traversal)
 parser = OpenCypherParser()
-renderer = SQLRenderer(db_schema_provider=sql_schema)
+renderer = SQLRenderer(db_schema_provider=schema)
 
 ast = parser.parse(query)
-plan = LogicalPlan.process_query_tree(ast, graph_schema)
+plan = LogicalPlan.process_query_tree(ast, schema)
 plan.resolve(original_query=query)
 sql = renderer.render_plan(plan)
 
 print(sql)
 
-# 5. Execute on Databricks
+# 4. Execute on Databricks
 # df = spark.sql(sql)
 # df.show(100, truncate=False)
 ```
@@ -437,18 +417,8 @@ This is an **open hobby project** — contributions are very welcome!
 
 MIT License - see [LICENSE](LICENSE).
 
-## Acknowledgments
-
-- Microsoft's [openCypherTranspiler](https://github.com/microsoft/openCypherTranspiler) (T-SQL) for inspiration
-- [OpenCypher](https://opencypher.org/) community for the graph query language
-- [ANTLR](https://www.antlr.org/) for parser generation
-- [Databricks](https://databricks.com/) for Delta Lake + Spark SQL + `WITH RECURSIVE` support
 
 ## Author
 
 **Bruno Messias**
 [LinkedIn](https://www.linkedin.com/in/bruno-messias-510553193/) | [GitHub](https://github.com/devmessias)
-
----
-
-**Status**: Active development | **Version**: 0.1.0 (Alpha) | **Python**: 3.12+

@@ -2,7 +2,6 @@
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import (
-    SimpleGraphSchemaProvider,
     NodeSchema,
     EdgeSchema,
     EntityProperty,
@@ -18,9 +17,8 @@ class TestSingleHopRelationship:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        # Graph schema
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -28,29 +26,13 @@ class TestSingleHopRelationship:
                     EntityProperty("name", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
-        )
-        self.graph_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Person",
-                node_id_property=EntityProperty("id", int),
             ),
             SQLTableDescriptor(
                 table_name="dbo.Person",
                 node_id_columns=["id"],
             ),
         )
-        self.sql_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -69,9 +51,9 @@ class TestSingleHopRelationship:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should have JOIN (connecting Person to Knows to Person)
@@ -90,9 +72,9 @@ class TestSingleHopRelationship:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should have JOIN keywords

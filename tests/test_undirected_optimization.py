@@ -11,7 +11,6 @@ from gsql2rsql.common.schema import (
     NodeSchema,
     EdgeSchema,
     EntityProperty,
-    SimpleGraphSchemaProvider,
 )
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
@@ -24,9 +23,9 @@ class TestUndirectedJoinOptimization:
 
     def setup_method(self) -> None:
         """Set up test fixtures with undirected relationship."""
-        # Graph schema: Person -[:KNOWS]- Person
-        self.graph_schema = SimpleGraphSchemaProvider()
-        self.graph_schema.add_node(
+        # SQL schema (includes graph schema information)
+        self.schema = SimpleSQLSchemaProvider()
+        self.schema.add_node(
             NodeSchema(
                 name="Person",
                 properties=[
@@ -34,9 +33,13 @@ class TestUndirectedJoinOptimization:
                     EntityProperty("name", str),
                 ],
                 node_id_property=EntityProperty("id", int),
-            )
+            ),
+            SQLTableDescriptor(
+                table_name="graph.Person",
+                node_id_columns=["id"],
+            ),
         )
-        self.graph_schema.add_edge(
+        self.schema.add_edge(
             EdgeSchema(
                 name="KNOWS",
                 source_node_id="Person",
@@ -44,28 +47,6 @@ class TestUndirectedJoinOptimization:
                 source_id_property=EntityProperty("person_id", int),
                 sink_id_property=EntityProperty("friend_id", int),
                 properties=[EntityProperty("since", int)],
-            )
-        )
-
-        # SQL schema
-        self.sql_schema = SimpleSQLSchemaProvider()
-        self.sql_schema.add_node(
-            NodeSchema(
-                name="Person",
-                node_id_property=EntityProperty("id", int),
-            ),
-            SQLTableDescriptor(
-                table_name="graph.Person",
-                node_id_columns=["id"],
-            ),
-        )
-        self.sql_schema.add_edge(
-            EdgeSchema(
-                name="KNOWS",
-                source_node_id="Person",
-                sink_node_id="Person",
-                source_id_property=EntityProperty("person_id", int),
-                sink_id_property=EntityProperty("friend_id", int),
             ),
             SQLTableDescriptor(table_name="graph.Knows"),
         )
@@ -87,11 +68,11 @@ class TestUndirectedJoinOptimization:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         # Render with default config (optimization enabled)
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # TDD: These assertions will fail until implementation
@@ -111,12 +92,12 @@ class TestUndirectedJoinOptimization:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
         # Render with optimization disabled
         renderer = SQLRenderer(
-            db_schema_provider=self.sql_schema,
+            db_schema_provider=self.schema,
             config={"undirected_strategy": "or_join"},
         )
         sql = renderer.render_plan(plan)
@@ -142,10 +123,10 @@ class TestUndirectedJoinOptimization:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Directed joins should NOT have UNION ALL
@@ -170,10 +151,10 @@ class TestUndirectedJoinOptimization:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should have UNION ALL with edge properties in both branches
@@ -200,10 +181,10 @@ class TestUndirectedJoinOptimization:
 
         parser = OpenCypherParser()
         ast = parser.parse(cypher)
-        plan = LogicalPlan.process_query_tree(ast, self.graph_schema)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        renderer = SQLRenderer(db_schema_provider=self.sql_schema)
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should have UNION ALL (possibly multiple for each hop)
