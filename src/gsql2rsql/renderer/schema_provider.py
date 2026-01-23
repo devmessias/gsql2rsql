@@ -514,8 +514,27 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         return results
 
     def get_sql_table_descriptors(self, entity_name: str) -> SQLTableDescriptor | None:
-        """Get the SQL table descriptor for an entity."""
-        return self._table_descriptors.get(entity_name)
+        """Get the SQL table descriptor for an entity.
+
+        Also handles wildcard nodes and edges - if the entity_name contains
+        the wildcard type, falls back to the wildcard table descriptor.
+        """
+        from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
+
+        # Standard lookup
+        result = self._table_descriptors.get(entity_name)
+        if result is not None:
+            return result
+
+        # Fallback: check for wildcard edge (e.g., __wildcard_node__@__wildcard_edge__@__wildcard_node__)
+        if WILDCARD_EDGE_TYPE in entity_name:
+            return self.get_wildcard_edge_table_descriptor()
+
+        # Fallback: check for wildcard node
+        if entity_name == WILDCARD_NODE_TYPE:
+            return self.get_wildcard_table_descriptor()
+
+        return None
 
     def find_edge_by_verb(
         self, verb: str, target_node_name: str | None = None

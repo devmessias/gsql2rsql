@@ -1441,22 +1441,34 @@ class LogicalPlan:
         return current_op
 
     def _determine_join_pair_type(self, rel: RelationshipEntity) -> JoinKeyPairType:
-        """Determine the join pair type for a relationship's source."""
+        """Determine the join pair type for a relationship's source node.
+
+        For undirected relationships, returns EITHER_AS_SOURCE to signal that:
+        1. This is an undirected relationship (needs UNION ALL expansion)
+        2. This node is on the source side (should join on source_key after UNION)
+        """
         if rel.direction == RelationshipDirection.FORWARD:
             return JoinKeyPairType.SOURCE
         elif rel.direction == RelationshipDirection.BACKWARD:
             return JoinKeyPairType.SINK
         else:
-            return JoinKeyPairType.EITHER
+            # Undirected: source-side node joins on source after UNION expansion
+            return JoinKeyPairType.EITHER_AS_SOURCE
 
     def _determine_sink_join_type(self, rel: RelationshipEntity) -> JoinKeyPairType:
-        """Determine the join pair type for a relationship's sink."""
+        """Determine the join pair type for a relationship's sink node.
+
+        For undirected relationships, returns EITHER_AS_SINK to signal that:
+        1. This is an undirected relationship (needs UNION ALL expansion)
+        2. This node is on the sink side (should join on sink_key after UNION)
+        """
         if rel.direction == RelationshipDirection.FORWARD:
             return JoinKeyPairType.SINK
         elif rel.direction == RelationshipDirection.BACKWARD:
             return JoinKeyPairType.SOURCE
         else:
-            return JoinKeyPairType.EITHER
+            # Undirected: sink-side node joins on sink after UNION expansion
+            return JoinKeyPairType.EITHER_AS_SINK
 
     def _create_infix_query_tree(
         self, query_node: InfixQueryNode, all_ops: list[LogicalOperator]

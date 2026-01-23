@@ -481,9 +481,14 @@ class JoinKeyPairType(Enum):
     NONE = auto()
     SOURCE = auto()  # Node join to Relationship's SourceId
     SINK = auto()  # Node join to Relationship's SinkId
-    EITHER = auto()  # Node can join either source or sink
+    EITHER = auto()  # Node can join either source or sink (legacy, for VLP)
     BOTH = auto()  # Node joins both source and sink
     NODE_ID = auto()  # Node to node join
+    # For undirected single-hop with UNION ALL expansion:
+    # - EITHER_AS_SOURCE: source-side node joins on source_key after UNION
+    # - EITHER_AS_SINK: sink-side node joins on sink_key after UNION
+    EITHER_AS_SOURCE = auto()
+    EITHER_AS_SINK = auto()
 
 
 @dataclass

@@ -488,8 +488,13 @@ class SQLRenderer:
                                 rel_alias, rel_field.node_join_field.field_alias
                             )
                         self._required_columns.add(rel_key)
-                elif pair.pair_type in (JoinKeyPairType.EITHER, JoinKeyPairType.BOTH):
-                    # EITHER/BOTH - need both source and sink keys
+                elif pair.pair_type in (
+                    JoinKeyPairType.EITHER,
+                    JoinKeyPairType.BOTH,
+                    JoinKeyPairType.EITHER_AS_SOURCE,
+                    JoinKeyPairType.EITHER_AS_SINK,
+                ):
+                    # Undirected or BOTH - need both source and sink keys
                     if rel_field.rel_source_join_field:
                         # Use pre-rendered field name if available (varlen paths)
                         if rel_field.rel_source_join_field.field_name and rel_field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
@@ -1858,9 +1863,13 @@ class SQLRenderer:
         if self._undirected_strategy != "union_edges":
             return False
 
-        # Check if any join pair is EITHER type (undirected relationship)
+        # Check if any join pair is undirected (EITHER, EITHER_AS_SOURCE, or EITHER_AS_SINK)
         return any(
-            pair.pair_type == JoinKeyPairType.EITHER
+            pair.pair_type in (
+                JoinKeyPairType.EITHER,
+                JoinKeyPairType.EITHER_AS_SOURCE,
+                JoinKeyPairType.EITHER_AS_SINK,
+            )
             for pair in op.join_pairs
         )
 
@@ -1961,6 +1970,11 @@ class SQLRenderer:
             if f.field_alias not in skip_fields
         ]
 
+        # Build WHERE clause from table filter (e.g., relationship_type = 'DEFRAUDED')
+        where_clause = ""
+        if table_desc.filter:
+            where_clause = f"\n{indent}WHERE {table_desc.filter}"
+
         # ========== FORWARD DIRECTION: source -> sink ==========
         # For edge (Alice)-[:KNOWS]->(Bob), this branch represents:
         #   Alice as source, Bob as sink (original direction)
@@ -1981,7 +1995,7 @@ class SQLRenderer:
                 f"{self._get_field_name(alias, prop_col)}"
             )
         lines.append(f"{indent}FROM")
-        lines.append(f"{indent}  {table_name}")
+        lines.append(f"{indent}  {table_name}{where_clause}")
 
         # ========== UNION ALL: Combine both directions ==========
         lines.append(f"{indent}UNION ALL")
@@ -2007,7 +2021,7 @@ class SQLRenderer:
                 f"{self._get_field_name(alias, prop_col)}"
             )
         lines.append(f"{indent}FROM")
-        lines.append(f"{indent}  {table_name}")
+        lines.append(f"{indent}  {table_name}{where_clause}")
 
         return "\n".join(lines)
 
@@ -2492,8 +2506,46 @@ class SQLRenderer:
                                 else "id"
                             ),
                         )
+                elif pair.pair_type in (JoinKeyPairType.EITHER_AS_SOURCE, JoinKeyPairType.EITHER_AS_SINK):
+                    # Undirected relationship with explicit source/sink position
+                    # Get both keys for potential OR fallback
+                    source_key = None
+                    sink_key = None
+
+                    if rel_field.rel_source_join_field:
+                        if rel_field.rel_source_join_field.field_name and rel_field.rel_source_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            source_key = rel_field.rel_source_join_field.field_name
+                        else:
+                            source_key = self._get_field_name(
+                                rel_alias, rel_field.rel_source_join_field.field_alias
+                            )
+                    if rel_field.rel_sink_join_field:
+                        if rel_field.rel_sink_join_field.field_name and rel_field.rel_sink_join_field.field_name.startswith(self.COLUMN_PREFIX):
+                            sink_key = rel_field.rel_sink_join_field.field_name
+                        else:
+                            sink_key = self._get_field_name(
+                                rel_alias, rel_field.rel_sink_join_field.field_alias
+                            )
+
+                    if self._undirected_strategy == "union_edges":
+                        # OPTIMIZED: UNION ALL expansion - use appropriate key
+                        if pair.pair_type == JoinKeyPairType.EITHER_AS_SOURCE:
+                            rel_key = source_key or self._get_field_name(rel_alias, "source_id")
+                        else:  # EITHER_AS_SINK
+                            rel_key = sink_key or self._get_field_name(rel_alias, "sink_id")
+                    else:
+                        # LEGACY: OR condition for compatibility
+                        if source_key and sink_key:
+                            conditions.append(
+                                f"({node_var}.{node_key} = {rel_var}.{source_key} "
+                                f"OR {node_var}.{node_key} = {rel_var}.{sink_key})"
+                            )
+                            continue
+                        else:
+                            # Fallback to available key
+                            rel_key = source_key or sink_key or self._get_field_name(rel_alias, "id")
                 else:
-                    # EITHER - undirected relationship (both directions match)
+                    # EITHER/BOTH - legacy undirected handling (for VLP and backwards compatibility)
                     # For Cypher: (a)-[:REL]-(b) matches both (a)-[:REL]->(b) and (a)<-[:REL]-(b)
                     source_key = None
                     sink_key = None
