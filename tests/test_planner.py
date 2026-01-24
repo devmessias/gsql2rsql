@@ -30,7 +30,7 @@ class TestSchema:
         """Test adding a value field."""
         schema = Schema()
         field = ValueField(field_alias="count", data_type=int)
-        schema.add_field(field)
+        schema.append(field)
 
         assert len(schema.fields) == 1
         assert schema.get_field("count") is field
@@ -39,7 +39,7 @@ class TestSchema:
         """Test adding an entity field."""
         schema = Schema()
         field = EntityField(field_alias="p", entity_name="Person")
-        schema.add_field(field)
+        schema.append(field)
 
         assert len(schema.fields) == 1
         result = schema.get_field("p")
@@ -50,10 +50,10 @@ class TestSchema:
     def test_merge_schemas(self) -> None:
         """Test merging two schemas."""
         schema1 = Schema()
-        schema1.add_field(ValueField(field_alias="a", data_type=str))
+        schema1.append(ValueField(field_alias="a", data_type=str))
 
         schema2 = Schema()
-        schema2.add_field(ValueField(field_alias="b", data_type=int))
+        schema2.append(ValueField(field_alias="b", data_type=int))
 
         merged = Schema.merge(schema1, schema2)
 

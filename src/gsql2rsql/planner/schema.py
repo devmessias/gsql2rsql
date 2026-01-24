@@ -17,7 +17,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gsql2rsql.planner.data_types import DataType, StructType
@@ -36,11 +36,6 @@ class Field(ABC):
     @abstractmethod
     def clone(self) -> Field:
         """Create a deep copy of this field."""
-        ...
-
-    @abstractmethod
-    def copy_from(self, other: Field) -> None:
-        """Copy information from another field (except alias)."""
         ...
 
 
@@ -89,14 +84,6 @@ class ValueField(Field):
             structured_type=self.structured_type.clone() if self.structured_type else None,
         )
 
-    def copy_from(self, other: Field) -> None:
-        if isinstance(other, ValueField):
-            self.field_name = other.field_name
-            self.data_type = other.data_type
-            self.structured_type = (
-                other.structured_type.clone() if other.structured_type else None
-            )
-
     def get_element_struct(self) -> "StructType | None":
         """Get the element struct type if this is an array of structs.
 
@@ -119,18 +106,6 @@ class ValueField(Field):
         if isinstance(self.structured_type, ArrayType):
             return self.structured_type.get_element_struct()
         return None
-
-    def is_array_type(self) -> bool:
-        """Check if this field has an array type.
-
-        Returns:
-            True if structured_type is ArrayType
-        """
-        if self.structured_type is None:
-            # Fallback to checking Python type
-            return self.data_type is list
-        from gsql2rsql.planner.data_types import ArrayType
-        return isinstance(self.structured_type, ArrayType)
 
     def __str__(self) -> str:
         if self.structured_type:
@@ -184,36 +159,6 @@ class EntityField(Field):
             _referenced_field_names=set(self._referenced_field_names),
         )
 
-    def copy_from(self, other: Field) -> None:
-        if isinstance(other, EntityField):
-            self.entity_name = other.entity_name
-            self.entity_type = other.entity_type
-            self.bound_entity_name = other.bound_entity_name
-            self.bound_source_entity_name = other.bound_source_entity_name
-            self.bound_sink_entity_name = other.bound_sink_entity_name
-            self.bound_edge_types = list(other.bound_edge_types)
-            self.node_join_field = (
-                other.node_join_field.clone() if other.node_join_field else None
-            )
-            self.rel_source_join_field = (
-                other.rel_source_join_field.clone() if other.rel_source_join_field else None
-            )
-            self.rel_sink_join_field = (
-                other.rel_sink_join_field.clone() if other.rel_sink_join_field else None
-            )
-            self.encapsulated_fields = [f.clone() for f in other.encapsulated_fields]
-            self._referenced_field_names = set(other._referenced_field_names)
-
-    @property
-    def referenced_field_aliases(self) -> set[str]:
-        """Get the set of referenced field names."""
-        return self._referenced_field_names
-
-    def add_reference_field_names(self, names: list[str] | None) -> None:
-        """Add field names to the referenced set."""
-        if names:
-            self._referenced_field_names.update(names)
-
     def __str__(self) -> str:
         type_str = "Node" if self.entity_type == EntityType.NODE else "Rel"
         return f"{self.field_alias}: {self.entity_name} ({type_str})"
@@ -230,10 +175,6 @@ class Schema(list[Field]):
     def fields(self) -> list[Field]:
         """Get all fields in the schema as a list."""
         return list(self)
-
-    def add_field(self, field: Field) -> None:
-        """Add a field to the schema."""
-        self.append(field)
 
     def clone(self) -> Schema:
         """Create a deep copy of this schema."""
@@ -256,73 +197,5 @@ class Schema(list[Field]):
                 return f
         return None
 
-    def get_entity_fields(self) -> Iterator[EntityField]:
-        """Get all entity fields."""
-        for f in self:
-            if isinstance(f, EntityField):
-                yield f
-
-    def get_value_fields(self) -> Iterator[ValueField]:
-        """Get all value fields."""
-        for f in self:
-            if isinstance(f, ValueField):
-                yield f
-
     def __str__(self) -> str:
         return f"Schema({', '.join(str(f) for f in self)})"
-
-    def get_array_element_struct(self, alias: str) -> "StructType | None":
-        """Get the element struct type for an array field.
-
-        This is the key method for resolving lambda variable bindings in
-        list comprehensions. Given [n IN array_expr | n.prop], this method
-        returns the StructType that describes what 'n' looks like.
-
-        AUTHORITATIVE DESIGN:
-        ---------------------
-        This method queries the schema for authoritative type information.
-        If the field does not have a structured_type or is not an array
-        of structs, it returns None (fail-fast, no guessing).
-
-        Args:
-            alias: The field alias (e.g., 'path' for nodes(path))
-
-        Returns:
-            StructType if the field is an array of structs, None otherwise
-
-        Example:
-            schema = operator.get_output_scope()
-            # For [n IN nodes(path) | n.id]
-            element_struct = schema.get_array_element_struct('path')
-            if element_struct is None:
-                raise Error("Cannot resolve: element type unknown")
-            # element_struct has field 'id' -> resolve n.id
-        """
-        field = self.get_field(alias)
-        if field is None:
-            return None
-        if isinstance(field, ValueField):
-            return field.get_element_struct()
-        return None
-
-    def has_authoritative_type(self, alias: str) -> bool:
-        """Check if a field has authoritative type information.
-
-        A field has authoritative type info if it has a structured_type set.
-        This is used to determine if schema-based resolution is possible.
-
-        Args:
-            alias: The field alias to check
-
-        Returns:
-            True if the field exists and has structured_type set
-        """
-        field = self.get_field(alias)
-        if field is None:
-            return False
-        if isinstance(field, ValueField):
-            return field.structured_type is not None
-        # EntityField always has authoritative type info via encapsulated_fields
-        if isinstance(field, EntityField):
-            return True
-        return False

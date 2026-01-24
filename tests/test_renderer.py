@@ -216,8 +216,8 @@ class TestSchemaRendering:
         schema = Schema()
         field1 = ValueField(field_alias="name", data_type=str)
         field2 = EntityField(field_alias="p", entity_name="Person")
-        schema.add_field(field1)
-        schema.add_field(field2)
+        schema.append(field1)
+        schema.append(field2)
 
         result = schema.get_field("name")
         assert result is field1
