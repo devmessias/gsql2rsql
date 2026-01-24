@@ -2,6 +2,34 @@
 
 
 
+## v0.7.0 (2026-01-24)
+
+### Feature
+
+* feat: undirected type edges ([`63f6179`](https://github.com/devmessias/gsql2rsql/commit/63f6179b7b3239f73c5cf7e7d090a13390812b67))
+
+### Fix
+
+* fix: edge strategy ([`ec99391`](https://github.com/devmessias/gsql2rsql/commit/ec9939172911b8793c307dc66bd801d6c3970ffd))
+
+### Refactor
+
+* refactor: logical plan ([`139dde3`](https://github.com/devmessias/gsql2rsql/commit/139dde314bad25eaf99e8d335790838f8426c917))
+
+* refactor: make renderer dumber ([`92d32be`](https://github.com/devmessias/gsql2rsql/commit/92d32be4d7564807c83e2f6a7d24c82b11bf4c3c))
+
+### Unknown
+
+* tests: comprehensive tests for single-hop and undirected traversal in PySpark
+
+- Implemented tests for directed and undirected single-hop traversal patterns using real data verification.
+- Created a test graph with nodes and edges to validate directed and undirected relationships.
+- Added tests for various traversal scenarios including directed, undirected, and untyped relationships.
+- Developed tests to compare directed vs undirected results and validate edge properties.
+- Introduced undirected traversal tests on a directed graph, ensuring correct reachability and path validation.
+- Validated undirected subgraph extraction and connected components in the graph. ([`d0b7d0a`](https://github.com/devmessias/gsql2rsql/commit/d0b7d0a7673f5c455017cf88b9aec8a9332b9d1c))
+
+
 ## v0.6.0 (2026-01-22)
 
 ### Feature
