@@ -2,6 +2,33 @@
 
 
 
+## v0.7.1 (2026-01-24)
+
+### Documentation
+
+* docs: update Databricks benefits and remove redundant explanation ([`2e681e7`](https://github.com/devmessias/gsql2rsql/commit/2e681e726d56404d239828fb36e1648173446976))
+
+### Fix
+
+* fix: mypy and some pyright captured errors ([`d01b6a3`](https://github.com/devmessias/gsql2rsql/commit/d01b6a329e65172cced7710c9b939de8a23bb360))
+
+### Refactor
+
+* refactor: remove dead code and unused imports ([`03b7a2b`](https://github.com/devmessias/gsql2rsql/commit/03b7a2b50e10c5b22cabac65b8095c2de94d5100))
+
+* refactor:  quebra bind de nos e relacoes  reduzir carga cognitiva ([`44f7cba`](https://github.com/devmessias/gsql2rsql/commit/44f7cbac7c0e302bf0e3a45b6fc9c5b9ddcd26c2))
+
+* refactor: remove deprecated type conversion helper functions ([`116e60f`](https://github.com/devmessias/gsql2rsql/commit/116e60f113f2cfe7213481f270f430991bf5c369))
+
+* refactor: adjust types mypy/pyright compatibility ([`9b4e1c6`](https://github.com/devmessias/gsql2rsql/commit/9b4e1c617b1424739e0d7051c86d4cbf5b3f3b9b))
+
+### Unknown
+
+* tests: parallel execution ([`81c8d95`](https://github.com/devmessias/gsql2rsql/commit/81c8d953885c8b05a1f582b9e232c6d83fa638ce))
+
+* tests: includes pyright ([`d39746d`](https://github.com/devmessias/gsql2rsql/commit/d39746dff3d1b290681ee64b5aa7b8ee5a53f0a0))
+
+
 ## v0.7.0 (2026-01-24)
 
 ### Feature
