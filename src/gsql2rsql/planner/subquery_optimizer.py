@@ -297,7 +297,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from gsql2rsql.parser.ast import QueryExpression, QueryExpressionBinary
+from gsql2rsql.parser.ast import QueryExpression, QueryExpressionBinary, QueryExpressionProperty
 from gsql2rsql.parser.operators import (
     BinaryOperator,
     BinaryOperatorInfo,
@@ -387,7 +387,7 @@ class SubqueryFlatteningOptimizer:
         visited: set[int] = set()
         count = 0
         for start_op in plan.starting_operators:
-            for op in start_op.get_all_downstream_operators(LogicalOperator):
+            for op in start_op.get_all_downstream_operators(LogicalOperator):  # type: ignore[type-abstract]
                 if id(op) not in visited:
                     visited.add(id(op))
                     count += 1
@@ -481,15 +481,15 @@ class SubqueryFlatteningOptimizer:
         3. Updates operator graph references
 
         BEFORE:
-            Projection._in_operators = [Selection]
-            Selection._out_operators = [Projection]
-            Selection._in_operators = [SomeOp]
-            SomeOp._out_operators = [Selection]
+            Projection.graph_in_operators = [Selection]
+            Selection.graph_out_operators = [Projection]
+            Selection.graph_in_operators = [SomeOp]
+            SomeOp.graph_out_operators = [Selection]
 
         AFTER:
-            Projection._in_operators = [SomeOp]
+            Projection.graph_in_operators = [SomeOp]
             Projection.filter_expression = Selection.filter_expression
-            SomeOp._out_operators = [Projection]  # Selection removed
+            SomeOp.graph_out_operators = [Projection]  # Selection removed
             Selection is orphaned (no references)
         """
         # Get the operator that was feeding into Selection
@@ -502,19 +502,19 @@ class SubqueryFlatteningOptimizer:
 
         # Rewire the graph:
         # 1. Remove Selection from its input's out_operators
-        if selection in selection_input._out_operators:
-            selection_input._out_operators.remove(selection)
+        if selection in selection_input.graph_out_operators:
+            selection_input.graph_out_operators.remove(selection)
 
         # 2. Add Projection to input's out_operators
-        if projection not in selection_input._out_operators:
-            selection_input._out_operators.append(projection)
+        if projection not in selection_input.graph_out_operators:
+            selection_input.graph_out_operators.append(projection)
 
         # 3. Update Projection's in_operators to point to Selection's input
-        projection._in_operators = [selection_input]
+        projection.graph_in_operators = [selection_input]
 
         # 4. Clear Selection's references (orphan it)
-        selection._in_operators = []
-        selection._out_operators = []
+        selection.graph_in_operators = []
+        selection.graph_out_operators = []
 
         # Update stats
         self.stats.selection_into_projection += 1
@@ -575,11 +575,11 @@ class SubqueryFlatteningOptimizer:
         """Merge two consecutive SelectionOperators by ANDing their filters.
 
         BEFORE:
-            OuterSelection(filter=B)._in_operators = [InnerSelection]
-            InnerSelection(filter=A)._in_operators = [SomeOp]
+            OuterSelection(filter=B).graph_in_operators = [InnerSelection]
+            InnerSelection(filter=A).graph_in_operators = [SomeOp]
 
         AFTER:
-            OuterSelection(filter=A AND B)._in_operators = [SomeOp]
+            OuterSelection(filter=A AND B).graph_in_operators = [SomeOp]
             InnerSelection is orphaned
         """
         inner_input = inner_sel.in_operator
@@ -598,19 +598,19 @@ class SubqueryFlatteningOptimizer:
 
         # Rewire the graph:
         # 1. Remove InnerSelection from its input's out_operators
-        if inner_sel in inner_input._out_operators:
-            inner_input._out_operators.remove(inner_sel)
+        if inner_sel in inner_input.graph_out_operators:
+            inner_input.graph_out_operators.remove(inner_sel)
 
         # 2. Add OuterSelection to input's out_operators
-        if outer_sel not in inner_input._out_operators:
-            inner_input._out_operators.append(outer_sel)
+        if outer_sel not in inner_input.graph_out_operators:
+            inner_input.graph_out_operators.append(outer_sel)
 
         # 3. Update OuterSelection's in_operators to point to InnerSelection's input
-        outer_sel._in_operators = [inner_input]
+        outer_sel.graph_in_operators = [inner_input]
 
         # 4. Clear InnerSelection's references (orphan it)
-        inner_sel._in_operators = []
-        inner_sel._out_operators = []
+        inner_sel.graph_in_operators = []
+        inner_sel.graph_out_operators = []
 
         # Update stats
         self.stats.selection_into_selection += 1
@@ -809,7 +809,7 @@ class SelectionPushdownOptimizer:
         # Collect all operators
         all_operators: list[LogicalOperator] = []
         for start_op in plan.starting_operators:
-            for op in start_op.get_all_downstream_operators(LogicalOperator):
+            for op in start_op.get_all_downstream_operators(LogicalOperator):  # type: ignore[type-abstract]
                 if op not in all_operators:
                     all_operators.append(op)
 
@@ -1094,7 +1094,7 @@ class SelectionPushdownOptimizer:
     def _collect_property_references(
         self,
         expr: QueryExpression,
-    ) -> list:
+    ) -> list[QueryExpressionProperty]:
         """Collect all property references from an expression tree.
 
         Args:
@@ -1114,7 +1114,7 @@ class SelectionPushdownOptimizer:
             QueryExpressionWithAlias,
         )
 
-        properties: list = []
+        properties: list[QueryExpressionProperty] = []
 
         if isinstance(expr, QueryExpressionProperty):
             properties.append(expr)
@@ -1143,8 +1143,8 @@ class SelectionPushdownOptimizer:
         elif isinstance(expr, QueryExpressionListPredicate):
             if expr.list_expression:
                 properties.extend(self._collect_property_references(expr.list_expression))
-            if expr.predicate_expression:
-                properties.extend(self._collect_property_references(expr.predicate_expression))
+            if expr.filter_expression:
+                properties.extend(self._collect_property_references(expr.filter_expression))
         elif isinstance(expr, QueryExpressionWithAlias):
             if expr.inner_expression:
                 properties.extend(self._collect_property_references(expr.inner_expression))
@@ -1513,7 +1513,7 @@ class SelectionPushdownOptimizer:
             return False
 
         # Check all downstream operators
-        for out_op in current._out_operators:
+        for out_op in current.graph_out_operators:
             if isinstance(out_op, JoinOperator):
                 if out_op.join_type == JoinType.LEFT:
                     # Check if we're coming from the RIGHT (optional) side
@@ -1574,7 +1574,7 @@ class SelectionPushdownOptimizer:
             True if ancestor is upstream of descendant.
         """
         # Check all inputs of descendant
-        for in_op in descendant._in_operators:
+        for in_op in descendant.graph_in_operators:
             if in_op is ancestor:
                 return True
             if self._is_ancestor_of(ancestor, in_op):
@@ -1605,7 +1605,7 @@ class SelectionPushdownOptimizer:
         if start is target:
             return True
 
-        for out_op in start._out_operators:
+        for out_op in start.graph_out_operators:
             if self._can_reach_operator(out_op, target, visited):
                 return True
 
@@ -1624,12 +1624,12 @@ class SelectionPushdownOptimizer:
             True if the DataSource is part of a recursive path pattern.
         """
         # Check all downstream operators
-        for out_op in ds._out_operators:
+        for out_op in ds.graph_out_operators:
             if isinstance(out_op, RecursiveTraversalOperator):
                 return True
             if isinstance(out_op, JoinOperator):
                 # Check if the join's other input is a RecursiveTraversalOperator
-                for in_op in out_op._in_operators:
+                for in_op in out_op.graph_in_operators:
                     if isinstance(in_op, RecursiveTraversalOperator):
                         return True
                     # Also check for joins that have recursive as ancestor
@@ -1648,7 +1648,7 @@ class SelectionPushdownOptimizer:
         """
         if isinstance(op, RecursiveTraversalOperator):
             return True
-        for in_op in op._in_operators:
+        for in_op in op.graph_in_operators:
             if self._has_recursive_ancestor(in_op):
                 return True
         return False
@@ -1666,23 +1666,23 @@ class SelectionPushdownOptimizer:
             return
 
         # Connect in_op directly to all of selection's out_operators
-        for out_op in selection._out_operators:
+        for out_op in selection.graph_out_operators:
             # Update out_op's in_operators to point to in_op
-            if selection in out_op._in_operators:
-                idx = out_op._in_operators.index(selection)
-                out_op._in_operators[idx] = in_op
+            if selection in out_op.graph_in_operators:
+                idx = out_op.graph_in_operators.index(selection)
+                out_op.graph_in_operators[idx] = in_op
 
             # Add out_op to in_op's out_operators
-            if out_op not in in_op._out_operators:
-                in_op._out_operators.append(out_op)
+            if out_op not in in_op.graph_out_operators:
+                in_op.graph_out_operators.append(out_op)
 
         # Remove selection from in_op's out_operators
-        if selection in in_op._out_operators:
-            in_op._out_operators.remove(selection)
+        if selection in in_op.graph_out_operators:
+            in_op.graph_out_operators.remove(selection)
 
         # Orphan the selection
-        selection._in_operators = []
-        selection._out_operators = []
+        selection.graph_in_operators = []
+        selection.graph_out_operators = []
 
 
 def optimize_plan(

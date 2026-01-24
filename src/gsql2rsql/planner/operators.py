@@ -44,13 +44,25 @@ class LogicalOperator(ABC):
     Base class for logical operators in the query plan.
 
     The logical plan is a DAG (directed acyclic graph) of logical operators.
+
+    Note on public graph structure attributes:
+        `graph_in_operators` and `graph_out_operators` are intentionally public
+        (not prefixed with `_`) because the SubqueryOptimizer needs direct access
+        to rewire the operator graph during optimization passes. This includes:
+        - Removing operators from the graph
+        - Replacing connections between operators
+        - Orphaning flattened operators
+
+        If you need read-only access, prefer using `in_operators` and `out_operators`
+        properties. Direct mutation should only be done by optimizer code.
     """
 
     input_schema: Schema = field(default_factory=Schema)
     output_schema: Schema = field(default_factory=Schema)
     operator_debug_id: int = 0
-    _in_operators: list[LogicalOperator] = field(default_factory=list)
-    _out_operators: list[LogicalOperator] = field(default_factory=list)
+    # Public for optimizer rewiring - see class docstring
+    graph_in_operators: list[LogicalOperator] = field(default_factory=list)
+    graph_out_operators: list[LogicalOperator] = field(default_factory=list)
 
     @property
     @abstractmethod
@@ -60,25 +72,25 @@ class LogicalOperator(ABC):
 
     @property
     def in_operators(self) -> list[LogicalOperator]:
-        """Upstream operators."""
-        return self._in_operators
+        """Upstream operators (read-only access preferred)."""
+        return self.graph_in_operators
 
     @property
     def out_operators(self) -> list[LogicalOperator]:
-        """Downstream operators."""
-        return self._out_operators
+        """Downstream operators (read-only access preferred)."""
+        return self.graph_out_operators
 
     def add_in_operator(self, op: LogicalOperator) -> None:
         """Add an upstream operator."""
-        if op in self._in_operators:
+        if op in self.graph_in_operators:
             raise TranspilerInternalErrorException(f"Operator {op} already added")
-        self._in_operators.append(op)
+        self.graph_in_operators.append(op)
 
     def add_out_operator(self, op: LogicalOperator) -> None:
         """Add a downstream operator."""
-        if op in self._out_operators:
+        if op in self.graph_out_operators:
             raise TranspilerInternalErrorException(f"Operator {op} already added")
-        self._out_operators.append(op)
+        self.graph_out_operators.append(op)
 
     def get_all_downstream_operators[T: LogicalOperator](
         self, op_type: type[T]
@@ -86,7 +98,7 @@ class LogicalOperator(ABC):
         """Get all downstream operators of a specific type."""
         if isinstance(self, op_type):
             yield self
-        for out_op in self._out_operators:
+        for out_op in self.graph_out_operators:
             yield from out_op.get_all_downstream_operators(op_type)
 
     def get_all_upstream_operators[T: LogicalOperator](
@@ -95,7 +107,7 @@ class LogicalOperator(ABC):
         """Get all upstream operators of a specific type."""
         if isinstance(self, op_type):
             yield self
-        for in_op in self._in_operators:
+        for in_op in self.graph_in_operators:
             yield from in_op.get_all_upstream_operators(op_type)
 
     def propagate_data_types_for_in_schema(self) -> None:
@@ -188,11 +200,11 @@ class UnaryLogicalOperator(LogicalOperator):
     @property
     def in_operator(self) -> LogicalOperator | None:
         """Get the single input operator."""
-        return self._in_operators[0] if self._in_operators else None
+        return self.graph_in_operators[0] if self.graph_in_operators else None
 
     def set_in_operator(self, op: LogicalOperator) -> None:
         """Set the input operator."""
-        self._in_operators = [op]
+        self.graph_in_operators = [op]
         op.add_out_operator(self)
 
 
@@ -203,16 +215,16 @@ class BinaryLogicalOperator(LogicalOperator):
     @property
     def in_operator_left(self) -> LogicalOperator | None:
         """Get the left input operator."""
-        return self._in_operators[0] if len(self._in_operators) > 0 else None
+        return self.graph_in_operators[0] if len(self.graph_in_operators) > 0 else None
 
     @property
     def in_operator_right(self) -> LogicalOperator | None:
         """Get the right input operator."""
-        return self._in_operators[1] if len(self._in_operators) > 1 else None
+        return self.graph_in_operators[1] if len(self.graph_in_operators) > 1 else None
 
     def set_in_operators(self, left: LogicalOperator, right: LogicalOperator) -> None:
         """Set both input operators."""
-        self._in_operators = [left, right]
+        self.graph_in_operators = [left, right]
         left.add_out_operator(self)
         right.add_out_operator(self)
 
@@ -1144,9 +1156,9 @@ class RecursiveTraversalOperator(LogicalOperator):
 
     @property
     def depth(self) -> int:
-        if not self._in_operators:
+        if not self.graph_in_operators:
             return 1
-        return max(op.depth for op in self._in_operators) + 1
+        return max(op.depth for op in self.graph_in_operators) + 1
 
     @property
     def is_circular(self) -> bool:
@@ -1167,9 +1179,9 @@ class RecursiveTraversalOperator(LogicalOperator):
         RecursiveTraversal's input schema is the merged output of all input operators
         (typically the source node's DataSourceOperator).
         """
-        if self._in_operators:
+        if self.graph_in_operators:
             merged_fields: list[Field] = []
-            for op in self._in_operators:
+            for op in self.graph_in_operators:
                 if op.output_schema:
                     merged_fields.extend(op.output_schema.fields)
             self.input_schema = Schema(merged_fields)

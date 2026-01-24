@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from gsql2rsql.common.logging import LogLevel
 from gsql2rsql.common.schema import EdgeAccessStrategy, IGraphSchemaProvider
 from gsql2rsql.parser.ast import (
     Entity,
@@ -132,6 +133,7 @@ def create_recursive_match_tree(
     # Log analysis result for debugging
     if logger:
         logger.log(
+            LogLevel.DEBUG,
             f"Path analysis for '{match_clause.path_variable}': "
             f"needs_edge_collection={path_info.needs_edge_collection}, "
             f"has_pushable_predicates={path_info.has_pushable_predicates}"
@@ -157,6 +159,7 @@ def create_recursive_match_tree(
         )
         if logger:
             logger.log(
+                LogLevel.DEBUG,
                 f"Removed {len(path_info.pushed_all_expressions)} pushed predicates "
                 f"from WHERE clause"
             )
@@ -377,6 +380,10 @@ def extract_source_node_filter(
             left = where_expr.left_expression
             right = where_expr.right_expression
 
+            # Check if both sides exist before analyzing
+            if left is None or right is None:
+                return None, where_expr
+
             left_is_source = _references_only_variable(left, source_alias)
             right_is_source = _references_only_variable(right, source_alias)
 
@@ -426,8 +433,10 @@ def _collect_property_references(
     if isinstance(expr, QueryExpressionProperty):
         properties.append(expr)
     elif isinstance(expr, QueryExpressionBinary):
-        properties.extend(_collect_property_references(expr.left_expression))
-        properties.extend(_collect_property_references(expr.right_expression))
+        if expr.left_expression is not None:
+            properties.extend(_collect_property_references(expr.left_expression))
+        if expr.right_expression is not None:
+            properties.extend(_collect_property_references(expr.right_expression))
     elif hasattr(expr, 'children'):
         for child in expr.children:
             if isinstance(child, QueryExpression):

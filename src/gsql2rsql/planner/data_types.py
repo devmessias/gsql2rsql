@@ -43,7 +43,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
+from typing import Any, ClassVar
 
 
 class PrimitiveKind(Enum):
@@ -130,6 +130,17 @@ class PrimitiveType(DataType):
         Use PrimitiveType.INT, PrimitiveType.STRING, etc. for common types.
         These are initialized after the class definition.
     """
+
+    # Class-level constants (initialized after class definition)
+    INT: ClassVar[PrimitiveType]
+    BIGINT: ClassVar[PrimitiveType]
+    FLOAT: ClassVar[PrimitiveType]
+    DOUBLE: ClassVar[PrimitiveType]
+    STRING: ClassVar[PrimitiveType]
+    BOOLEAN: ClassVar[PrimitiveType]
+    DATE: ClassVar[PrimitiveType]
+    TIMESTAMP: ClassVar[PrimitiveType]
+    UNKNOWN: ClassVar[PrimitiveType]
 
     kind: PrimitiveKind
     nullable: bool = True

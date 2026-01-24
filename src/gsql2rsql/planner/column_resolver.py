@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from gsql2rsql.common.exceptions import (
     ColumnResolutionError,
@@ -199,7 +199,7 @@ class ColumnResolver:
             visited.add(op_id)
 
             # Visit inputs first
-            for in_op in op._in_operators:
+            for in_op in op.graph_in_operators:
                 visit(in_op)
 
             result.append(op)
@@ -488,7 +488,7 @@ class ColumnResolver:
                     and expr.property_name is None
                 )
                 entity_id_column = None
-                if is_entity_ref:
+                if is_entity_ref and isinstance(expr, QueryExpressionProperty):
                     entity_id_column = compute_sql_column_name(
                         expr.variable_name, None
                     )
@@ -910,7 +910,7 @@ class ColumnResolver:
 
     def _raise_undefined_variable_error(
         self, expr: QueryExpressionProperty
-    ) -> None:
+    ) -> NoReturn:
         """Raise a detailed error for an undefined variable.
 
         Args:
@@ -956,7 +956,7 @@ class ColumnResolver:
 
     def _raise_invalid_property_error(
         self, expr: QueryExpressionProperty, entry: SymbolEntry
-    ) -> None:
+    ) -> NoReturn:
         """Raise a detailed error for an invalid property access.
 
         Args:
@@ -970,8 +970,8 @@ class ColumnResolver:
         property_name = expr.property_name
 
         # Compute property suggestions
-        suggestions = []
-        if entry.properties:
+        suggestions: list[str] = []
+        if entry.properties and property_name is not None:
             for prop in entry.properties:
                 dist = levenshtein_distance(property_name, prop)
                 if dist <= 3:

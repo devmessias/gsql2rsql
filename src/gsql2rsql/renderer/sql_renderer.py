@@ -12,7 +12,6 @@ from gsql2rsql.common.exceptions import (
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import (
     Entity,
-    ListPredicateType,
     NodeEntity,
     QueryExpression,
     QueryExpressionAggregationFunction,
@@ -34,6 +33,7 @@ from gsql2rsql.parser.operators import (
     AggregationFunction,
     BinaryOperator,
     Function,
+    ListPredicateType,
 )
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
@@ -206,6 +206,18 @@ class SQLRenderer:
 
         # Configuration
         self._config = config or {}
+
+    @property
+    def _db_schema(self) -> "ISQLDBSchemaProvider":
+        """Get the database schema provider (guaranteed non-None after __init__)."""
+        assert self._graph_def is not None
+        return self._graph_def
+
+    @property
+    def _resolved(self) -> "ResolutionResult":
+        """Get the resolution result (guaranteed non-None during rendering)."""
+        assert self._resolution_result is not None
+        return self._resolution_result
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
@@ -595,14 +607,14 @@ class SQLRenderer:
                 # Check if either endpoint is unknown (no label) - use partial lookup
                 if not op.source_node_type or not op.target_node_type:
                     # Partial lookup - find matching edges
-                    edges = self._graph_def.find_edges_by_verb(
+                    edges = self._db_schema.find_edges_by_verb(
                         edge_type,
                         from_node_name=op.source_node_type or None,
                         to_node_name=op.target_node_type or None,
                     )
                     if edges:
                         edge_schema = edges[0]
-                        edge_table = self._graph_def.get_sql_table_descriptors(
+                        edge_table = self._db_schema.get_sql_table_descriptors(
                             edge_schema.id
                         )
                 else:
@@ -612,13 +624,13 @@ class SQLRenderer:
                         op.source_node_type,
                         op.target_node_type,
                     )
-                    edge_table = self._graph_def.get_sql_table_descriptors(edge_id)
+                    edge_table = self._db_schema.get_sql_table_descriptors(edge_id)
                     if not edge_table:
                         # Try with just the edge name
-                        edge_table = self._graph_def.get_sql_table_descriptors(edge_type)
+                        edge_table = self._db_schema.get_sql_table_descriptors(edge_type)
 
                     # Get edge schema for column info
-                    edge_schema = self._graph_def.get_edge_definition(
+                    edge_schema = self._db_schema.get_edge_definition(
                         edge_type,
                         op.source_node_type,
                         op.target_node_type,
@@ -641,7 +653,7 @@ class SQLRenderer:
         else:
             # No specific edge types - use wildcard edge (no type filter)
             from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE
-            wildcard_edge_table = self._graph_def.get_wildcard_edge_table_descriptor()
+            wildcard_edge_table = self._db_schema.get_wildcard_edge_table_descriptor()
 
             if not wildcard_edge_table:
                 raise TranspilerInternalErrorException(
@@ -653,7 +665,7 @@ class SQLRenderer:
             edge_tables.append((WILDCARD_EDGE_TYPE, wildcard_edge_table))
 
             # Get column names from wildcard edge schema
-            wildcard_edge_schema = self._graph_def.get_wildcard_edge_definition()
+            wildcard_edge_schema = self._db_schema.get_wildcard_edge_definition()
             if wildcard_edge_schema:
                 if wildcard_edge_schema.source_id_property:
                     source_id_col = wildcard_edge_schema.source_id_property.property_name
@@ -1163,19 +1175,22 @@ class SQLRenderer:
 
         # Get target node's table info (supports no-label via wildcard)
         target_entity = target_op.entity
-        target_table = self._get_table_descriptor_with_wildcard(
-            target_entity.entity_name
-        )
+        if target_entity is None:
+            raise TranspilerInternalErrorException(
+                "Target operator has no entity defined"
+            )
+        target_entity_name = target_entity.entity_name or ""
+        target_table = self._get_table_descriptor_with_wildcard(target_entity_name)
         if not target_table:
             raise TranspilerInternalErrorException(
-                f"No table descriptor for {target_entity.entity_name}"
+                f"No table descriptor for {target_entity_name}"
             )
 
         # Get target node's ID column and schema (supports wildcard for unlabeled nodes)
-        target_node_schema = self._graph_def.get_node_definition(target_entity.entity_name)
-        if not target_node_schema and not target_entity.entity_name:
+        target_node_schema = self._db_schema.get_node_definition(target_entity_name)
+        if not target_node_schema and not target_entity_name:
             # Try wildcard for unlabeled nodes
-            target_node_schema = self._graph_def.get_wildcard_node_definition()
+            target_node_schema = self._db_schema.get_wildcard_node_definition()
         if target_node_schema and target_node_schema.node_id_property:
             target_id_col = target_node_schema.node_id_property.property_name
         else:
@@ -1193,10 +1208,10 @@ class SQLRenderer:
             source_table = target_table
 
         # Get source node's ID column and schema (supports wildcard for unlabeled nodes)
-        source_node_schema = self._graph_def.get_node_definition(source_node_type)
+        source_node_schema = self._db_schema.get_node_definition(source_node_type)
         if not source_node_schema and not source_node_type:
             # Try wildcard for unlabeled nodes
-            source_node_schema = self._graph_def.get_wildcard_node_definition()
+            source_node_schema = self._db_schema.get_wildcard_node_definition()
         if source_node_schema and source_node_schema.node_id_property:
             source_id_col = source_node_schema.node_id_property.property_name
         else:
@@ -1590,12 +1605,12 @@ class SQLRenderer:
 
         if not entity_name or entity_name == WILDCARD_NODE_TYPE:
             # No label or wildcard node type - use wildcard node table descriptor
-            return self._graph_def.get_wildcard_table_descriptor()
+            return self._db_schema.get_wildcard_table_descriptor()
         # Check for wildcard edge (edge ID format: source@verb@sink)
         if WILDCARD_EDGE_TYPE in entity_name:
             # Wildcard edge type - use wildcard edge table descriptor
-            return self._graph_def.get_wildcard_edge_table_descriptor()
-        return self._graph_def.get_sql_table_descriptors(entity_name)
+            return self._db_schema.get_wildcard_edge_table_descriptor()
+        return self._db_schema.get_sql_table_descriptors(entity_name)
 
     def _render_data_source(self, op: DataSourceOperator, depth: int) -> str:
         """Render a data source operator."""
@@ -1711,7 +1726,7 @@ class SQLRenderer:
                 # Use find_edges_by_verb to find the correct edge schema for each type
                 # This handles cases where edge types have different target node types
                 # (e.g., KNOWS→Person, LIVES_IN→City, WORKS_AT→Company)
-                edges = self._graph_def.find_edges_by_verb(
+                edges = self._db_schema.find_edges_by_verb(
                     edge_type,
                     from_node_name=source_type,
                     to_node_name=None,  # Allow any target
@@ -1719,7 +1734,7 @@ class SQLRenderer:
                 if edges:
                     edge_schema = edges[0]
                     edge_id = edge_schema.id
-                    type_desc = self._graph_def.get_sql_table_descriptors(edge_id)
+                    type_desc = self._db_schema.get_sql_table_descriptors(edge_id)
                     if type_desc and type_desc.filter:
                         edge_filters.append(type_desc.filter)
             if edge_filters:
@@ -1830,6 +1845,8 @@ class SQLRenderer:
 
         if is_recursive_join:
             # Special handling for recursive CTE joins
+            assert isinstance(left_op, RecursiveTraversalOperator)
+            assert isinstance(right_op, DataSourceOperator)
             return self._render_recursive_join(op, left_op, right_op, depth)
 
         # Check if left side is AggregationBoundaryOperator
@@ -1837,6 +1854,7 @@ class SQLRenderer:
 
         if is_boundary_join:
             # Special handling for aggregation boundary joins
+            assert isinstance(left_op, AggregationBoundaryOperator)
             return self._render_boundary_join(op, left_op, right_op, depth)
 
         lines.append(f"{indent}SELECT")
@@ -2002,7 +2020,7 @@ class SQLRenderer:
             return self._render_operator(edge_op, depth)
 
         # Get table descriptor
-        table_desc = self._graph_def.get_sql_table_descriptors(
+        table_desc = self._db_schema.get_sql_table_descriptors(
             entity_field.bound_entity_name
         )
         if not table_desc:
@@ -2803,10 +2821,10 @@ class SQLRenderer:
         #
         # Check if there are any entity returns in this projection
         has_entity_return = False
-        if op.operator_debug_id in self._resolution_result.resolved_projections:
+        if op.operator_debug_id in self._resolved.resolved_projections:
             has_entity_return = any(
                 proj.is_entity_ref
-                for proj in self._resolution_result.resolved_projections[op.operator_debug_id]
+                for proj in self._resolved.resolved_projections[op.operator_debug_id]
             )
 
         extra_columns: list[str] = []
@@ -3048,15 +3066,21 @@ class SQLRenderer:
                 duration_expr = expr.left_expression
                 other_expr = expr.right_expression
 
-            if duration_expr and self._contains_timestamp_subtraction(other_expr):
+            if duration_expr and other_expr and self._contains_timestamp_subtraction(other_expr):
                 # Render the duration as seconds for comparison with UNIX_TIMESTAMP diff
+                if expr.left_expression is None or expr.right_expression is None:
+                    raise TranspilerInternalErrorException(
+                        "Binary expression has None operand"
+                    )
                 left = self._render_expression(expr.left_expression, context_op)
                 right = self._render_expression(expr.right_expression, context_op)
 
                 # Convert the INTERVAL to seconds
-                if duration_expr == expr.right_expression:
+                if duration_expr == expr.right_expression and isinstance(
+                    duration_expr, QueryExpressionFunction
+                ):
                     right = self._duration_to_seconds(duration_expr)
-                else:
+                elif isinstance(duration_expr, QueryExpressionFunction):
                     left = self._duration_to_seconds(duration_expr)
 
                 pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
@@ -3091,14 +3115,15 @@ class SQLRenderer:
     def _contains_timestamp_subtraction(self, expr: QueryExpression) -> bool:
         """Check if expression contains timestamp subtraction (recursively)."""
         if isinstance(expr, QueryExpressionBinary):
+            left = expr.left_expression
+            right = expr.right_expression
             if expr.operator and expr.operator.name == BinaryOperator.MINUS:
-                if self._might_be_timestamp_subtraction(
-                    expr.left_expression, expr.right_expression
-                ):
+                if left and right and self._might_be_timestamp_subtraction(left, right):
                     return True
             # Check children
-            return (self._contains_timestamp_subtraction(expr.left_expression) or
-                    self._contains_timestamp_subtraction(expr.right_expression))
+            left_has = left is not None and self._contains_timestamp_subtraction(left)
+            right_has = right is not None and self._contains_timestamp_subtraction(right)
+            return left_has or right_has
         elif isinstance(expr, QueryExpressionFunction):
             # Check if any parameter contains timestamp subtraction
             return any(self._contains_timestamp_subtraction(p) for p in expr.parameters)
@@ -3158,14 +3183,14 @@ class SQLRenderer:
         # Parse time part
         time_pattern = re.compile(r"(\d+(?:\.\d+)?)([HMS])")
         for match in time_pattern.finditer(time_part):
-            value = float(match.group(1))
-            unit = match.group(2)
-            if unit == "H":
-                total_seconds += int(value * 3600)
-            elif unit == "M":
-                total_seconds += int(value * 60)
-            elif unit == "S":
-                total_seconds += int(value)
+            time_value = float(match.group(1))
+            time_unit = match.group(2)
+            if time_unit == "H":
+                total_seconds += int(time_value * 3600)
+            elif time_unit == "M":
+                total_seconds += int(time_value * 60)
+            elif time_unit == "S":
+                total_seconds += int(time_value)
 
         return total_seconds
 
@@ -3621,7 +3646,7 @@ class SQLRenderer:
             return None
 
         # Check if it's an equality operator
-        if expr.operator.name != BinaryOperator.EQ.name:
+        if expr.operator is None or expr.operator.name != BinaryOperator.EQ:
             return None
 
         left = expr.left_expression
@@ -3632,6 +3657,7 @@ class SQLRenderer:
             isinstance(left, QueryExpressionProperty)
             and left.variable_name == var_name
             and not left.property_name
+            and right is not None
         ):
             # Pattern: x = value
             return self._render_expression(right, context_op)
@@ -3641,6 +3667,7 @@ class SQLRenderer:
             isinstance(right, QueryExpressionProperty)
             and right.variable_name == var_name
             and not right.property_name
+            and left is not None
         ):
             # Pattern: value = x
             return self._render_expression(left, context_op)
@@ -3666,13 +3693,15 @@ class SQLRenderer:
             # Otherwise it's a reference to an outer variable
             return self._render_property(expr, context_op)
         elif isinstance(expr, QueryExpressionBinary):
-            left = self._render_list_predicate_filter(
-                expr.left_expression, var_name, context_op
-            )
-            right = self._render_list_predicate_filter(
-                expr.right_expression, var_name, context_op
-            )
+            left_expr = expr.left_expression
+            right_expr = expr.right_expression
+            if left_expr is None or right_expr is None:
+                return "NULL"
+            left = self._render_list_predicate_filter(left_expr, var_name, context_op)
+            right = self._render_list_predicate_filter(right_expr, var_name, context_op)
             from gsql2rsql.renderer.sql_renderer import OPERATOR_PATTERNS
+            if expr.operator is None:
+                return f"({left}) ? ({right})"
             pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
             return pattern.format(left, right)
         elif isinstance(expr, QueryExpressionFunction):
@@ -4021,19 +4050,19 @@ class SQLRenderer:
                 edge_id = EdgeSchema.get_edge_id(
                     rel_name, source_entity_name, target_entity_name
                 )
-            rel_table_desc = self._graph_def.get_sql_table_descriptors(edge_id)
+            rel_table_desc = self._db_schema.get_sql_table_descriptors(edge_id)
             if not expr.correlation_uses_source:
-                edge_schema = self._graph_def.get_edge_definition(
+                edge_schema = self._db_schema.get_edge_definition(
                     rel_name, target_entity_name, source_entity_name
                 )
             else:
-                edge_schema = self._graph_def.get_edge_definition(
+                edge_schema = self._db_schema.get_edge_definition(
                     rel_name, source_entity_name, target_entity_name
                 )
         else:
             # Source entity unknown - use fallback lookup by verb
             # This handles EXISTS patterns where source is a variable reference
-            result = self._graph_def.find_edge_by_verb(rel_name, target_entity_name)
+            result = self._db_schema.find_edge_by_verb(rel_name, target_entity_name)
             if result:
                 edge_schema, rel_table_desc = result
                 # Update source_entity_name from schema for later use
@@ -4058,13 +4087,13 @@ class SQLRenderer:
 
         # If target node exists and has a type, join to target table
         if target_node and target_node.entity_name:
-            target_table_desc = self._graph_def.get_sql_table_descriptors(
+            target_table_desc = self._db_schema.get_sql_table_descriptors(
                 target_node.entity_name
             )
             if target_table_desc:
                 target_table = target_table_desc.full_table_name
                 # Get target node's ID column
-                target_node_schema = self._graph_def.get_node_definition(
+                target_node_schema = self._db_schema.get_node_definition(
                     target_node.entity_name
                 )
                 target_node_id_col = "id"
@@ -4086,7 +4115,7 @@ class SQLRenderer:
         # The source node's ID field should be in the outer context
         source_alias = source_node.alias or "_src"
         # Get the source node's ID column from schema
-        source_node_schema = self._graph_def.get_node_definition(
+        source_node_schema = self._db_schema.get_node_definition(
             source_node.entity_name
         ) if source_node.entity_name else None
         source_node_id_col = "id"
@@ -4252,8 +4281,8 @@ class SQLRenderer:
                 if required_col.startswith(prefix):
                     # Skip the entity's ID column - it's already provided by the bare entity
                     # reference (e.g., _gsql2rsql_a_id is already available via the alias 'a')
-                    id_col = entity_id_columns.get(entity_var)
-                    if required_col == id_col:
+                    entity_id_col = entity_id_columns.get(entity_var)
+                    if entity_id_col is not None and required_col == entity_id_col:
                         break
 
                     # ============================================================================

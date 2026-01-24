@@ -86,6 +86,7 @@ from gsql2rsql.parser.operators import (
     BinaryOperatorInfo,
     BinaryOperatorType,
     Function,
+    ListPredicateType,
 )
 
 if TYPE_CHECKING:
@@ -339,8 +340,6 @@ class PathExpressionAnalyzer:
                 info.needs_edge_collection = True
 
                 # Extract predicate for pushdown (only for ALL)
-                from gsql2rsql.parser.ast import ListPredicateType
-
                 if (expr.predicate_type == ListPredicateType.ALL
                     and expr.filter_expression is not None):
                     # Store the predicate and variable name for rewriting
@@ -496,11 +495,19 @@ def rewrite_predicate_for_edge_alias(
 
     elif isinstance(predicate, QueryExpressionBinary):
         # Recursively rewrite both sides of binary expressions
-        new_left = rewrite_predicate_for_edge_alias(
-            predicate.left_expression, lambda_var, edge_alias
+        new_left = (
+            rewrite_predicate_for_edge_alias(
+                predicate.left_expression, lambda_var, edge_alias
+            )
+            if predicate.left_expression is not None
+            else None
         )
-        new_right = rewrite_predicate_for_edge_alias(
-            predicate.right_expression, lambda_var, edge_alias
+        new_right = (
+            rewrite_predicate_for_edge_alias(
+                predicate.right_expression, lambda_var, edge_alias
+            )
+            if predicate.right_expression is not None
+            else None
         )
 
         # Only create new expression if something changed

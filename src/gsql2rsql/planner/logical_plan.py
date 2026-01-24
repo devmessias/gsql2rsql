@@ -156,7 +156,7 @@ class LogicalPlan:
                 return
             visited.add(op_id)
             result.append(op)
-            for out_op in op._out_operators:
+            for out_op in op.out_operators:
                 visit(out_op)
 
         for start_op in self._starting_operators:
@@ -239,7 +239,7 @@ class LogicalPlan:
 
         all_ops: dict[int, list[LogicalOperator]] = {}
         for start_op in self._starting_operators:
-            for op in start_op.get_all_downstream_operators(LogicalOperator):
+            for op in start_op.get_all_downstream_operators(LogicalOperator):  # type: ignore[type-abstract]
                 depth = op.depth
                 if depth not in all_ops:
                     all_ops[depth] = []

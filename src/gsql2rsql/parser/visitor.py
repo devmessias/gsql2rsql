@@ -11,7 +11,6 @@ from gsql2rsql.parser.ast import (
     InfixOperator,
     InfixQueryNode,
     LimitClause,
-    ListPredicateType,
     MatchClause,
     NodeEntity,
     PartialQueryNode,
@@ -41,6 +40,7 @@ from gsql2rsql.parser.ast import (
 from gsql2rsql.parser.operators import (
     AggregationFunction,
     Function,
+    ListPredicateType,
     try_get_function,
     try_get_operator,
     try_parse_aggregation_function,
@@ -1070,12 +1070,12 @@ class CypherVisitor:
         """Visit a number literal context."""
         if ctx.oC_IntegerLiteral():
             text = ctx.oC_IntegerLiteral().getText()
-            value = int(text)
-            return QueryExpressionValue(value=value, value_type=int)
+            int_value = int(text)
+            return QueryExpressionValue(value=int_value, value_type=int)
         if ctx.oC_DoubleLiteral():
             text = ctx.oC_DoubleLiteral().getText()
-            value = float(text)
-            return QueryExpressionValue(value=value, value_type=float)
+            float_value = float(text)
+            return QueryExpressionValue(value=float_value, value_type=float)
 
         return QueryExpressionValue(value=0, value_type=int)
 

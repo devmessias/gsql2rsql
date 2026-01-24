@@ -16,9 +16,10 @@ The aggregation boundary creates a materialization point (CTE) that:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import Callable
 
 from gsql2rsql.parser.ast import (
+    MatchClause,
     NodeEntity,
     PartialQueryNode,
     QueryExpression,
@@ -26,6 +27,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionBinary,
     QueryExpressionFunction,
     QueryExpressionProperty,
+    QueryExpressionValue,
     SingleQueryNode,
 )
 from gsql2rsql.planner.operators import (
@@ -40,8 +42,12 @@ from gsql2rsql.planner.operators import (
     UnwindOperator,
 )
 
-if TYPE_CHECKING:
-    from gsql2rsql.planner.logical_plan import LogicalPlan
+
+def _extract_int_value(expr: QueryExpression | None) -> int | None:
+    """Safely extract integer value from a QueryExpressionValue."""
+    if isinstance(expr, QueryExpressionValue) and expr.value is not None:
+        return int(expr.value)
+    return None
 
 
 def part_creates_aggregation_boundary(
@@ -125,19 +131,12 @@ def create_aggregation_boundary(
             for item in part.order_by
         ],
         limit=(
-            int(part.limit_clause.limit_expression.value)
-            if part.limit_clause
-            and hasattr(part.limit_clause.limit_expression, "value")
-            and part.limit_clause.limit_expression.value is not None
-            else None
+            _extract_int_value(part.limit_clause.limit_expression)
+            if part.limit_clause else None
         ),
         skip=(
-            int(part.limit_clause.skip_expression.value)
-            if part.limit_clause
-            and part.limit_clause.skip_expression
-            and hasattr(part.limit_clause.skip_expression, "value")
-            and part.limit_clause.skip_expression.value is not None
-            else None
+            _extract_int_value(part.limit_clause.skip_expression)
+            if part.limit_clause and part.limit_clause.skip_expression else None
         ),
         cte_name=cte_name,
         projected_variables=projected_variables,
@@ -152,7 +151,10 @@ def create_match_after_boundary_tree(
     part: PartialQueryNode,
     boundary: AggregationBoundaryOperator,
     all_ops: list[LogicalOperator],
-    create_match_tree_fn,
+    create_match_tree_fn: Callable[
+        [MatchClause, list[LogicalOperator], list[QueryExpression] | None],
+        LogicalOperator
+    ],
 ) -> LogicalOperator:
     """Create logical tree for MATCH clauses after an aggregation boundary.
 
@@ -248,19 +250,12 @@ def create_match_after_boundary_tree(
                 for item in part.order_by
             ],
             limit=(
-                int(part.limit_clause.limit_expression.value)
-                if part.limit_clause
-                and hasattr(part.limit_clause.limit_expression, "value")
-                and part.limit_clause.limit_expression.value is not None
-                else None
+                _extract_int_value(part.limit_clause.limit_expression)
+                if part.limit_clause else None
             ),
             skip=(
-                int(part.limit_clause.skip_expression.value)
-                if part.limit_clause
-                and part.limit_clause.skip_expression
-                and hasattr(part.limit_clause.skip_expression, "value")
-                and part.limit_clause.skip_expression.value is not None
-                else None
+                _extract_int_value(part.limit_clause.skip_expression)
+                if part.limit_clause and part.limit_clause.skip_expression else None
             ),
             having_expression=part.having_expression,
         )
@@ -275,7 +270,10 @@ def create_match_tree_for_boundary(
     part: PartialQueryNode,
     all_ops: list[LogicalOperator],
     previous_op: LogicalOperator | None,
-    create_match_tree_fn,
+    create_match_tree_fn: Callable[
+        [MatchClause, list[LogicalOperator], list[QueryExpression] | None],
+        LogicalOperator
+    ],
 ) -> LogicalOperator:
     """Create the match tree for a part that creates an aggregation boundary.
 
