@@ -11,7 +11,6 @@ from gsql2rsql.common.exceptions import (
 )
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import (
-    Entity,
     NodeEntity,
     QueryExpression,
     QueryExpressionAggregationFunction,
@@ -54,7 +53,7 @@ from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
 from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 from gsql2rsql.planner.column_resolver import ResolutionResult
-from gsql2rsql.planner.column_ref import ResolvedColumnRef, ColumnRefType
+from gsql2rsql.planner.column_ref import ResolvedColumnRef
 from gsql2rsql.renderer.schema_provider import (
     ISQLDBSchemaProvider,
     SQLTableDescriptor,
@@ -1474,7 +1473,6 @@ class SQLRenderer:
                _left.c = _right._gsql2rsql_c_id
         """
         indent = self._indent(depth)
-        cte_name = boundary_op.cte_name
         lines: list[str] = []
 
         left_var = "_left"

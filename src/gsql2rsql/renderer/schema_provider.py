@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
 
 from gsql2rsql.common.schema import (
     EdgeAccessStrategy,
@@ -608,9 +607,6 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
 
         Current implementation uses EDGE_LIST strategy (single table with directed edges).
         Undirected traversal requires UNION ALL to access edges in both directions.
-
-        Future implementations may use ADJACENCY_BIDIRECTIONAL if edges are stored
-        with pre-computed reverse entries.
 
         Returns:
             EdgeAccessStrategy.EDGE_LIST

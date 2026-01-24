@@ -14,10 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from gsql2rsql.planner.operators import LogicalOperator
     from gsql2rsql.planner.schema import EntityField, ValueField
 
 

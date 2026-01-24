@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 from gsql2rsql.common.exceptions import TranspilerInternalErrorException
 from gsql2rsql.common.schema import IGraphSchemaProvider
-from gsql2rsql.common.utils import change_indentation, fnv_hash
+from gsql2rsql.common.utils import fnv_hash
 from gsql2rsql.parser.ast import (
     Entity,
     NodeEntity,

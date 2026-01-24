@@ -48,15 +48,13 @@ from gsql2rsql.planner.column_ref import (
 from gsql2rsql.planner.operators import (
     AggregationBoundaryOperator,
     DataSourceOperator,
-    JoinOperator,
     LogicalOperator,
     ProjectionOperator,
     RecursiveTraversalOperator,
     SelectionOperator,
-    SetOperator,
     UnwindOperator,
 )
-from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
+from gsql2rsql.planner.schema import EntityField
 from gsql2rsql.planner.symbol_table import (
     SymbolEntry,
     SymbolInfo,
@@ -257,14 +255,6 @@ class ColumnResolver:
                 entity_field = fld
                 properties = [vf.field_name for vf in fld.encapsulated_fields]
                 break
-
-        # Determine symbol type based on entity type
-        from gsql2rsql.parser.ast import NodeEntity, RelationshipEntity
-
-        if isinstance(op.entity, RelationshipEntity):
-            entity_type_name = "RELATIONSHIP"
-        else:
-            entity_type_name = "NODE"
 
         entry = SymbolEntry(
             name=alias,

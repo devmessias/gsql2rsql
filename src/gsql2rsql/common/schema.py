@@ -23,15 +23,10 @@ class EdgeAccessStrategy(Enum):
     Examples:
         - EDGE_LIST: Single table with (src, dst) rows. Undirected traversal requires
           UNION ALL to access edges in both directions.
-        - ADJACENCY_BIDIRECTIONAL: Edges stored with pre-computed reverse entries
-          (e.g., both (A,B) and (B,A) exist). Undirected traversal can query directly.
     """
 
     EDGE_LIST = auto()
     """Edges stored as directed (src, dst) pairs. Requires UNION for bidirectional access."""
-
-    ADJACENCY_BIDIRECTIONAL = auto()
-    """Edges stored with reverse pairs pre-materialized. Direct bidirectional access."""
 
 
 @dataclass
@@ -177,7 +172,6 @@ class IGraphSchemaProvider(ABC):
 
         This determines how the renderer implements bidirectional traversal:
         - EDGE_LIST: Requires UNION ALL for undirected patterns
-        - ADJACENCY_BIDIRECTIONAL: Direct query without UNION
 
         Returns:
             EdgeAccessStrategy indicating the storage model.

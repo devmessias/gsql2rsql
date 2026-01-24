@@ -23,10 +23,10 @@ from gsql2rsql.common.schema import (
 )
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
 from gsql2rsql.parser.ast import (
-    BinaryOperator,
     QueryExpressionBinary,
     QueryExpressionProperty,
 )
+from gsql2rsql.parser.operators import BinaryOperator
 
 
 class TestPlannerInlineProperties:

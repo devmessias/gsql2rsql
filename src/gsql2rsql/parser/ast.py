@@ -10,7 +10,6 @@ from typing import Any, Iterator
 from gsql2rsql.common.utils import change_indentation
 from gsql2rsql.parser.operators import (
     AggregationFunction,
-    BinaryOperator,
     BinaryOperatorInfo,
     Function,
     ListPredicateType,

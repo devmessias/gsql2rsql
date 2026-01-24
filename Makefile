@@ -27,7 +27,7 @@ venv:  ## Create virtual environment
 # ─────────────────────────────────────────────────────────────────────────────
 
 test:  ## Run tests
-	$(UV) run pytest -n 12 tests/
+	$(UV) run pytest -n 10 tests/
 
 test-cov:  ## Run tests with coverage
 	$(UV) run pytest tests/ --cov=src/gsql2rsql --cov-report=term-missing --cov-report=html
@@ -345,35 +345,3 @@ publish:  ## Publish to PyPI (use GitHub Actions instead)
 		python -m build && \
 		twine upload dist/*; \
 	fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Git Commit Helpers (Conventional Commits)
-# ─────────────────────────────────────────────────────────────────────────────
-
-commit-feat:  ## Create a feature commit (triggers minor version bump)
-	@read -p "Feature description: " desc; \
-	git add -A && git commit -m "feat: $$desc"
-
-commit-fix:  ## Create a fix commit (triggers patch version bump)
-	@read -p "Fix description: " desc; \
-	git add -A && git commit -m "fix: $$desc"
-
-commit-docs:  ## Create a docs commit (no version bump)
-	@read -p "Docs description: " desc; \
-	git add -A && git commit -m "docs: $$desc"
-
-commit-chore:  ## Create a chore commit (no version bump)
-	@read -p "Chore description: " desc; \
-	git add -A && git commit -m "chore: $$desc"
-
-commit-test:  ## Create a test commit (no version bump)
-	@read -p "Test description: " desc; \
-	git add -A && git commit -m "test: $$desc"
-
-commit-refactor:  ## Create a refactor commit (no version bump)
-	@read -p "Refactor description: " desc; \
-	git add -A && git commit -m "refactor: $$desc"
-
-commit-perf:  ## Create a performance commit (triggers patch version bump)
-	@read -p "Performance improvement: " desc; \
-	git add -A && git commit -m "perf: $$desc"

@@ -17,7 +17,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gsql2rsql.parser.ast import QueryExpression, QueryExpressionProperty
+    from gsql2rsql.parser.ast import QueryExpression
 
 
 class ColumnRefType(Enum):

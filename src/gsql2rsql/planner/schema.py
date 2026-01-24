@@ -20,7 +20,7 @@ from enum import Enum, auto
 from typing import Any, Iterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from gsql2rsql.planner.data_types import DataType, ArrayType, StructType
+    from gsql2rsql.planner.data_types import DataType, StructType
 
 
 @dataclass

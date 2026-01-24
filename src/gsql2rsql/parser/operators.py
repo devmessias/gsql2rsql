@@ -236,8 +236,6 @@ class Function(Enum):
 
     # Date/Time arithmetic and manipulation
     DATE_TRUNCATE = auto()  # date.truncate('unit', d)
-    DATE_ADD = auto()  # date + duration -> DATE_ADD
-    DATE_SUB = auto()  # date - duration -> DATE_SUB
 
 
 class FunctionInfo(NamedTuple):

@@ -261,7 +261,6 @@ class ColumnResolutionError(TranspilerException):
             # Add error pointer
             if line_num == error_line:
                 error_col = ctx.error_column if ctx.error_column > 0 else 1
-                pointer_padding = " " * (6 + error_col)
                 lines.append(f"      │ {' ' * (error_col - 1)}▲")
                 lines.append(f"      │ {' ' * (error_col - 1)}└── ERROR: {ctx.message}")
 

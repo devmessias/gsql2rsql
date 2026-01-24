@@ -22,7 +22,7 @@ Example:
 This eliminates ~100 lines of boilerplate schema configuration code.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from gsql2rsql.common.schema import (
     EntityProperty,

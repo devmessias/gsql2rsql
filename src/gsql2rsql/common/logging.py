@@ -54,12 +54,3 @@ class BaseLogger(ILoggable):
     def _write_log(self, level: LogLevel, message: str) -> None:
         """Write the log message. Override in subclasses."""
         pass
-
-
-class ConsoleLogger(BaseLogger):
-    """Logger that writes to the console."""
-
-    def _write_log(self, level: LogLevel, message: str) -> None:
-        """Write log message to console."""
-        level_name = level.name
-        print(f"[{level_name}] {message}")
