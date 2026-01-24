@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Iterator
+from typing import Any
 
 from gsql2rsql.common.utils import change_indentation
 from gsql2rsql.parser.operators import (
@@ -470,13 +471,13 @@ class QueryExpressionExists(QueryExpression):
     """
 
     # Pattern entities forming the EXISTS pattern (for pattern-based EXISTS)
-    pattern_entities: list["Entity"] = field(default_factory=list)
+    pattern_entities: list[Entity] = field(default_factory=list)
     # Optional WHERE clause within the EXISTS
     where_expression: QueryExpression | None = None
     # Whether this is NOT EXISTS
     is_negated: bool = False
     # For full subquery EXISTS (EXISTS { MATCH ... RETURN ... })
-    subquery: "QueryNode | None" = None
+    subquery: QueryNode | None = None
 
     # Pre-resolved context for rendering (populated by planner during resolution)
     # These remove the need for the renderer to check relationship direction.
@@ -508,7 +509,7 @@ class QueryExpressionExists(QueryExpression):
         return f"{neg}EXISTS {{ {pattern}{where_part} }}"
 
     def resolve_direction_context(
-        self, direction: "RelationshipDirection"
+        self, direction: RelationshipDirection
     ) -> None:
         """Resolve direction-dependent fields based on relationship direction.
 
@@ -613,7 +614,7 @@ class NodeEntity(Entity):
     """
 
     # Inline property filters from pattern: (n:Person {name: 'Alice'})
-    inline_properties: "QueryExpressionMapLiteral | None" = None
+    inline_properties: QueryExpressionMapLiteral | None = None
 
     @property
     def children(self) -> list[TreeNode]:
@@ -650,7 +651,7 @@ class RelationshipEntity(Entity):
     max_hops: int | None = None  # None means unlimited
 
     # Inline property filters from pattern: -[r:KNOWS {weight: 1.0}]->
-    inline_properties: "QueryExpressionMapLiteral | None" = None
+    inline_properties: QueryExpressionMapLiteral | None = None
 
     @property
     def is_variable_length(self) -> bool:

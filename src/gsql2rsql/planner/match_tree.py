@@ -14,7 +14,7 @@ It includes:
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from gsql2rsql.common.exceptions import TranspilerInternalErrorException
 from gsql2rsql.parser.ast import (

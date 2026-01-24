@@ -57,7 +57,7 @@ class SQLTableDescriptor:
         table_name: str,
         node_id_columns: list[str] | None = None,
         column_mappings: dict[str, str] | None = None,
-    ) -> "SQLTableDescriptor":
+    ) -> SQLTableDescriptor:
         """
         Create a SQLTableDescriptor from a fully qualified table name.
 

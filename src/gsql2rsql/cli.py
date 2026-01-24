@@ -101,8 +101,8 @@ def transpile(
     # Transpile
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
-        from gsql2rsql.planner.subquery_optimizer import optimize_plan
         from gsql2rsql.common.exceptions import ColumnResolutionError
+        from gsql2rsql.planner.subquery_optimizer import optimize_plan
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -556,8 +556,8 @@ def _transpile_query(
 
     try:
         from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
-        from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
         from gsql2rsql.common.exceptions import ColumnResolutionError
+        from gsql2rsql.planner.subquery_optimizer import SubqueryFlatteningOptimizer
 
         parser = OpenCypherParser()
         ast = parser.parse(query)
@@ -646,7 +646,7 @@ def _run_tui(schema_file: Path | None) -> None:
     from textual import work
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.containers import Center, Grid, Horizontal, Vertical, VerticalScroll
+    from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.screen import ModalScreen
     from textual.widgets import (
         Button,
@@ -655,11 +655,7 @@ def _run_tui(schema_file: Path | None) -> None:
         Footer,
         Header,
         Input,
-        Label,
-        ListItem,
-        ListView,
         ProgressBar,
-        Select,
         Static,
         TextArea,
     )

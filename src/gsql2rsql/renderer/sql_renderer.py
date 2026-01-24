@@ -10,6 +10,7 @@ from gsql2rsql.common.exceptions import (
     TranspilerNotSupportedException,
 )
 from gsql2rsql.common.logging import ILoggable
+from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.parser.ast import (
     NodeEntity,
     QueryExpression,
@@ -34,6 +35,8 @@ from gsql2rsql.parser.operators import (
     Function,
     ListPredicateType,
 )
+from gsql2rsql.planner.column_ref import ResolvedColumnRef
+from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
     AggregationBoundaryOperator,
@@ -50,10 +53,7 @@ from gsql2rsql.planner.operators import (
     UnwindOperator,
 )
 from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
-from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
-from gsql2rsql.planner.column_resolver import ResolutionResult
-from gsql2rsql.planner.column_ref import ResolvedColumnRef
 from gsql2rsql.renderer.schema_provider import (
     ISQLDBSchemaProvider,
     SQLTableDescriptor,
@@ -211,13 +211,13 @@ class SQLRenderer:
         self._config = config or {}
 
     @property
-    def _db_schema(self) -> "ISQLDBSchemaProvider":
+    def _db_schema(self) -> ISQLDBSchemaProvider:
         """Get the database schema provider (guaranteed non-None after __init__)."""
         assert self._graph_def is not None
         return self._graph_def
 
     @property
-    def _resolved(self) -> "ResolutionResult":
+    def _resolved(self) -> ResolutionResult:
         """Get the resolution result (guaranteed non-None during rendering)."""
         assert self._resolution_result is not None
         return self._resolution_result
@@ -1625,7 +1625,7 @@ class SQLRenderer:
         Returns:
             SQLTableDescriptor if found, None otherwise.
         """
-        from gsql2rsql.common.schema import WILDCARD_NODE_TYPE, WILDCARD_EDGE_TYPE
+        from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
 
         if not entity_name or entity_name == WILDCARD_NODE_TYPE:
             # No label or wildcard node type - use wildcard node table descriptor
@@ -1803,11 +1803,11 @@ class SQLRenderer:
             SQL string with raw column names.
         """
         from gsql2rsql.parser.ast import (
-            QueryExpressionProperty,
             QueryExpressionBinary,
-            QueryExpressionValue,
             QueryExpressionFunction,
             QueryExpressionParameter,
+            QueryExpressionProperty,
+            QueryExpressionValue,
         )
 
         if isinstance(expr, QueryExpressionProperty):
@@ -4513,7 +4513,7 @@ class SQLRenderer:
             return f"INTERVAL {match.group(1)} SECOND"
         else:
             # Default to days if format not recognized
-            return f"INTERVAL 1 DAY"
+            return "INTERVAL 1 DAY"
 
     def _render_map_literal(
         self, expr: QueryExpressionMapLiteral, context_op: LogicalOperator

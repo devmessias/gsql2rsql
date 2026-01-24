@@ -24,6 +24,18 @@ from gsql2rsql.parser.operators import (
     BinaryOperatorInfo,
     BinaryOperatorType,
 )
+from gsql2rsql.planner.aggregation_boundary import (
+    create_aggregation_boundary,
+    create_match_after_boundary_tree,
+    create_match_tree_for_boundary,
+    part_creates_aggregation_boundary,
+)
+from gsql2rsql.planner.column_resolver import ColumnResolver, ResolutionResult
+from gsql2rsql.planner.match_tree import (
+    convert_inline_properties_to_where,
+    create_partial_query_tree,
+    create_standard_match_tree,
+)
 from gsql2rsql.planner.operators import (
     AggregationBoundaryOperator,
     IBindable,
@@ -33,21 +45,9 @@ from gsql2rsql.planner.operators import (
     SetOperator,
     StartLogicalOperator,
 )
-from gsql2rsql.planner.column_resolver import ColumnResolver, ResolutionResult
 
 # Import extracted modules
 from gsql2rsql.planner.recursive_traversal import create_recursive_match_tree
-from gsql2rsql.planner.aggregation_boundary import (
-    part_creates_aggregation_boundary,
-    create_aggregation_boundary,
-    create_match_after_boundary_tree,
-    create_match_tree_for_boundary,
-)
-from gsql2rsql.planner.match_tree import (
-    create_standard_match_tree,
-    create_partial_query_tree,
-    convert_inline_properties_to_where,
-)
 
 
 class LogicalPlan:

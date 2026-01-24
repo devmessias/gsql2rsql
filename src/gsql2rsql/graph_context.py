@@ -25,21 +25,21 @@ This eliminates ~100 lines of boilerplate schema configuration code.
 from typing import TYPE_CHECKING
 
 from gsql2rsql.common.schema import (
+    EdgeSchema,
     EntityProperty,
     NodeSchema,
-    EdgeSchema,
-)
-from gsql2rsql.renderer.schema_provider import (
-    SimpleSQLSchemaProvider,
-    SQLTableDescriptor,
 )
 from gsql2rsql.parser.opencypher_parser import OpenCypherParser
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.subquery_optimizer import optimize_plan
+from gsql2rsql.renderer.schema_provider import (
+    SimpleSQLSchemaProvider,
+    SQLTableDescriptor,
+)
 from gsql2rsql.renderer.sql_renderer import SQLRenderer
 
 if TYPE_CHECKING:
-    from pyspark.sql import SparkSession, DataFrame
+    from pyspark.sql import DataFrame, SparkSession
 
 
 class GraphContext:

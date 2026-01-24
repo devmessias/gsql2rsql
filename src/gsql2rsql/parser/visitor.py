@@ -1149,9 +1149,7 @@ class CypherVisitor:
                 sort_expr = self.visit(sort_item.oC_Expression())
                 is_desc = False
                 # Check for DESC keyword
-                if sort_item.DESC():
-                    is_desc = True
-                elif sort_item.DESCENDING():
+                if sort_item.DESC() or sort_item.DESCENDING():
                     is_desc = True
                 if isinstance(sort_expr, QueryExpression):
                     order_by.append((sort_expr, is_desc))

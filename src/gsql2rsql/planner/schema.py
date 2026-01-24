@@ -17,7 +17,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from gsql2rsql.planner.data_types import DataType, StructType
@@ -74,7 +74,7 @@ class ValueField(Field):
     field_name: str = ""
     data_type: type[Any] | None = None
     # Authoritative structured type (preferred over data_type for arrays/structs)
-    structured_type: "DataType | None" = None
+    structured_type: DataType | None = None
 
     def clone(self) -> ValueField:
         return ValueField(
@@ -84,7 +84,7 @@ class ValueField(Field):
             structured_type=self.structured_type.clone() if self.structured_type else None,
         )
 
-    def get_element_struct(self) -> "StructType | None":
+    def get_element_struct(self) -> StructType | None:
         """Get the element struct type if this is an array of structs.
 
         This is the key method for resolving list comprehension variables.
@@ -181,7 +181,7 @@ class Schema(list[Field]):
         return Schema([f.clone() for f in self])
 
     @classmethod
-    def merge(cls, schema1: "Schema", schema2: "Schema") -> "Schema":
+    def merge(cls, schema1: Schema, schema2: Schema) -> Schema:
         """Merge two schemas into a new schema."""
         result = cls()
         for f in schema1:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any
 
 from gsql2rsql.common.exceptions import TranspilerInternalErrorException
 from gsql2rsql.common.schema import IGraphSchemaProvider
@@ -917,8 +918,8 @@ class ProjectionOperator(UnaryLogicalOperator):
         for column resolution and SQL generation.
         """
         from gsql2rsql.parser.ast import (
-            QueryExpressionProperty,
             QueryExpressionAggregationFunction,
+            QueryExpressionProperty,
         )
 
         fields: list[Field] = []
@@ -1411,13 +1412,13 @@ class RecursiveTraversalOperator(LogicalOperator):
         Returns:
             ValueField with authoritative ArrayType(StructType) type
         """
+        from gsql2rsql.planner.column_ref import compute_sql_column_name
         from gsql2rsql.planner.data_types import (
             ArrayType,
-            StructType,
-            StructField,
             PrimitiveType,
+            StructField,
+            StructType,
         )
-        from gsql2rsql.planner.column_ref import compute_sql_column_name
 
         # Build the struct fields for path elements
         # At minimum, we guarantee the 'id' field exists

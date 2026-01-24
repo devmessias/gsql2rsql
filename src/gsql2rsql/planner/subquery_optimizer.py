@@ -1104,13 +1104,13 @@ class SelectionPushdownOptimizer:
             List of QueryExpressionProperty objects found in the expression.
         """
         from gsql2rsql.parser.ast import (
-            QueryExpressionProperty,
-            QueryExpressionBinary,
-            QueryExpressionFunction,
             QueryExpressionAggregationFunction,
+            QueryExpressionBinary,
             QueryExpressionCaseExpression,
+            QueryExpressionFunction,
             QueryExpressionList,
             QueryExpressionListPredicate,
+            QueryExpressionProperty,
             QueryExpressionWithAlias,
         )
 
@@ -1168,7 +1168,7 @@ class SelectionPushdownOptimizer:
     #   WHERE rand() > 0.5 AND p.name = 'Alice'
     #   Correct (not pushed): filter 50% of joined rows randomly
     #   Wrong (pushed): filter 50% of Person rows, THEN join (more rows filtered!)
-    VOLATILE_FUNCTIONS: set["Function"] = {
+    VOLATILE_FUNCTIONS: set[Function] = {
         Function.RAND,           # Random number generation
         Function.DATE,           # When called without args: current date
         Function.DATETIME,       # When called without args: current datetime
@@ -1203,8 +1203,8 @@ class SelectionPushdownOptimizer:
         """
         from gsql2rsql.parser.ast import (
             QueryExpressionBinary,
-            QueryExpressionFunction,
             QueryExpressionCaseExpression,
+            QueryExpressionFunction,
             QueryExpressionList,
             QueryExpressionListPredicate,
             QueryExpressionWithAlias,
@@ -1273,10 +1273,10 @@ class SelectionPushdownOptimizer:
             True if the expression contains any aggregation function.
         """
         from gsql2rsql.parser.ast import (
-            QueryExpressionBinary,
-            QueryExpressionFunction,
             QueryExpressionAggregationFunction,
+            QueryExpressionBinary,
             QueryExpressionCaseExpression,
+            QueryExpressionFunction,
             QueryExpressionList,
             QueryExpressionListPredicate,
             QueryExpressionWithAlias,
@@ -1357,10 +1357,10 @@ class SelectionPushdownOptimizer:
             True if the expression contains EXISTS/NOT EXISTS.
         """
         from gsql2rsql.parser.ast import (
-            QueryExpressionExists,
             QueryExpressionBinary,
-            QueryExpressionFunction,
             QueryExpressionCaseExpression,
+            QueryExpressionExists,
+            QueryExpressionFunction,
             QueryExpressionList,
             QueryExpressionListPredicate,
             QueryExpressionWithAlias,
