@@ -14,6 +14,7 @@ from gsql2rsql.parser.ast import (
     Entity,
     NodeEntity,
     QueryExpression,
+    RelationshipDirection,
     RelationshipEntity,
 )
 from gsql2rsql.planner.schema import (
@@ -1078,6 +1079,7 @@ class RecursiveTraversalOperator(LogicalOperator):
         edge_properties: list[str] | None = None,
         edge_filter: QueryExpression | None = None,
         edge_filter_lambda_var: str = "",
+        direction: RelationshipDirection = RelationshipDirection.FORWARD,
     ) -> None:
         super().__init__()
         self.edge_types = edge_types
@@ -1103,6 +1105,12 @@ class RecursiveTraversalOperator(LogicalOperator):
         self.edge_filter = edge_filter
         self.edge_filter_lambda_var = edge_filter_lambda_var
 
+        # Direction for undirected traversal support
+        # FORWARD: (a)-[:TYPE*]->(b) - follow edges in their direction
+        # BACKWARD: (a)<-[:TYPE*]-(b) - follow edges in reverse
+        # BOTH: (a)-[:TYPE*]-(b) - follow edges in both directions (undirected)
+        self.direction = direction
+
     @property
     def depth(self) -> int:
         if not self._in_operators:
@@ -1119,7 +1127,8 @@ class RecursiveTraversalOperator(LogicalOperator):
         hops_str = f"*{self.min_hops}..{self.max_hops}" if self.max_hops else f"*{self.min_hops}.."
         path_str = f", path={self.path_variable}" if self.path_variable else ""
         circular_str = ", circular=True" if self.is_circular else ""
-        return f"RecursiveTraversal({edge_str}{hops_str}{path_str}{circular_str})"
+        dir_str = f", direction={self.direction.name}" if self.direction != RelationshipDirection.FORWARD else ""
+        return f"RecursiveTraversal({edge_str}{hops_str}{path_str}{circular_str}{dir_str})"
 
     def propagate_data_types_for_in_schema(self) -> None:
         """Propagate data types from upstream operators to input schema.

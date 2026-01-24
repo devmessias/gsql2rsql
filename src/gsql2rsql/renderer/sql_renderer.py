@@ -52,7 +52,7 @@ from gsql2rsql.planner.operators import (
     UnwindOperator,
 )
 from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
-from gsql2rsql.common.schema import EdgeSchema
+from gsql2rsql.common.schema import EdgeAccessStrategy, EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.column_ref import ResolvedColumnRef, ColumnRefType
@@ -833,86 +833,135 @@ class SQLRenderer:
 
         lines.append("    -- Base case: direct edges (depth = 1)")
 
-        if single_table:
-            # Single table - generate one SELECT with combined filter
+        # ═══════════════════════════════════════════════════════════════════
+        # UNDIRECTED TRAVERSAL SUPPORT
+        # ═══════════════════════════════════════════════════════════════════
+        # For undirected patterns like (a)-[:TYPE*1..3]-(b), we need to
+        # traverse edges in BOTH directions. The implementation depends on
+        # the EdgeAccessStrategy from the schema provider:
+        #
+        # - EDGE_LIST: Edges stored as directed (src, dst) pairs.
+        #   Undirected requires UNION ALL of forward and backward traversals:
+        #   Forward:  e.src AS start_node, e.dst AS end_node
+        #   Backward: e.dst AS start_node, e.src AS end_node
+        #
+        # - ADJACENCY_BIDIRECTIONAL (future): Edges pre-materialized with
+        #   reverse entries. Single query without UNION ALL.
+        #
+        # This decouples semantic intent (BOTH direction) from physical
+        # storage model (how to implement it), following Separation of Concerns.
+        # ═══════════════════════════════════════════════════════════════════
+        is_undirected = op.direction == RelationshipDirection.BOTH
+        is_backward = op.direction == RelationshipDirection.BACKWARD
+
+        # Check if we need UNION ALL for undirected traversal based on storage model
+        edge_access_strategy = self._graph_def.get_edge_access_strategy()
+        needs_union_for_undirected = (
+            is_undirected and edge_access_strategy == EdgeAccessStrategy.EDGE_LIST
+        )
+
+        # Helper to generate base case SELECT for a given direction
+        def build_base_case_select(
+            table_name_: str,
+            src_col: str,
+            dst_col: str,
+            filter_clause: str | None,
+            direction_label: str = "",
+        ) -> str:
+            """Build a single base case SELECT for one direction."""
             base_sql = []
+            if direction_label:
+                base_sql.append(f"    -- {direction_label}")
             base_sql.append("    SELECT")
-            base_sql.append(f"      e.{source_id_col} AS start_node,")
-            base_sql.append(f"      e.{target_id_col} AS end_node,")
+            base_sql.append(f"      e.{src_col} AS start_node,")
+            base_sql.append(f"      e.{dst_col} AS end_node,")
             base_sql.append("      1 AS depth,")
             base_sql.append(
-                f"      ARRAY(e.{source_id_col}, e.{target_id_col}) AS path,"
+                f"      ARRAY(e.{src_col}, e.{dst_col}) AS path,"
             )
             if op.collect_edges:
-                # Array with single edge struct
                 base_sql.append(f"      ARRAY({build_edge_struct()}) AS path_edges,")
-            base_sql.append(f"      ARRAY(e.{source_id_col}) AS visited")
-            base_sql.append(f"    FROM {table_name} e")
+            base_sql.append(f"      ARRAY(e.{src_col}) AS visited")
+            base_sql.append(f"    FROM {table_name_} e")
 
             # Add JOIN with source node table if we have a source filter
             if source_node_filter_sql and source_node_table:
                 base_sql.append(
                     f"    JOIN {source_node_table.full_table_name} src "
-                    f"ON src.{op.source_id_column} = e.{source_id_col}"
+                    f"ON src.{op.source_id_column} = e.{src_col}"
                 )
 
             # Build WHERE clause
             where_parts = []
-            if combined_filter:
-                where_parts.append(f"({combined_filter})")
-            # ═══════════════════════════════════════════════════════════════
-            # SOURCE NODE FILTER PUSHDOWN: Apply source filter in base case
-            # ═══════════════════════════════════════════════════════════════
+            if filter_clause:
+                where_parts.append(f"({filter_clause})")
             if source_node_filter_sql:
                 where_parts.append(source_node_filter_sql)
-            # ═══════════════════════════════════════════════════════════════
-            # PREDICATE PUSHDOWN: Apply edge filter in base case
-            # ═══════════════════════════════════════════════════════════════
-            # This filters edges BEFORE they enter the CTE, preventing
-            # invalid paths from being explored in the first place.
             if edge_filter_sql:
                 where_parts.append(edge_filter_sql)
             if where_parts:
                 base_sql.append(f"    WHERE {' AND '.join(where_parts)}")
 
-            lines.append("\n".join(base_sql))
+            return "\n".join(base_sql)
+
+        if single_table:
+            # Single table - generate SELECT(s) based on direction
+            if needs_union_for_undirected:
+                # Undirected with EDGE_LIST storage: UNION ALL of forward and backward
+                # Wrap in subquery for PySpark recursive CTE compatibility
+                # (PySpark requires exactly 2 children: anchor + recursive)
+                forward_sql = build_base_case_select(
+                    table_name, source_id_col, target_id_col, combined_filter,
+                    "Forward direction"
+                )
+                backward_sql = build_base_case_select(
+                    table_name, target_id_col, source_id_col, combined_filter,
+                    "Backward direction"
+                )
+                lines.append("    SELECT * FROM (")
+                lines.append(forward_sql)
+                lines.append("")
+                lines.append("      UNION ALL")
+                lines.append("")
+                lines.append(backward_sql)
+                lines.append("    )")
+            elif is_backward:
+                # Backward only: swap src and dst
+                lines.append(build_base_case_select(
+                    table_name, target_id_col, source_id_col, combined_filter
+                ))
+            else:
+                # Forward only (default)
+                lines.append(build_base_case_select(
+                    table_name, source_id_col, target_id_col, combined_filter
+                ))
         else:
-            # Multiple tables - use UNION ALL for base case only
+            # Multiple tables - use UNION ALL for base case
             base_cases: list[str] = []
             for edge_type, edge_table in edge_tables:
-                base_sql = []
-                base_sql.append("    SELECT")
-                base_sql.append(f"      e.{source_id_col} AS start_node,")
-                base_sql.append(f"      e.{target_id_col} AS end_node,")
-                base_sql.append("      1 AS depth,")
-                base_sql.append(
-                    f"      ARRAY(e.{source_id_col}, e.{target_id_col}) AS path,"
-                )
-                if op.collect_edges:
-                    base_sql.append(f"      ARRAY({build_edge_struct()}) AS path_edges,")
-                base_sql.append(f"      ARRAY(e.{source_id_col}) AS visited")
-                base_sql.append(f"    FROM {edge_table.full_table_name} e")
-
-                # Add JOIN with source node table if we have a source filter
-                if source_node_filter_sql and source_node_table:
-                    base_sql.append(
-                        f"    JOIN {source_node_table.full_table_name} src "
-                        f"ON src.{op.source_id_column} = e.{source_id_col}"
-                    )
-
-                filters = []
-                if edge_table.filter:
-                    filters.append(edge_table.filter)
-                # SOURCE NODE FILTER PUSHDOWN
-                if source_node_filter_sql:
-                    filters.append(source_node_filter_sql)
-                # PREDICATE PUSHDOWN: Apply edge filter in multi-table base case
-                if edge_filter_sql:
-                    filters.append(edge_filter_sql)
-                if filters:
-                    base_sql.append(f"    WHERE {' AND '.join(filters)}")
-
-                base_cases.append("\n".join(base_sql))
+                filter_clause = edge_table.filter
+                if needs_union_for_undirected:
+                    # Undirected with EDGE_LIST storage: add both forward and backward for each table
+                    base_cases.append(build_base_case_select(
+                        edge_table.full_table_name, source_id_col, target_id_col,
+                        filter_clause, f"Forward: {edge_type}"
+                    ))
+                    base_cases.append(build_base_case_select(
+                        edge_table.full_table_name, target_id_col, source_id_col,
+                        filter_clause, f"Backward: {edge_type}"
+                    ))
+                elif is_backward:
+                    # Backward only
+                    base_cases.append(build_base_case_select(
+                        edge_table.full_table_name, target_id_col, source_id_col,
+                        filter_clause
+                    ))
+                else:
+                    # Forward only
+                    base_cases.append(build_base_case_select(
+                        edge_table.full_table_name, source_id_col, target_id_col,
+                        filter_clause
+                    ))
 
             # Wrap in subquery for Databricks compatibility
             lines.append("    SELECT * FROM (")
@@ -924,87 +973,110 @@ class SQLRenderer:
         lines.append("")
         lines.append("    -- Recursive case: extend paths")
 
-        if single_table:
-            # Single table - generate one SELECT with combined filter
+        # Helper to generate recursive case SELECT for a given direction
+        def build_recursive_case_select(
+            table_name_: str,
+            join_col: str,  # Column to join on (e.src or e.dst)
+            end_col: str,   # Column for end_node (e.dst or e.src)
+            visited_col: str,  # Column to add to visited (e.src or e.dst)
+            filter_clause: str | None,
+            direction_label: str = "",
+        ) -> str:
+            """Build a single recursive case SELECT for one direction."""
             rec_sql = []
+            if direction_label:
+                rec_sql.append(f"    -- {direction_label}")
             rec_sql.append("    SELECT")
             rec_sql.append("      p.start_node,")
-            rec_sql.append(f"      e.{target_id_col} AS end_node,")
+            rec_sql.append(f"      e.{end_col} AS end_node,")
             rec_sql.append("      p.depth + 1 AS depth,")
             rec_sql.append(
-                f"      CONCAT(p.path, ARRAY(e.{target_id_col})) AS path,"
+                f"      CONCAT(p.path, ARRAY(e.{end_col})) AS path,"
             )
             if op.collect_edges:
-                # Append new edge struct to path_edges array
                 rec_sql.append(
                     f"      ARRAY_APPEND(p.path_edges, {build_edge_struct()}) AS path_edges,"
                 )
             rec_sql.append(
-                f"      CONCAT(p.visited, ARRAY(e.{source_id_col})) AS visited"
+                f"      CONCAT(p.visited, ARRAY(e.{visited_col})) AS visited"
             )
             rec_sql.append(f"    FROM {cte_name} p")
-            rec_sql.append(f"    JOIN {table_name} e")
-            rec_sql.append(f"      ON p.end_node = e.{source_id_col}")
+            rec_sql.append(f"    JOIN {table_name_} e")
+            rec_sql.append(f"      ON p.end_node = e.{join_col}")
 
             where_parts = [f"p.depth < {max_depth}"]
             where_parts.append(
-                f"NOT ARRAY_CONTAINS(p.visited, e.{target_id_col})"
+                f"NOT ARRAY_CONTAINS(p.visited, e.{end_col})"
             )
-            if combined_filter:
-                where_parts.append(f"({combined_filter})")
-            # ═══════════════════════════════════════════════════════════════
-            # PREDICATE PUSHDOWN: Apply edge filter in recursive case
-            # ═══════════════════════════════════════════════════════════════
-            # This is the key optimization: by filtering edges DURING
-            # recursion, we prune entire subtrees of invalid paths.
-            #
-            # Example: For rel.amount > 1000
-            # - Without pushdown: explore 10,000 paths, filter to 2
-            # - With pushdown: only explore the 2 valid paths from start
+            if filter_clause:
+                where_parts.append(f"({filter_clause})")
             if edge_filter_sql:
                 where_parts.append(edge_filter_sql)
             rec_sql.append(f"    WHERE {where_parts[0]}")
             for wp in where_parts[1:]:
                 rec_sql.append(f"      AND {wp}")
 
-            lines.append("\n".join(rec_sql))
+            return "\n".join(rec_sql)
+
+        if single_table:
+            # Single table - generate SELECT(s) based on direction
+            if needs_union_for_undirected:
+                # Undirected with EDGE_LIST storage: UNION ALL of forward and backward
+                # Wrap in subquery for PySpark recursive CTE compatibility
+                forward_sql = build_recursive_case_select(
+                    table_name, source_id_col, target_id_col, source_id_col,
+                    combined_filter, "Forward direction"
+                )
+                backward_sql = build_recursive_case_select(
+                    table_name, target_id_col, source_id_col, target_id_col,
+                    combined_filter, "Backward direction"
+                )
+                lines.append("    SELECT * FROM (")
+                lines.append(forward_sql)
+                lines.append("")
+                lines.append("      UNION ALL")
+                lines.append("")
+                lines.append(backward_sql)
+                lines.append("    )")
+            elif is_backward:
+                # Backward only: swap columns
+                lines.append(build_recursive_case_select(
+                    table_name, target_id_col, source_id_col, target_id_col,
+                    combined_filter
+                ))
+            else:
+                # Forward only (default)
+                lines.append(build_recursive_case_select(
+                    table_name, source_id_col, target_id_col, source_id_col,
+                    combined_filter
+                ))
         else:
             # Multiple tables - use UNION ALL wrapped in subquery
             recursive_cases: list[str] = []
             for edge_type, edge_table in edge_tables:
-                rec_sql = []
-                rec_sql.append("    SELECT")
-                rec_sql.append("      p.start_node,")
-                rec_sql.append(f"      e.{target_id_col} AS end_node,")
-                rec_sql.append("      p.depth + 1 AS depth,")
-                rec_sql.append(
-                    f"      CONCAT(p.path, ARRAY(e.{target_id_col})) AS path,"
-                )
-                if op.collect_edges:
-                    rec_sql.append(
-                        f"      ARRAY_APPEND(p.path_edges, {build_edge_struct()}) AS path_edges,"
-                    )
-                rec_sql.append(
-                    f"      CONCAT(p.visited, ARRAY(e.{source_id_col})) AS visited"
-                )
-                rec_sql.append(f"    FROM {cte_name} p")
-                rec_sql.append(f"    JOIN {edge_table.full_table_name} e")
-                rec_sql.append(f"      ON p.end_node = e.{source_id_col}")
-
-                where_parts = [f"p.depth < {max_depth}"]
-                where_parts.append(
-                    f"NOT ARRAY_CONTAINS(p.visited, e.{target_id_col})"
-                )
-                if edge_table.filter:
-                    where_parts.append(edge_table.filter)
-                # PREDICATE PUSHDOWN: Apply edge filter in multi-table recursive case
-                if edge_filter_sql:
-                    where_parts.append(edge_filter_sql)
-                rec_sql.append(f"    WHERE {where_parts[0]}")
-                for wp in where_parts[1:]:
-                    rec_sql.append(f"      AND {wp}")
-
-                recursive_cases.append("\n".join(rec_sql))
+                filter_clause = edge_table.filter
+                if needs_union_for_undirected:
+                    # Undirected with EDGE_LIST storage: add both forward and backward for each table
+                    recursive_cases.append(build_recursive_case_select(
+                        edge_table.full_table_name, source_id_col, target_id_col,
+                        source_id_col, filter_clause, f"Forward: {edge_type}"
+                    ))
+                    recursive_cases.append(build_recursive_case_select(
+                        edge_table.full_table_name, target_id_col, source_id_col,
+                        target_id_col, filter_clause, f"Backward: {edge_type}"
+                    ))
+                elif is_backward:
+                    # Backward only
+                    recursive_cases.append(build_recursive_case_select(
+                        edge_table.full_table_name, target_id_col, source_id_col,
+                        target_id_col, filter_clause
+                    ))
+                else:
+                    # Forward only
+                    recursive_cases.append(build_recursive_case_select(
+                        edge_table.full_table_name, source_id_col, target_id_col,
+                        source_id_col, filter_clause
+                    ))
 
             # Wrap in subquery for Databricks compatibility
             lines.append("    SELECT * FROM (")

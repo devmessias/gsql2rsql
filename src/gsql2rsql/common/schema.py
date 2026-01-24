@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any
 
 # Sentinel value for wildcard nodes (no-label support)
@@ -9,6 +10,28 @@ WILDCARD_NODE_TYPE = "__wildcard_node__"
 
 # Sentinel value for wildcard edges (untyped edge support)
 WILDCARD_EDGE_TYPE = "__wildcard_edge__"
+
+
+class EdgeAccessStrategy(Enum):
+    """Strategy for how edges are stored and accessed in the underlying data model.
+
+    This abstraction decouples the semantic concept of "undirected traversal" from
+    the physical storage model, following Separation of Concerns. The planner deals
+    with semantics (FORWARD/BACKWARD/BOTH), while the renderer uses this strategy
+    to determine how to implement those semantics based on the storage model.
+
+    Examples:
+        - EDGE_LIST: Single table with (src, dst) rows. Undirected traversal requires
+          UNION ALL to access edges in both directions.
+        - ADJACENCY_BIDIRECTIONAL: Edges stored with pre-computed reverse entries
+          (e.g., both (A,B) and (B,A) exist). Undirected traversal can query directly.
+    """
+
+    EDGE_LIST = auto()
+    """Edges stored as directed (src, dst) pairs. Requires UNION for bidirectional access."""
+
+    ADJACENCY_BIDIRECTIONAL = auto()
+    """Edges stored with reverse pairs pre-materialized. Direct bidirectional access."""
 
 
 @dataclass
@@ -144,6 +167,20 @@ class IGraphSchemaProvider(ABC):
 
         Returns:
             EdgeSchema if wildcard edge support is enabled, None otherwise.
+        """
+        ...
+
+    @abstractmethod
+    def get_edge_access_strategy(self) -> EdgeAccessStrategy:
+        """
+        Return the strategy for how edges are stored and accessed.
+
+        This determines how the renderer implements bidirectional traversal:
+        - EDGE_LIST: Requires UNION ALL for undirected patterns
+        - ADJACENCY_BIDIRECTIONAL: Direct query without UNION
+
+        Returns:
+            EdgeAccessStrategy indicating the storage model.
         """
         ...
 

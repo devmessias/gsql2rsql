@@ -1140,6 +1140,8 @@ class LogicalPlan:
             # Predicate pushdown: Filter edges DURING CTE recursion
             edge_filter=path_info.combined_edge_predicate,
             edge_filter_lambda_var=path_info.edge_lambda_variable,
+            # Direction for undirected traversal support
+            direction=rel.direction,
         )
         recursive_op.add_in_operator(source_ds)
         source_ds.add_out_operator(recursive_op)

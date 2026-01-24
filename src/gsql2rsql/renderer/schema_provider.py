@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gsql2rsql.common.schema import (
+    EdgeAccessStrategy,
     EdgeSchema,
     EntityProperty,
     IGraphSchemaProvider,
@@ -597,3 +598,17 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
             node_schema = NodeSchema(name=entity_id, properties=[])
             self._nodes[node_schema.name] = node_schema
             self._table_descriptors[node_schema.id] = descriptor
+
+    def get_edge_access_strategy(self) -> EdgeAccessStrategy:
+        """Return the edge access strategy for this schema provider.
+
+        Current implementation uses EDGE_LIST strategy (single table with directed edges).
+        Undirected traversal requires UNION ALL to access edges in both directions.
+
+        Future implementations may use ADJACENCY_BIDIRECTIONAL if edges are stored
+        with pre-computed reverse entries.
+
+        Returns:
+            EdgeAccessStrategy.EDGE_LIST
+        """
+        return EdgeAccessStrategy.EDGE_LIST
