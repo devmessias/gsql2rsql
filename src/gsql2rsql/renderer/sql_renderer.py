@@ -191,6 +191,10 @@ class SQLRenderer:
         self._graph_schema_provider = graph_schema_provider
         self._logger = logger
         self._cte_counter = 0
+        # Global counter for unique JOIN aliases to prevent Databricks optimizer issues.
+        # Using a global counter (not depth-based) ensures uniqueness across multiple
+        # MATCH patterns in the same query.
+        self._join_alias_counter = 0
         # Column pruning: set of required column aliases (e.g., "_gsql2rsql_p_name")
         self._required_columns: set[str] = set()
         # Bare variable references (e.g., "shared_cards") - used for ValueFields
@@ -217,6 +221,20 @@ class SQLRenderer:
         """Get the resolution result (guaranteed non-None during rendering)."""
         assert self._resolution_result is not None
         return self._resolution_result
+
+    def _next_join_alias_pair(self) -> tuple[str, str]:
+        """Generate unique alias pair for JOIN subqueries.
+
+        Returns a tuple (left_var, right_var) with globally unique names.
+        This prevents alias collisions that can confuse query optimizers
+        like Databricks when they flatten nested subqueries.
+
+        Returns:
+            Tuple of (left_alias, right_alias), e.g., ("_left_0", "_right_0")
+        """
+        alias_id = self._join_alias_counter
+        self._join_alias_counter += 1
+        return (f"_left_{alias_id}", f"_right_{alias_id}")
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
@@ -252,8 +270,9 @@ class SQLRenderer:
                 "that is the job of ColumnResolver."
             )
 
-        # Reset CTE counter
+        # Reset counters for fresh rendering
         self._cte_counter = 0
+        self._join_alias_counter = 0
 
         # Store resolution result - this is now guaranteed to be non-None
         self._resolution_result = plan.resolution_result
@@ -1475,8 +1494,8 @@ class SQLRenderer:
         indent = self._indent(depth)
         lines: list[str] = []
 
-        left_var = "_left"
-        right_var = "_right"
+        # Use globally unique aliases to avoid collisions with Databricks optimizer
+        left_var, right_var = self._next_join_alias_pair()
 
         lines.append(f"{indent}SELECT")
 
@@ -1842,8 +1861,8 @@ class SQLRenderer:
         if not left_op or not right_op:
             return ""
 
-        left_var = "_left"
-        right_var = "_right"
+        # Use globally unique aliases to avoid collisions with Databricks optimizer
+        left_var, right_var = self._next_join_alias_pair()
 
         # Check if left side is RecursiveTraversalOperator
         is_recursive_join = isinstance(left_op, RecursiveTraversalOperator)
