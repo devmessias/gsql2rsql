@@ -69,6 +69,7 @@ plugins:
         remove_comments: true
       cache_safe: true
   - macros:
+      module_name: docs/macros
       include_dir: docs/includes
   # Note: Following plugins disabled due to slow builds:
   # - mermaid2:
