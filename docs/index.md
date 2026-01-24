@@ -44,16 +44,14 @@ sql = graph.transpile("""
     LIMIT 3
 """)
 
-print(sql)  # Production-ready Databricks SQL
+print(sql)
 ```
 
 **5 lines of Cypher → optimized Databricks SQL with recursive CTEs**
 
 ??? example "Click to see the generated SQL (auto-generated from transpiler)"
 
-    ```sql
-    {{ fraud_example_sql() }}
-    ```
+{{ fraud_example_sql(indent=4, include_fence=True) }}
 
 ---
 

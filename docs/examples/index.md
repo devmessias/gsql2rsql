@@ -87,8 +87,6 @@ gsql2rsql tui --schema examples/fraud_queries.yaml
 
 All queries are:
 
-- **Tested**: Validated against PySpark with real data
-- **Production-ready**: Used in real fraud detection and credit analysis systems
 - **Documented**: Each shows both OpenCypher input and SQL output
 
 !!! tip "Request Examples"

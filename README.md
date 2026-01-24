@@ -1,11 +1,20 @@
 # gsql2rsql
 
+[![PyPI version](https://badge.fury.io/py/gsql2rsql.svg)](https://badge.fury.io/py/gsql2rsql)
+[![CI](https://github.com/devmessias/gsql2rsql/actions/workflows/ci.yml/badge.svg)](https://github.com/devmessias/gsql2rsql/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://devmessias.github.io/gsql2rsql)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+
+
 **Query your Delta Tables as a Graph**
 
 No need for a separate graph database. Write intuitive OpenCypher queries, get Databricks SQL automatically.
 
-!!! success "Why Databricks?"
-    Databricks provides tables designed for massive scale, enabling efficient storage and querying of tens of billions of triples with features like time travel No ETL or migration needed—just query your data lake as a graph. Recently, Databricks released support for recursive queries, unlocking the use of SQL warehouses for graph-type queries.
+> **Why Databricks?**
+>
+> Databricks provides tables designed for massive scale, enabling efficient storage and querying of tens of billions of triples with features like time travel No ETL or migration needed—just query your data lake as a graph. Recently, Databricks released support for recursive queries, unlocking the use of SQL warehouses for graph-type queries.
+>
 
 ---
 
@@ -17,8 +26,6 @@ No need for a separate graph database. Write intuitive OpenCypher queries, get D
 | Need to maintain a separate graph database | Query Delta Lake directly |
 | LLM-generated complex SQL is hard to audit | Human-readable Cypher + deterministic transpilation (optionally pass to LLM for final optimization) |
 | Scaling to tens of billions of triples is costly in graph DBs | Delta Lake stores billions of triples efficiently, with Spark scalability |
-
-
 
 ## See It in Action
 
@@ -41,79 +48,91 @@ sql = graph.transpile("""
     WHERE dest.risk_score > 0.8
     RETURN dest.id, dest.name, dest.risk_score, length(path) AS depth
     ORDER BY depth, dest.risk_score DESC
-    LIMIT 100
+    LIMIT 3
 """)
 
-print(sql)  # Production-ready Databricks SQL
+print(sql)
 ```
 
 **5 lines of Cypher → optimized Databricks SQL with recursive CTEs**
 
-??? example "Click to see the generated SQL"
+<details>
+<summary>Click to see the generated SQL (auto-generated from transpiler)</summary>
 
-    ```sql
-    WITH RECURSIVE
-      paths_1 AS (
-        -- Base case: direct edges (depth = 1)
-        SELECT
-          e.src AS start_node,
-          e.dst AS end_node,
-          1 AS depth,
-          ARRAY(e.src, e.dst) AS path,
-          ARRAY(NAMED_STRUCT('src', e.src, 'dst', e.dst, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
-          ARRAY(e.src) AS visited
-        FROM catalog.fraud.edges e
-        JOIN catalog.fraud.nodes src ON src.id = e.src
-        WHERE (relationship_type = 'TRANSACTION') AND (src.id) = (12345)
+```sql
+WITH RECURSIVE
+  paths_1 AS (
+-- Base case: direct edges (depth = 1)
+SELECT
+  e.src AS start_node,
+  e.dst AS end_node,
+  1 AS depth,
+  ARRAY(e.src, e.dst) AS path,
+  ARRAY(NAMED_STRUCT('src', e.src, 'dst', e.dst, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+  ARRAY(e.src) AS visited
+FROM catalog.fraud.edges e
+JOIN catalog.fraud.nodes src ON src.id = e.src
+WHERE (relationship_type = 'TRANSACTION') AND (src.id) = (12345)
 
-        UNION ALL
+UNION ALL
 
-        -- Recursive case: extend paths
-        SELECT
-          p.start_node,
-          e.dst AS end_node,
-          p.depth + 1 AS depth,
-          CONCAT(p.path, ARRAY(e.dst)) AS path,
-          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('src', e.src, 'dst', e.dst, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
-          CONCAT(p.visited, ARRAY(e.src)) AS visited
-        FROM paths_1 p
-        JOIN catalog.fraud.edges e
-          ON p.end_node = e.src
-        WHERE p.depth < 4
-          AND NOT ARRAY_CONTAINS(p.visited, e.dst)
-          AND (relationship_type = 'TRANSACTION')
-      )
-    SELECT
-       _gsql2rsql_dest_id AS id
-      ,_gsql2rsql_dest_name AS name
-      ,_gsql2rsql_dest_risk_score AS risk_score
-      ,(SIZE(_gsql2rsql_path_id) - 1) AS depth
-    FROM (
-      SELECT
-         sink.id AS _gsql2rsql_dest_id
-        ,sink.name AS _gsql2rsql_dest_name
-        ,sink.risk_score AS _gsql2rsql_dest_risk_score
-        ,source.id AS _gsql2rsql_origin_id
-        ,p.path AS _gsql2rsql_path_id
-        ,p.path_edges AS _gsql2rsql_path_edges
-      FROM paths_1 p
-      JOIN catalog.fraud.nodes sink ON sink.id = p.end_node
-      JOIN catalog.fraud.nodes source ON source.id = p.start_node
-      WHERE p.depth >= 1 AND p.depth <= 4 AND (sink.risk_score) > (0.8)
-    ) AS _proj
-    ORDER BY depth ASC, _gsql2rsql_dest_risk_score DESC
-    LIMIT 100
-    ```
+-- Recursive case: extend paths
+SELECT
+  p.start_node,
+  e.dst AS end_node,
+  p.depth + 1 AS depth,
+  CONCAT(p.path, ARRAY(e.dst)) AS path,
+  ARRAY_APPEND(p.path_edges, NAMED_STRUCT('src', e.src, 'dst', e.dst, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+  CONCAT(p.visited, ARRAY(e.src)) AS visited
+FROM paths_1 p
+JOIN catalog.fraud.edges e
+  ON p.end_node = e.src
+WHERE p.depth < 4
+  AND NOT ARRAY_CONTAINS(p.visited, e.dst)
+  AND (relationship_type = 'TRANSACTION')
+  )
+SELECT 
+   _gsql2rsql_dest_id AS id
+  ,_gsql2rsql_dest_name AS name
+  ,_gsql2rsql_dest_risk_score AS risk_score
+  ,(SIZE(_gsql2rsql_path_id) - 1) AS depth
+FROM (
+  SELECT
+ sink.id AS _gsql2rsql_dest_id
+,sink.name AS _gsql2rsql_dest_name
+,sink.risk_score AS _gsql2rsql_dest_risk_score
+,source.id AS _gsql2rsql_origin_id
+,source.name AS _gsql2rsql_origin_name
+,source.risk_score AS _gsql2rsql_origin_risk_score
+,p.start_node
+,p.end_node
+,p.depth
+,p.path AS _gsql2rsql_path_id
+,p.path_edges AS _gsql2rsql_path_edges
+  FROM paths_1 p
+  JOIN catalog.fraud.nodes sink
+ON sink.id = p.end_node
+  JOIN catalog.fraud.nodes source
+ON source.id = p.start_node
+  WHERE p.depth >= 1 AND p.depth <= 4 AND (sink.risk_score) > (0.8)
+) AS _proj
+ORDER BY depth ASC, _gsql2rsql_dest_risk_score DESC
+LIMIT 3
+```
+
+</details>
 
 ---
 
-!!! warning "Not for OLTP (obviously) or end-user queries"
-    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
-
+> **Not for OLTP (obviously) or end-user queries**
+>
+> This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
+>
+>
 
 ## Real-World Examples
 
-=== "Fraud Detection"
+### Fraud Detection
 
     ```cypher
     -- Find fraud rings: accounts connected through suspicious transactions
@@ -124,7 +143,7 @@ print(sql)  # Production-ready Databricks SQL
 
     [See more fraud detection queries →](examples/fraud.md)
 
-=== "Credit Analysis"
+### Credit Analysis
 
     ```cypher
     -- Analyze credit exposure through guarantor chains
@@ -135,7 +154,7 @@ print(sql)  # Production-ready Databricks SQL
 
     [See more credit analysis queries →](examples/credit.md)
 
-=== "Social Network"
+### Social Network
 
     ```cypher
     -- Friends of friends who work at tech companies
@@ -147,9 +166,6 @@ print(sql)  # Production-ready Databricks SQL
     [See all feature examples →](examples/features.md)
 
 ---
-
-
-
 
 **That's it!** No schema boilerplate, no complex setup.
 
@@ -249,9 +265,10 @@ This separation ensures each phase has clear responsibilities and can be tested 
 
 ## Project Status
 
-!!! info "Research Project"
- **Contributions welcome!**
+> **Research Project**
+>
 
+ **Contributions welcome!**
 
 - [GitHub Repository](https://github.com/devmessias/gsql2rsql)
 - [Issue Tracker](https://github.com/devmessias/gsql2rsql/issues)
@@ -264,4 +281,3 @@ This separation ensures each phase has clear responsibilities and can be tested 
 MIT License - see [LICENSE](https://github.com/devmessias/gsql2rsql/blob/main/LICENSE)
 
 ---
---8<-- "inspiration.md"

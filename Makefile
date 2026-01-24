@@ -267,6 +267,9 @@ docs-clean:  ## Clean documentation build artifacts
 
 docs-full: docs-generate docs-build  ## Generate and build documentation
 
+generate-readme:  ## Generate README.md from docs/index.md with compiled examples
+	$(UV) run python scripts/generate_readme.py
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilities
 # ─────────────────────────────────────────────────────────────────────────────
