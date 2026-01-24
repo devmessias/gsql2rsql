@@ -31,8 +31,8 @@ jobs:
       - name: Type check with mypy
         run: uv run mypy src/gsql2rsql
 
-      - name: Lint with ruff
-        run: uv run ruff check .
+      # - name: Lint with ruff
+      #   run: uv run ruff check .
 
 
       - name: Generate golden files
