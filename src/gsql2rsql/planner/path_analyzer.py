@@ -414,15 +414,18 @@ class PathExpressionAnalyzer:
         Returns:
             True if any parameter is a property reference to path_var
         """
+        # Types that have variable_name attribute
+        types_with_variable_name = (
+            QueryExpressionProperty,
+            QueryExpressionListPredicate,
+            QueryExpressionListComprehension,
+            QueryExpressionReduce,
+        )
         for param in params:
-            if isinstance(param, QueryExpressionProperty):
-                # Property expression: could be "path" or "path.something"
+            if isinstance(param, types_with_variable_name):
+                # Check if variable_name matches the path variable
                 if param.variable_name == path_var:
                     return True
-            # Also check for direct variable references (no property access)
-            # This handles cases like relationships(path) where path is just a variable
-            if hasattr(param, 'variable_name') and param.variable_name == path_var:
-                return True
         return False
 
     def _is_relationships_of_path(

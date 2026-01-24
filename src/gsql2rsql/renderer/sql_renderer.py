@@ -421,13 +421,9 @@ class SQLRenderer:
                 self._collect_required_columns_from_resolution(op.in_operator_right)
             return  # Don't recurse further for set operators
 
-        # Recurse into input operators
-        if hasattr(op, "in_operator") and op.in_operator:
-            self._collect_required_columns_from_resolution(op.in_operator)
-        if hasattr(op, "in_operator_left") and op.in_operator_left:
-            self._collect_required_columns_from_resolution(op.in_operator_left)
-        if hasattr(op, "in_operator_right") and op.in_operator_right:
-            self._collect_required_columns_from_resolution(op.in_operator_right)
+        # Recurse into input operators using polymorphic method
+        for in_op in op.in_operators:
+            self._collect_required_columns_from_resolution(in_op)
 
     def _collect_join_key_columns(self, op: JoinOperator) -> None:
         """Collect join key columns from JoinOperator (used by both resolution and legacy paths).
@@ -690,24 +686,31 @@ class SQLRenderer:
         # Group edge types by table name
         table_to_filters: dict[str, list[str]] = {}
         for edge_type, edge_table in edge_tables:
-            table_name = edge_table.full_table_name
-            if table_name not in table_to_filters:
-                table_to_filters[table_name] = []
+            current_table_name = edge_table.full_table_name
+            if current_table_name not in table_to_filters:
+                table_to_filters[current_table_name] = []
             if edge_table.filter:
-                table_to_filters[table_name].append(edge_table.filter)
+                table_to_filters[current_table_name].append(edge_table.filter)
 
+        # TODO: This method is too long (~500 lines) and has complex control flow.
+        # Consider extracting _build_single_table_cte() and _build_multi_table_cte()
+        # methods. The single_table variables are used far from their definition,
+        # making the data flow hard to follow statically.
+        #
         # If single table with multiple filters, combine with OR
         single_table = len(table_to_filters) == 1
+        single_table_name: str | None = None
+        single_table_filter: str | None = None
         if single_table:
-            table_name = list(table_to_filters.keys())[0]
-            filters_list = table_to_filters[table_name]
+            single_table_name = list(table_to_filters.keys())[0]
+            filters_list = table_to_filters[single_table_name]
             if len(filters_list) > 1:
                 # Combine filters with OR: (filter1) OR (filter2)
-                combined_filter = " OR ".join(f"({f})" for f in filters_list)
+                single_table_filter = " OR ".join(f"({f})" for f in filters_list)
             elif len(filters_list) == 1:
-                combined_filter = filters_list[0]
+                single_table_filter = filters_list[0]
             else:
-                combined_filter = None
+                single_table_filter = None
 
         # Helper to build NAMED_STRUCT for edge properties
         def build_edge_struct(alias: str = "e") -> str:
@@ -906,16 +909,18 @@ class SQLRenderer:
 
         if single_table:
             # Single table - generate SELECT(s) based on direction
+            # Invariant: single_table_name is set when single_table is True
+            assert single_table_name is not None
             if needs_union_for_undirected:
                 # Undirected with EDGE_LIST storage: UNION ALL of forward and backward
                 # Wrap in subquery for PySpark recursive CTE compatibility
                 # (PySpark requires exactly 2 children: anchor + recursive)
                 forward_sql = build_base_case_select(
-                    table_name, source_id_col, target_id_col, combined_filter,
+                    single_table_name, source_id_col, target_id_col, single_table_filter,
                     "Forward direction"
                 )
                 backward_sql = build_base_case_select(
-                    table_name, target_id_col, source_id_col, combined_filter,
+                    single_table_name, target_id_col, source_id_col, single_table_filter,
                     "Backward direction"
                 )
                 lines.append("    SELECT * FROM (")
@@ -928,12 +933,12 @@ class SQLRenderer:
             elif is_backward:
                 # Backward only: swap src and dst
                 lines.append(build_base_case_select(
-                    table_name, target_id_col, source_id_col, combined_filter
+                    single_table_name, target_id_col, source_id_col, single_table_filter
                 ))
             else:
                 # Forward only (default)
                 lines.append(build_base_case_select(
-                    table_name, source_id_col, target_id_col, combined_filter
+                    single_table_name, source_id_col, target_id_col, single_table_filter
                 ))
         else:
             # Multiple tables - use UNION ALL for base case
@@ -1020,16 +1025,18 @@ class SQLRenderer:
 
         if single_table:
             # Single table - generate SELECT(s) based on direction
+            # Invariant: single_table_name is set when single_table is True
+            assert single_table_name is not None
             if needs_union_for_undirected:
                 # Undirected with EDGE_LIST storage: UNION ALL of forward and backward
                 # Wrap in subquery for PySpark recursive CTE compatibility
                 forward_sql = build_recursive_case_select(
-                    table_name, source_id_col, target_id_col, source_id_col,
-                    combined_filter, "Forward direction"
+                    single_table_name, source_id_col, target_id_col, source_id_col,
+                    single_table_filter, "Forward direction"
                 )
                 backward_sql = build_recursive_case_select(
-                    table_name, target_id_col, source_id_col, target_id_col,
-                    combined_filter, "Backward direction"
+                    single_table_name, target_id_col, source_id_col, target_id_col,
+                    single_table_filter, "Backward direction"
                 )
                 lines.append("    SELECT * FROM (")
                 lines.append(forward_sql)
@@ -1041,14 +1048,14 @@ class SQLRenderer:
             elif is_backward:
                 # Backward only: swap columns
                 lines.append(build_recursive_case_select(
-                    table_name, target_id_col, source_id_col, target_id_col,
-                    combined_filter
+                    single_table_name, target_id_col, source_id_col, target_id_col,
+                    single_table_filter
                 ))
             else:
                 # Forward only (default)
                 lines.append(build_recursive_case_select(
-                    table_name, source_id_col, target_id_col, source_id_col,
-                    combined_filter
+                    single_table_name, source_id_col, target_id_col, source_id_col,
+                    single_table_filter
                 ))
         else:
             # Multiple tables - use UNION ALL wrapped in subquery
@@ -2309,17 +2316,15 @@ class SQLRenderer:
             if isinstance(left_op, RecursiveTraversalOperator):
                 if left_op.source_alias:
                     left_entity_aliases.add(left_op.source_alias)
-            elif hasattr(left_op, 'in_operator_left'):
+            else:
                 # Check if the left operand chain contains a recursive traversal
                 def find_recursive_source(check_op: LogicalOperator) -> str | None:
                     if isinstance(check_op, RecursiveTraversalOperator):
                         return check_op.source_alias
-                    if hasattr(check_op, 'in_operator_left') and check_op.in_operator_left:
-                        result = find_recursive_source(check_op.in_operator_left)
-                        if result:
-                            return result
-                    if hasattr(check_op, 'in_operator') and check_op.in_operator:
-                        return find_recursive_source(check_op.in_operator)
+                    # Use polymorphic get_input_operator() for all operator types
+                    input_op = check_op.get_input_operator()
+                    if input_op:
+                        return find_recursive_source(input_op)
                     return None
 
                 recursive_source = find_recursive_source(left_op)

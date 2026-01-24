@@ -110,6 +110,17 @@ class LogicalOperator(ABC):
         for in_op in self.graph_in_operators:
             yield from in_op.get_all_upstream_operators(op_type)
 
+    def get_input_operator(self) -> LogicalOperator | None:
+        """Get the primary input operator (first upstream operator).
+
+        This provides a polymorphic way to access the input operator without
+        needing to check if the operator is Unary, Binary, or Start type.
+        For Unary operators, returns the single input.
+        For Binary operators, returns the left input.
+        For Start operators, returns None.
+        """
+        return self.graph_in_operators[0] if self.graph_in_operators else None
+
     def propagate_data_types_for_in_schema(self) -> None:
         """Propagate data types from upstream operators to input schema."""
         pass
@@ -281,6 +292,10 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
         node_id_field: ValueField | None = None
         edge_src_id_field: ValueField | None = None
         edge_sink_id_field: ValueField | None = None
+        # TODO: This method has complex control flow that makes static analysis difficult.
+        # Consider refactoring into _bind_node_entity() and _bind_relationship_entity()
+        # methods to make the data flow clearer and reduce variable scope issues.
+        resolved_edge_types: list[str] = []
 
         if isinstance(self.entity, NodeEntity):
             entity_name = self.entity.entity_name
@@ -327,7 +342,6 @@ class DataSourceOperator(StartLogicalOperator, IBindable):
         elif isinstance(self.entity, RelationshipEntity):
             rel_entity = self.entity
             edge_def = None
-            resolved_edge_types: list[str] = []
 
             from gsql2rsql.parser.ast import RelationshipDirection
 

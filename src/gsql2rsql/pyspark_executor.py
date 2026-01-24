@@ -138,7 +138,7 @@ def load_schema_from_yaml(yaml_data: dict[str, Any]) -> SimpleSQLSchemaProvider:
             # Collect properties from all nodes for wildcard
             all_properties: list[EntityProperty] = []
             seen_props: set[str] = set()
-            for node_schema in provider._nodes.values():
+            for node_schema in provider.get_all_node_schemas():
                 for prop in node_schema.properties:
                     if prop.property_name not in seen_props:
                         all_properties.append(prop)

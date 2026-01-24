@@ -275,7 +275,9 @@ class TestAllAnyPredicate:
 
         sql_upper = sql.upper()
         # Should have FORALL/EXISTS or FILTER/SIZE for predicates
+        # ANY(f IN flags WHERE f = true) may be optimized to ARRAY_CONTAINS
         assert (
             ("FORALL" in sql_upper and "EXISTS" in sql_upper) or
+            ("FORALL" in sql_upper and "ARRAY_CONTAINS" in sql_upper) or
             ("FILTER" in sql_upper and "SIZE" in sql_upper)
-        ), "Should have FORALL/EXISTS or FILTER/SIZE for predicates"
+        ), "Should have FORALL/EXISTS, FORALL/ARRAY_CONTAINS, or FILTER/SIZE for predicates"
