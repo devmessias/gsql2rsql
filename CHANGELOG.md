@@ -2,6 +2,21 @@
 
 
 
+## v0.7.2 (2026-01-24)
+
+### Documentation
+
+* docs: clean ([`5aa2217`](https://github.com/devmessias/gsql2rsql/commit/5aa2217b70c8f262d9a64148ca292492ed63410f))
+
+### Fix
+
+* fix: implement unique JOIN alias generation to prevent Databricks issues and add tests for alias uniqueness ([`f79f1b9`](https://github.com/devmessias/gsql2rsql/commit/f79f1b9f367d9b8e04990f373b04ba9e6faa5b9c))
+
+### Unknown
+
+* limpa lixo ([`0ca9231`](https://github.com/devmessias/gsql2rsql/commit/0ca9231c20c4009da827976d82e0baa3c25d1e4d))
+
+
 ## v0.7.1 (2026-01-24)
 
 ### Documentation
