@@ -543,9 +543,10 @@ class TestPredicatePushdownHelpers:
 
     def test_can_identify_single_variable_predicates(self) -> None:
         """Test that we can identify predicates referencing only one variable."""
-        from gsql2rsql.planner.logical_plan import LogicalPlan
-
-        planner = LogicalPlan()
+        from gsql2rsql.planner.recursive_traversal import (
+            _collect_property_references,
+            _references_only_variable,
+        )
 
         # Parse query with single-variable predicate
         query = "MATCH (p:Person)-[:KNOWS]-(f:Person) WHERE p.name = 'Alice' RETURN f"
@@ -555,14 +556,15 @@ class TestPredicatePushdownHelpers:
         where_expr = match_clause.where_expression
 
         # The expression should reference only 'p'
-        assert planner._references_only_variable(where_expr, "p") is True
-        assert planner._references_only_variable(where_expr, "f") is False
+        assert _references_only_variable(where_expr, "p") is True
+        assert _references_only_variable(where_expr, "f") is False
 
     def test_can_extract_pushable_predicates(self) -> None:
         """Test that we can extract predicates that can be pushed."""
-        from gsql2rsql.planner.logical_plan import LogicalPlan
-
-        planner = LogicalPlan()
+        from gsql2rsql.planner.recursive_traversal import (
+            _collect_property_references,
+            _references_only_variable,
+        )
 
         # Parse query with mixed predicates
         query = "MATCH (p:Person)-[:KNOWS]-(f:Person) WHERE p.name = 'Alice' AND f.age > 30 RETURN f"
@@ -572,15 +574,15 @@ class TestPredicatePushdownHelpers:
         where_expr = match_clause.where_expression
 
         # The combined expression references both variables
-        props = planner._collect_property_references(where_expr)
+        props = _collect_property_references(where_expr)
         var_names = {p.variable_name for p in props}
 
         assert "p" in var_names
         assert "f" in var_names
 
         # Combined should not be single-variable
-        assert planner._references_only_variable(where_expr, "p") is False
-        assert planner._references_only_variable(where_expr, "f") is False
+        assert _references_only_variable(where_expr, "p") is False
+        assert _references_only_variable(where_expr, "f") is False
 
 
 class TestDataSourceOperatorWithFilter:

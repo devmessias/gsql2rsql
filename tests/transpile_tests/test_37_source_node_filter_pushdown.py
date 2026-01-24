@@ -234,9 +234,10 @@ class TestSourceNodeFilterDetection:
 
     def test_references_only_source(self) -> None:
         """Test _references_only_variable correctly identifies source filters."""
-        from gsql2rsql.planner.logical_plan import LogicalPlan
-
-        planner = LogicalPlan()
+        from gsql2rsql.planner.recursive_traversal import (
+            _collect_property_references,
+            _references_only_variable,
+        )
 
         # Parse a query with source-only filter
         query = (
@@ -249,19 +250,20 @@ class TestSourceNodeFilterDetection:
         where_expr = match_clause.where_expression
 
         # Test the helper method
-        props = planner._collect_property_references(where_expr)
+        props = _collect_property_references(where_expr)
         assert len(props) == 1
         assert props[0].variable_name == "p"
 
         # The expression should reference only 'p'
-        assert planner._references_only_variable(where_expr, "p") is True
-        assert planner._references_only_variable(where_expr, "f") is False
+        assert _references_only_variable(where_expr, "p") is True
+        assert _references_only_variable(where_expr, "f") is False
 
     def test_mixed_filter_detection(self) -> None:
         """Test detection of mixed filters (source AND target)."""
-        from gsql2rsql.planner.logical_plan import LogicalPlan
-
-        planner = LogicalPlan()
+        from gsql2rsql.planner.recursive_traversal import (
+            _collect_property_references,
+            _references_only_variable,
+        )
 
         # Parse a query with mixed filter
         query = (
@@ -274,10 +276,10 @@ class TestSourceNodeFilterDetection:
         where_expr = match_clause.where_expression
 
         # The combined expression references both p and f
-        props = planner._collect_property_references(where_expr)
+        props = _collect_property_references(where_expr)
         var_names = {p.variable_name for p in props}
         assert "p" in var_names
         assert "f" in var_names
 
         # The combined expression should NOT be source-only
-        assert planner._references_only_variable(where_expr, "p") is False
+        assert _references_only_variable(where_expr, "p") is False
