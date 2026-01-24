@@ -88,6 +88,7 @@ follow_imports = "normal"
 show_error_codes = true
 plugins = []
 exclude = ["src/gsql2rsql/parser/grammar/", "src/gsql2rsql/cli.py"]
+include = ["src"]
 
 [[tool.mypy.overrides]]
 module = "antlr4.*"
@@ -110,6 +111,9 @@ disallow_untyped_calls = false
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# Ruff checks all .py files by default. Use 'src' as the base for imports.
+src = ["src"]
+exclude = ["src/gsql2rsql/parser/grammar", "tests"]
 
 [tool.pylint.main]
 disable = ["all"]
@@ -133,12 +137,21 @@ select = [
     "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501",  # line too long (handled by formatter)
-    "B008",  # do not perform function calls in argument defaults
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "SIM102", # nested if statements (sometimes more readable)
+    "SIM108", # ternary operator (sometimes less readable)
+    "SIM110", # any() instead of for loop (sometimes less readable)
+    "SIM103", # return condition directly (sometimes less readable)
+    "ARG002", # unused method argument (often needed for interface compliance)
+    "B007",   # unused loop variable (use _ prefix if intentional)
+    "B027",   # empty method without abstract decorator (interface compliance)
+    "B905",   # zip() without strict= (explicit is better but not always needed)
+    "F402",   # import shadowed by loop variable (intentional in some cases)
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["opencypher_transpiler"]
+known-first-party = ["gsql2rsql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
