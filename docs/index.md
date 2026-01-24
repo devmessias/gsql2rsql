@@ -4,6 +4,9 @@
 
 No need for a separate graph database. Write intuitive OpenCypher queries, get Spark SQL automatically.
 
+!!! success "Why Databricks?"
+    Databricks provides tables designed for massive scale, enabling efficient storage and querying of tens of billions of triples with features like time travel No ETL or migration needed—just query your data lake as a graph. Recently, Databricks released support for recursive queries, unlocking the use of SQL warehouses for graph-type queries.
+
 ---
 
 ## Why gsql2rsql?
@@ -12,14 +15,10 @@ No need for a separate graph database. Write intuitive OpenCypher queries, get S
 |-----------|----------|
 | Graph queries require complex SQL with `WITH RECURSIVE` | Write 5 lines of Cypher instead |
 | Need to maintain a separate graph database | Query Delta Lake directly |
-| Hand-written recursive SQL is error-prone | Automatic cycle detection and path tracking |
 | LLM-generated complex SQL is hard to audit | Human-readable Cypher + deterministic transpilation (optionally pass to LLM for final optimization) |
 | Scaling to tens of billions of triples is costly in graph DBs | Delta Lake stores billions of triples efficiently, with Spark scalability |
 
-!!! success "Why Databricks"
-    It has tables designed for massive scale: they efficiently store and query tens of billions of triples, time travel, and native Spark integration. No ETL, no migration—just query your data lake as a graph.
 
----
 
 ## See It in Action
 
