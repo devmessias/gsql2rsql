@@ -2,6 +2,29 @@
 
 
 
+## v0.7.3 (2026-01-24)
+
+### Documentation
+
+* docs: ensures we are honest in the homepage with a macro that compiles a real test ([`6129278`](https://github.com/devmessias/gsql2rsql/commit/61292785fb49f195a5b14de7fec489848d78fe16))
+
+### Fix
+
+* fix: don&#39;t lie claude ([`cb915c7`](https://github.com/devmessias/gsql2rsql/commit/cb915c760ec90ef96572593e15b6eb24d082f38c))
+
+### Style
+
+* style: lint ([`3e4bd16`](https://github.com/devmessias/gsql2rsql/commit/3e4bd16a4ac45ef3a900a554321c766f6d585b04))
+
+### Unknown
+
+* go away ruff ([`d4ad406`](https://github.com/devmessias/gsql2rsql/commit/d4ad4066f2416938ae0c7e6ab55fb3799ba22b48))
+
+* :( i don´t have $ to run pyspark tests ([`c4e96e9`](https://github.com/devmessias/gsql2rsql/commit/c4e96e90bbf7a1dfeba38459ce610d66df542016))
+
+* fix mypy and lint config ([`2de73fc`](https://github.com/devmessias/gsql2rsql/commit/2de73fc3aad74184ba6d0acf8549f9078ee128fa))
+
+
 ## v0.7.2 (2026-01-24)
 
 ### Documentation
