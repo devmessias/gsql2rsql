@@ -53,7 +53,7 @@ def get_python_type(type_str: str) -> type:
 
 
 def get_spark_type(type_str: str) -> str:
-    """Convert YAML/schema type string to Spark SQL type."""
+    """Convert YAML/schema type string to Databricks SQL type."""
     type_map = {
         "int": "INT",
         "integer": "INT",

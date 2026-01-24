@@ -2,7 +2,7 @@
 
 **Query your Delta Tables as a Graph**
 
-No need for a separate graph database. Write intuitive OpenCypher queries, get Spark SQL automatically.
+No need for a separate graph database. Write intuitive OpenCypher queries, get Databricks SQL automatically.
 
 !!! success "Why Databricks?"
     Databricks provides tables designed for massive scale, enabling efficient storage and querying of tens of billions of triples with features like time travel No ETL or migration needed—just query your data lake as a graph. Recently, Databricks released support for recursive queries, unlocking the use of SQL warehouses for graph-type queries.
@@ -44,10 +44,10 @@ sql = graph.transpile("""
     LIMIT 100
 """)
 
-print(sql)  # Production-ready Spark SQL
+print(sql)  # Production-ready Databricks SQL
 ```
 
-**5 lines of Cypher → optimized Spark SQL with recursive CTEs**
+**5 lines of Cypher → optimized Databricks SQL with recursive CTEs**
 
 ??? example "Click to see the generated SQL"
 
@@ -243,8 +243,6 @@ This separation ensures each phase has clear responsibilities and can be tested 
 |---------|-------------|
 | [**User Guide**](user-guide.md) | Getting started, GraphContext, schema setup |
 | [**Examples**](examples/index.md) | 69 complete queries with generated SQL |
-| [**API Reference**](api-reference.md) | Python API documentation |
-| [**CLI Commands**](cli-commands.md) | Command-line interface |
 | [**Architecture**](architecture.md) | How the transpiler works |
 
 ---

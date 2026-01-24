@@ -17,15 +17,15 @@ theme:
   palette:
     # Light mode
     - scheme: default
-      primary: indigo
-      accent: indigo
+      primary: teal  # Changed from indigo
+      accent: teal   # Changed from indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     # Dark mode
     - scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: teal  # Changed from indigo
+      accent: teal   # Changed from indigo
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -139,7 +139,7 @@ extra:
       link: https://github.com/devmessias/gsql2rsql
       name: GitHub Repository
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/gsql2rsql/  # Update if published to PyPI
+      link: https://pypi.org/project/gsql2rsql/
       name: PyPI Package
 
   analytics:
@@ -169,12 +169,7 @@ nav:
       - Fraud Detection: examples/fraud.md
       - Credit Analysis: examples/credit.md
       - All Features: examples/features.md
-  - Reference:
-    - Python API: api-reference.md
-    - CLI Commands: cli-commands.md
-  - Contributing:
-    - Architecture: architecture.md
-    # - Development: contributing.md
+  - Contributing: contributing.md
   - About: about.md
 
 # Extra CSS/JS

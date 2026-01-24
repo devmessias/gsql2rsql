@@ -3092,7 +3092,7 @@ class SQLRenderer:
         left = self._render_expression(expr.left_expression, context_op)
         right = self._render_expression(expr.right_expression, context_op)
 
-        # Special handling for timestamp subtraction in Spark SQL
+        # Special handling for timestamp subtraction in Databricks SQL
         # Spark doesn't support direct timestamp - timestamp, need UNIX_TIMESTAMP
         # BUT: timestamp - DURATION should use direct subtraction (INTERVAL)
         if expr.operator.name == BinaryOperator.MINUS:

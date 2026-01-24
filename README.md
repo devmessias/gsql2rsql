@@ -1,424 +1,267 @@
-# gsql2rsql - OpenCypher to Databricks SQL Transpiler
+# gsql2rsql
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python Version](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![Documentation](https://img.shields.io/badge/docs-mkdocs-blue.svg)](https://devmessias.github.io/gsql2rsql)
+**Query your Delta Tables as a Graph**
 
-**gsql2rsql** transpiles OpenCypher graph queries to Databricks SQL, enabling graph analytics on Delta Lake without a dedicated graph database.
+No need for a separate graph database. Write intuitive OpenCypher queries, get Databricks SQL automatically.
 
-> **Project Status**: This is a hobby/research project being developed towards production quality. While it handles complex queries and includes comprehensive tests, it's not yet  at enterprise scale. Contributions welcome!
+!!! success "Why Databricks?"
+    Databricks provides tables designed for massive scale, enabling efficient storage and querying of tens of billions of triples with features like time travel No ETL or migration needed—just query your data lake as a graph. Recently, Databricks released support for recursive queries, unlocking the use of SQL warehouses for graph-type queries.
 
-!!! warning "Not for OLTP (obviously) or end-user queries"
-    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
+---
 
-## Why This Project?
+## Why gsql2rsql?
 
-### Inspiration: Microsoft's openCypherTranspiler
-
-This project was inspired by Microsoft's [openCypherTranspiler](https://github.com/microsoft/openCypherTranspiler) (now **unmaintained**) which transpiled OpenCypher to T-SQL (SQL Server).
-
-**Why a new transpiler?** Two reasons:
-
-1. **Databricks SQL is fundamentally different** from T-SQL — WITH RECURSIVE, HOFs, and Delta Lake optimizations require different strategies
-2. **Security-first architecture** — gsql2rsql uses strict [ separation of concerns](docs/decision-log.md#decision-1-strict-4-phase-separation-of-concerns) for correctness:
-   - **Parser**: Syntax only (no schema access)
-   - **Planner**: Semantics only (builds logical operators)
-   - **Resolver**: Validation only (schema checking, column resolution)
-   - **Renderer**: Code generation only (**intentionally "dumb"**)
-
-This separation makes the transpiler **easier to audit, test, and trust**
+| Challenge | Solution |
+|-----------|----------|
+| Graph queries require complex SQL with `WITH RECURSIVE` | Write 5 lines of Cypher instead |
+| Need to maintain a separate graph database | Query Delta Lake directly |
+| LLM-generated complex SQL is hard to audit | Human-readable Cypher + deterministic transpilation (optionally pass to LLM for final optimization) |
+| Scaling to tens of billions of triples is costly in graph DBs | Delta Lake stores billions of triples efficiently, with Spark scalability |
 
 
 
-**The game-changer**: Databricks recently added **WITH RECURSIVE** support, unlocking variable-leng
-
-### Databricks SQL Higher-Order Functions (HOFs)
-
- Databricks SQL has **native array manipulation** via HOFs:
-
-```sql
--- Transform array elements
-SELECT transform(relationships, r -> r.amount) AS amounts
-FROM fraud_paths
-
--- Filter complex conditions
-SELECT filter(path, node -> node.risk_score > 0.8) AS risky_nodes
-FROM customer_journeys
-
--- Aggregate with lambda
-SELECT aggregate(
-  transactions,
-  0.0,
-  (acc, t) -> acc + t.amount,
-  acc -> acc
-) AS total
-FROM account_history
-```
-
-gsql2rsql leverages these HOFs for:
-- **Path filtering**: `NONE(r IN relationships(path) WHERE r.suspicious)`
-- **Path aggregations**: `SUM(r IN rels WHERE r.amount > 1000)`
-- **Pattern matching**: Complex nested conditions
-
-This makes Cypher → SQL transpilation **more natural**
-
-## Why Graph Queries on Delta Lake?
-
-
-```
-Delta Lake (Single Source)
-     ↓ OpenCypher (via gsql2rsql)
-Databricks SQL
-     ↓ Results
-```
-
-**Advantages**:
-1. **No duplication**: Query source data directly
-2. **Real-time**: Always fresh data
-3. **No sync**: One less thing to break
-4. **Cost-effective**: No second database
-5. **Unified governance**: Single data platform
-
-## Billion-Scale Relationships: Triple Stores in Delta
-
-### The Problem with graph databases (oltp) at Scale
-
-When you have **billions of relationships**:
-
-- **Memory limits**: Graph must fit in RAM for good performance
-- **Vertical scaling**: Limited by single-server resources
-- **Cost**: Enterprise licenses + large EC2 instances = $$$$
-- **Backup/Recovery**: GBs of graph data, long backup windows
-- **Version upgrades**: Risky with large graphs
-
-
-### Triple Store in Delta Lake
-
-Model relationships as **triples** in Delta:
-
-```sql
--- Nodes table (entities)
-CREATE TABLE nodes (
-  node_id STRING,
-  type STRING,          -- Person, Account, Merchant, etc.
-  properties MAP<STRING, STRING>,
-  timestamp TIMESTAMP
-) USING DELTA;
-
--- Edges table (relationships)
--- Option 1: Traditional partitioning (relationship_type + date)
-CREATE TABLE edges (
-  src STRING,           -- Source node_id
-  relationship_type STRING,  -- TRANSACTION, OWNS, LOCATED_AT, etc.
-  dst STRING,           -- Destination node_id
-  properties MAP<STRING, STRING>,
-  timestamp TIMESTAMP
-) USING DELTA
-PARTITIONED BY (relationship_type, DATE(timestamp));
-
--- Option 2: Liquid Clustering (DBR 13.3+, RECOMMENDED!)
--- Auto-tunes partitioning based on query patterns
-CREATE TABLE edges (
-  src STRING,
-  relationship_type STRING,
-  dst STRING,
-  properties MAP<STRING, STRING>,
-  timestamp TIMESTAMP
-) USING DELTA
-CLUSTER BY (relationship_type, src);
-
--- For traditional partitioning, optimize with Z-ordering
-OPTIMIZE edges ZORDER BY (src, relationship_type, dst);
-```
-
-**Advantages**:
-1. **Horizontal scale**: Petabytes, billions of rows, no problem
-2. **Cost-effective**: S3 storage ($0.0something/GB) vs RAM ($something+/GB)
-3. **Time travel**: Delta Lake versioning = free audit trail
-4. **Schema evolution**: Add properties without downtime
-5. **ACID guarantees**: Delta Lake transactions
-8. **Liquid clustering**: Auto-tunes for query patterns
-
-
-
-**This is why GraphContext API exists**: When your graph fits this pattern (nodes + edges tables), you don't need bunch lines of schema boilerplate — just 2 table paths and you're done.
-
-
-## LLMs + Transpilers: Enterprise Governance
-
-**The Problem**: In enterprise environments, **someone must be accountable** for queries before execution — even with LLM text-to-query.
-
-### Why Transpilers Matter
-
-**1. Reviewability**: Graph queries are **4-5 lines** vs **hundreds of SQL lines**
-```cypher
-# 5 lines in Cypher
-MATCH (c:Customer)-[:TRANSACTION*1..3]->(m:Merchant)
-WHERE m.risk_score > 0.9
-RETURN c.id, COUNT(*) AS risky_tx
-ORDER BY risky_tx DESC
-LIMIT 100
-```
-vs 150+ lines of recursive SQL. Easier for humans to review and approve.
-
-
-Transpilers turn LLM outputs into **governable, auditable, human-reviewable queries**.
-
-## Quick Start
-
-### Installation
+## See It in Action
 
 ```bash
 pip install gsql2rsql
-# Or from source:
-git clone https://github.com/devmessias/gsql2rsql
-cd gsql2rsql/python
-uv pip install -e .
 ```
-
-### Simplified API: GraphContext (Recommended for Triple Stores)
-
-**Why Triple Stores + Delta Tables Scale**: Delta Lake's horizontal scaling, Z-ordering, and liquid clustering make **single triple store** architectures incredibly efficient — even at billions of edges. No need for complex multi-table schemas when Delta can handle everything.
-
-**GraphContext API eliminates ~100 lines of boilerplate** for the common case: graph stored as two Delta tables (nodes + edges).
 
 ```python
 from gsql2rsql import GraphContext
 
-# 1. Create context (just 2 table paths!)
-# Note: Table names without backticks - SQLRenderer adds them automatically
+# Point to your existing Delta tables - no migration needed
 graph = GraphContext(
     nodes_table="catalog.fraud.nodes",
     edges_table="catalog.fraud.edges",
-    extra_node_attrs={"name": str, "risk_score": float},
-    extra_edge_attrs={"amount": float, "timestamp": str}
 )
 
-# 2. Set types (auto-discovered if spark session provided)
-graph.set_types(
-    node_types=["Person", "Account", "Merchant"],
-    edge_types=["TRANSACTION", "OWNS", "LOCATED_AT"]
-)
+# Write graph queries with familiar Cypher syntax
+sql = graph.transpile("""
+    MATCH path = (origin:Person {id: 12345})-[:TRANSACTION*1..4]->(dest:Person)
+    WHERE dest.risk_score > 0.8
+    RETURN dest.id, dest.name, dest.risk_score, length(path) AS depth
+    ORDER BY depth, dest.risk_score DESC
+    LIMIT 100
+""")
 
-# 3. Query with inline filters (optimized!)
-query = """
-MATCH path = (origin:Person {id: 'alice'})-[:TRANSACTION*1..3]->(dest:Account)
-WHERE dest.risk_score > 0.8
-RETURN dest.id, dest.risk_score, length(path) AS depth
-ORDER BY depth, dest.risk_score DESC
-LIMIT 100
-"""
-
-sql = graph.transpile(query, optimize=True)  # Predicate pushdown enabled!
-
-# 4. Execute on Databricks
-# df = graph.execute(query)  # If spark session provided
-# df.show()
+print(sql)  # Production-ready Databricks SQL
 ```
 
+**5 lines of Cypher → optimized Databricks SQL with recursive CTEs**
+
+??? example "Click to see the generated SQL"
+
+    ```sql
+    WITH RECURSIVE
+      paths_1 AS (
+        -- Base case: direct edges (depth = 1)
+        SELECT
+          e.src AS start_node,
+          e.dst AS end_node,
+          1 AS depth,
+          ARRAY(e.src, e.dst) AS path,
+          ARRAY(NAMED_STRUCT('src', e.src, 'dst', e.dst, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          ARRAY(e.src) AS visited
+        FROM catalog.fraud.edges e
+        JOIN catalog.fraud.nodes src ON src.id = e.src
+        WHERE (relationship_type = 'TRANSACTION') AND (src.id) = (12345)
+
+        UNION ALL
+
+        -- Recursive case: extend paths
+        SELECT
+          p.start_node,
+          e.dst AS end_node,
+          p.depth + 1 AS depth,
+          CONCAT(p.path, ARRAY(e.dst)) AS path,
+          ARRAY_APPEND(p.path_edges, NAMED_STRUCT('src', e.src, 'dst', e.dst, 'amount', e.amount, 'timestamp', e.timestamp)) AS path_edges,
+          CONCAT(p.visited, ARRAY(e.src)) AS visited
+        FROM paths_1 p
+        JOIN catalog.fraud.edges e
+          ON p.end_node = e.src
+        WHERE p.depth < 4
+          AND NOT ARRAY_CONTAINS(p.visited, e.dst)
+          AND (relationship_type = 'TRANSACTION')
+      )
+    SELECT
+       _gsql2rsql_dest_id AS id
+      ,_gsql2rsql_dest_name AS name
+      ,_gsql2rsql_dest_risk_score AS risk_score
+      ,(SIZE(_gsql2rsql_path_id) - 1) AS depth
+    FROM (
+      SELECT
+         sink.id AS _gsql2rsql_dest_id
+        ,sink.name AS _gsql2rsql_dest_name
+        ,sink.risk_score AS _gsql2rsql_dest_risk_score
+        ,source.id AS _gsql2rsql_origin_id
+        ,p.path AS _gsql2rsql_path_id
+        ,p.path_edges AS _gsql2rsql_path_edges
+      FROM paths_1 p
+      JOIN catalog.fraud.nodes sink ON sink.id = p.end_node
+      JOIN catalog.fraud.nodes source ON source.id = p.start_node
+      WHERE p.depth >= 1 AND p.depth <= 4 AND (sink.risk_score) > (0.8)
+    ) AS _proj
+    ORDER BY depth ASC, _gsql2rsql_dest_risk_score DESC
+    LIMIT 100
+    ```
+
+---
+
+!!! warning "Not for OLTP (obviously) or end-user queries"
+    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
+
+
+## Real-World Examples
+
+=== "Fraud Detection"
+
+    ```cypher
+    -- Find fraud rings: accounts connected through suspicious transactions
+    MATCH (a:Account)-[:TRANSFER*2..4]->(b:Account)
+    WHERE a.flagged = true AND b.flagged = true
+    RETURN DISTINCT a.id, b.id, length(path) AS hops
+    ```
+
+    [See more fraud detection queries →](examples/fraud.md)
+
+=== "Credit Analysis"
+
+    ```cypher
+    -- Analyze credit exposure through guarantor chains
+    MATCH path = (borrower:Customer)-[:GUARANTEES*1..3]->(guarantor:Customer)
+    WHERE borrower.credit_score < 600
+    RETURN borrower.id, COLLECT(guarantor.id) AS chain
+    ```
+
+    [See more credit analysis queries →](examples/credit.md)
+
+=== "Social Network"
+
+    ```cypher
+    -- Friends of friends who work at tech companies
+    MATCH (me:Person {id: 123})-[:KNOWS*1..2]->(friend)-[:WORKS_AT]->(c:Company)
+    WHERE c.industry = 'Technology'
+    RETURN DISTINCT friend.name, c.name
+    ```
+
+    [See all feature examples →](examples/features.md)
+
+---
+
+
+
+
+**That's it!** No schema boilerplate, no complex setup.
+
+[Full User Guide →](user-guide.md)
+
+---
+
+## Low-Level API (Without GraphContext)
+
+For advanced use cases or non-Triple-Store schemas, use the components directly:
 
 ```python
-graph = GraphContext(
-    spark=spark,  # Required for discovery
-    nodes_table="catalog.fraud.nodes",
-    edges_table="catalog.fraud.edges",
-    discover_edge_combinations=True  # Query DB for real combinations
-)
-# If you have 10 node types × 5 edge types = 500 possible schemas
-# But only 15 combinations exist → Creates only 15 schemas (33x faster!)
-```
-
-
-### Advanced: Manual Schema Setup (Full Control)
-
-For multi-table schemas or when you need precise control over SQL table descriptors, use the manual setup:
-
-**Example**: Find fraud networks using BFS (Breadth-First Search) up to depth 4, starting from a suspicious account and ignoring social relationships.
-
-```python
-from gsql2rsql.parser.opencypher_parser import OpenCypherParser
-from gsql2rsql.planner.logical_plan import LogicalPlan
-from gsql2rsql.renderer.sql_renderer import SQLRenderer
+from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import NodeSchema, EdgeSchema, EntityProperty
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
 # 1. Define schema (SimpleSQLSchemaProvider)
 schema = SimpleSQLSchemaProvider()
 
-# Person node
 person = NodeSchema(
     name="Person",
-    properties=[
-        EntityProperty(property_name="id", data_type=int),
-        EntityProperty(property_name="name", data_type=str),
-        EntityProperty(property_name="risk_score", data_type=float),
-    ],
-    node_id_property=EntityProperty(property_name="id", data_type=int)
+    node_id_property=EntityProperty("id", int),
+    properties=[EntityProperty("name", str)],
 )
-
 schema.add_node(
     person,
-    SQLTableDescriptor(
-        table_name="fraud.person",  # Databricks catalog.schema.table
-        node_id_columns=["id"],
-    )
+    SQLTableDescriptor(table_name="people", node_id_columns=["id"]),
 )
 
-# Multiple edge types - we'll only query TRANSACAO_SUSPEITA
-# AMIGOS and FAMILIARES are in the schema but ignored in the query
-amigos = EdgeSchema(
-    name="AMIGOS",
+knows = EdgeSchema(
+    name="KNOWS",
     source_node_id="Person",
     sink_node_id="Person",
-    source_id_property=EntityProperty(property_name="person1_id", data_type=int),
-    sink_id_property=EntityProperty(property_name="person2_id", data_type=int),
-    properties=[]
 )
-
-familiares = EdgeSchema(
-    name="FAMILIARES",
-    source_node_id="Person",
-    sink_node_id="Person",
-    source_id_property=EntityProperty(property_name="person1_id", data_type=int),
-    sink_id_property=EntityProperty(property_name="person2_id", data_type=int),
-    properties=[]
-)
-
-transacao_suspeita = EdgeSchema(
-    name="TRANSACAO_SUSPEITA",
-    source_node_id="Person",
-    sink_node_id="Person",
-    source_id_property=EntityProperty(property_name="origem_id", data_type=int),
-    sink_id_property=EntityProperty(property_name="destino_id", data_type=int),
-    properties=[
-        EntityProperty(property_name="valor", data_type=float),
-        EntityProperty(property_name="timestamp", data_type=str),
-    ]
-)
-
 schema.add_edge(
-    amigos,
-    SQLTableDescriptor(
-        entity_id="Person@AMIGOS@Person",
-        table_name="fraud.amigos",
-    )
+    knows,
+    SQLTableDescriptor(table_name="friendships"),
 )
 
-schema.add_edge(
-    familiares,
-    SQLTableDescriptor(
-        entity_id="Person@FAMILIARES@Person",
-        table_name="fraud.familiares",
-    )
-)
-
-schema.add_edge(
-    transacao_suspeita,
-    SQLTableDescriptor(
-        entity_id="Person@TRANSACAO_SUSPEITA@Person",
-        table_name="fraud.transacao_suspeita",
-    )
-)
-
-# 2. BFS Query: Find fraud network up to depth 4 from suspicious root account
-# Only traverse TRANSACAO_SUSPEITA edges (ignore AMIGOS and FAMILIARES)
-query = """
-MATCH path = (origem:Person {id: 12345})-[:TRANSACAO_SUSPEITA*1..4]->(destino:Person)
-RETURN
-    origem.id AS origem_id,
-    origem.name AS origem_name,
-    destino.id AS destino_id,
-    destino.name AS destino_name,
-    destino.risk_score AS destino_risk_score,
-    length(path) AS profundidade
-ORDER BY profundidade, destino.risk_score DESC
-LIMIT 100
-"""
-
-# 3. Transpile to SQL with WITH RECURSIVE (for BFS traversal)
+# 2. Transpile
 parser = OpenCypherParser()
-renderer = SQLRenderer(db_schema_provider=schema)
-
-ast = parser.parse(query)
+ast = parser.parse("MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, f.name")
 plan = LogicalPlan.process_query_tree(ast, schema)
-plan.resolve(original_query=query)
+plan.resolve(original_query="...")
+
+renderer = SQLRenderer(db_schema_provider=schema)
 sql = renderer.render_plan(plan)
-
-print(sql)
-
-# 4. Execute on Databricks
-# df = spark.sql(sql)
-# df.show(100, truncate=False)
 ```
 
-**Output**: Databricks SQL with JOINs, WHERE filters, ORDER BY, and LIMIT — ready to execute on Delta Lake.
+API Reference →[](api-reference.md)
 
-## Features
+---
 
-- ✅ **Variable-length paths** (`*1..N`) via `WITH RECURSIVE`
-- ✅ **Undirected relationships** (`-[:REL]-`)
-- ✅ **Path functions** (`length()`, `nodes()`, `relationships()`)
-- ✅ **Aggregations** (`COUNT`, `SUM`, `COLLECT`, etc.)
-- ✅ **Predicate pushdown** (filters applied in DataSource before joins)
-- ✅ **Inline property filters** (`{name: 'Alice'}` → optimized WHERE clauses)
-- ✅ **BFS source filter optimization** (inline filters applied in base case)
-- ✅ **WITH clauses** (multi-stage composition)
-- ✅ **UNION**, **OPTIONAL MATCH**, **CASE**, **DISTINCT**
-- ✅ **GraphContext API** (simplified setup for Triple Stores)
+## Key Features
 
-See [full feature list](docs/index.md#features).
+| Feature | Description |
+|---------|-------------|
+| **Variable-length paths** | `[:REL*1..5]` via `WITH RECURSIVE` |
+| **Cycle detection** | Automatic `ARRAY_CONTAINS` checks |
+| **Path functions** | `length(path)`, `nodes(path)`, `relationships(path)` |
+| **No-label nodes** | `(a)-[:REL]->(b:Label)` matches any node type for `a` |
+| **Inline filters** | `(n:Person {id: 123})` pushes predicates to source |
+| **Undirected edges** | `(a)-[:KNOWS]-(b)` via optimized UNION ALL |
+| **Aggregations** | COUNT, SUM, AVG, COLLECT, etc. |
+| **Type safety** | Schema validation before SQL generation |
+
+---
+
+## Architecture
+
+gsql2rsql uses a **4-phase pipeline** for correctness:
+
+```
+OpenCypher → Parser → Planner → Resolver → Renderer → SQL
+```
+
+1. **Parser**: Cypher → AST (syntax only, no schema)
+2. **Planner**: AST → Logical operators (semantics)
+3. **Resolver**: Validate columns & types against schema
+4. **Renderer**: Operators → Databricks SQL
+
+This separation ensures each phase has clear responsibilities and can be tested independently.
+
+[Architecture details →](architecture.md)
+
+---
 
 ## Documentation
 
-- 📘 [Installation & Quick Start](https://devmessias.github.io/gsql2rsql/installation/)
-- 🎯 [Examples Gallery](https://devmessias.github.io/gsql2rsql/examples/) (69 queries)
-  - [Fraud Detection](https://devmessias.github.io/gsql2rsql/examples/fraud/)
-  - [Credit Risk](https://devmessias.github.io/gsql2rsql/examples/credit/)
-  - [Feature Engineering](https://devmessias.github.io/gsql2rsql/examples/features/)
-- 🏗️ [Architecture](https://devmessias.github.io/gsql2rsql/architecture/)
-- 🤝 [Contributing](https://devmessias.github.io/gsql2rsql/contributing/)
+| Section | Description |
+|---------|-------------|
+| [**User Guide**](user-guide.md) | Getting started, GraphContext, schema setup |
+| [**Examples**](examples/index.md) | 69 complete queries with generated SQL |
+| [**Architecture**](architecture.md) | How the transpiler works |
 
-## Development
+---
 
-```bash
-# Setup
-uv sync --extra dev
-uv pip install -e ".[dev]"
+## Project Status
 
-# Tests
-make test-no-pyspark   # Fast (no Spark dependency)
-make test-pyspark      # Full validation with PySpark
-
-# Lint & Format
-make lint
-make format
-make typecheck
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for conventional commits and release process.
-
-## Requirements
-
-- **Python 3.12+**
-- **Databricks Runtime 15.0+** (for `WITH RECURSIVE`)
-- **PySpark** (optional, only for development/testing)
+!!! info "Research Project"
+ **Contributions welcome!**
 
 
+- [GitHub Repository](https://github.com/devmessias/gsql2rsql)
+- [Issue Tracker](https://github.com/devmessias/gsql2rsql/issues)
+- [Contributing Guide](contributing.md)
 
-## Contributing
-
-This is an **open hobby project** — contributions are very welcome!
-
-- **Bugs**: [Open an issue](https://github.com/devmessias/gsql2rsql/issues)
-- **Features**: Discuss in [Discussions](https://github.com/devmessias/gsql2rsql/discussions)
-- **PRs**: Follow [conventional commits](CONTRIBUTING.md#commit-message-convention)
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE).
+MIT License - see [LICENSE](https://github.com/devmessias/gsql2rsql/blob/main/LICENSE)
 
-
-## Author
-
-**Bruno Messias**
-[LinkedIn](https://www.linkedin.com/in/bruno-messias-510553193/) | [GitHub](https://github.com/devmessias)
+---
+--8<-- "inspiration.md"
