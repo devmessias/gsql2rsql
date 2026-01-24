@@ -35,6 +35,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pytest-timeout>=2.1.0",
+    "pyright>=1.1.0",
     "mypy>=1.8.0",
     "ruff>=0.2.0",
     "pyspark>=3.5.0",
@@ -49,6 +50,26 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gsql2rsql"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = ["src"]
+exclude = ["**/grammar/**", "**/__pycache__", "**/cli.py"]
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = false
+reportUnusedVariable = false
+reportUnusedClass = true
+reportUnusedFunction = true
+reportPrivateUsage = true
+reportConstantRedefinition = true
+reportIncompatibleMethodOverride = true
+reportIncompatibleVariableOverride = true
+reportUntypedFunctionDecorator = false
+reportUntypedClassDecorator = false
+reportUntypedBaseClass = false
+reportGeneralTypeIssues = true
 
 [tool.mypy]
 python_version = "3.12"
@@ -66,14 +87,38 @@ warn_no_return = true
 follow_imports = "normal"
 show_error_codes = true
 plugins = []
+exclude = ["src/gsql2rsql/parser/grammar/", "src/gsql2rsql/cli.py"]
 
 [[tool.mypy.overrides]]
 module = "antlr4.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "gsql2rsql.parser.grammar.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "gsql2rsql.parser.visitor"
+# Disable no-any-return since ANTLR visitor pattern returns Any
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "gsql2rsql.parser.opencypher_parser"
+# Disable no-untyped-call since ANTLR generated code is untyped
+disallow_untyped_calls = false
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+
+[tool.pylint.main]
+disable = ["all"]
+enable = ["E"]  # ou ["E1101"] para apenas atributos inexistentes
+
+reports = false
+
+# Pastas a serem ignoradas
+ignore = ["tests", "migrations", "venv"]  # ajuste conforme seu projeto
 
 [tool.ruff.lint]
 select = [

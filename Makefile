@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov lint format typecheck grammar clean build publish \
+.PHONY: help install install-dev test test-cov lint format typecheck typecheck-mypy grammar clean build publish \
        test-pyspark test-pyspark-basic test-pyspark-examples test-pyspark-quick test-pyspark-verbose
 
 PYTHON := .venv/bin/python3
@@ -53,9 +53,6 @@ test-pyspark:  ## Run all PySpark tests
 
 test-pyspark-timeout:  ## Run PySpark tests with timeout (60s per test)
 	$(UV) run pytest tests/test_pyspark_basic.py tests/test_examples_with_pyspark.py -v --timeout=60 --timeout-method=thread
-
-test-pyspark-quick:  ## Run a quick subset of PySpark tests (first 5 examples)
-	$(UV) run pytest tests/test_examples_with_pyspark.py::TestExampleExecution::test_example -k "credit_queries.yaml and (00 or 01 or 02 or 03 or 04)" -v --timeout=30
 
 test-pyspark-basic:  ## Run basic PySpark infrastructure tests
 	$(UV) run pytest tests/test_pyspark_basic.py -v
@@ -117,7 +114,10 @@ format:  ## Format code (ruff)
 format-check:  ## Check code formatting
 	$(UV) run ruff format src/ tests/ --check
 
-typecheck:  ## Run type checker (mypy)
+typecheck:  ## Run type checker (pyright)
+	$(UV) run pyright src/
+
+typecheck-mypy:  ## Run type checker (mypy)
 	$(UV) run mypy src/
 
 check: lint format-check typecheck  ## Run all checks (lint, format, typecheck)
@@ -136,13 +136,11 @@ grammar-check:  ## Check if ANTLR jar exists
 # Build & Publish
 # ─────────────────────────────────────────────────────────────────────────────
 
-build:  ## Build package
-	$(UV) build
 
-publish-test:  ## Publish to TestPyPI
-	$(UV) publish --publish-url https://test.pypi.org/legacy/
 
-publish:  ## Publish to PyPI
+
+
+publish-local:  ## Publish to PyPI
 	$(UV) publish
 
 # ─────────────────────────────────────────────────────────────────────────────
