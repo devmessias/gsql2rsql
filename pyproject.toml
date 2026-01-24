@@ -186,3 +186,8 @@ patch_tags = ["fix", "perf"]
 [tool.semantic_release.remote]
 type = "github"
 ignore_token_for_push = false
+
+[dependency-groups]
+dev = [
+    "pytest-xdist>=3.8.0",
+]

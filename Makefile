@@ -27,7 +27,7 @@ venv:  ## Create virtual environment
 # ─────────────────────────────────────────────────────────────────────────────
 
 test:  ## Run tests
-	$(UV) run pytest tests/
+	$(UV) run pytest -n 12 tests/
 
 test-cov:  ## Run tests with coverage
 	$(UV) run pytest tests/ --cov=src/gsql2rsql --cov-report=term-missing --cov-report=html
