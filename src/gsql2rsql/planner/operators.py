@@ -494,11 +494,22 @@ class JoinKeyPairType(Enum):
 
 @dataclass
 class JoinKeyPair:
-    """Structure designating how two entities should be joined."""
+    """Structure designating how two entities should be joined.
+
+    Attributes:
+        node_alias: The alias of the node in the join.
+        relationship_or_node_alias: The alias of the relationship or other node.
+        pair_type: The type of join key pair (SOURCE, SINK, etc.).
+        use_union_for_undirected: For undirected relationships (EITHER_AS_SOURCE,
+            EITHER_AS_SINK), indicates whether the renderer should use UNION ALL
+            expansion (True, default) or OR in JOIN conditions (False).
+            This is a planner decision based on the edge access strategy.
+    """
 
     node_alias: str
     relationship_or_node_alias: str
     pair_type: JoinKeyPairType = JoinKeyPairType.NONE
+    use_union_for_undirected: bool = True
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, JoinKeyPair):
@@ -507,10 +518,16 @@ class JoinKeyPair:
             self.pair_type == other.pair_type
             and self.node_alias == other.node_alias
             and self.relationship_or_node_alias == other.relationship_or_node_alias
+            and self.use_union_for_undirected == other.use_union_for_undirected
         )
 
     def __hash__(self) -> int:
-        return fnv_hash(self.pair_type, self.node_alias, self.relationship_or_node_alias)
+        return fnv_hash(
+            self.pair_type,
+            self.node_alias,
+            self.relationship_or_node_alias,
+            self.use_union_for_undirected,
+        )
 
     def __str__(self) -> str:
         return (
@@ -1080,6 +1097,8 @@ class RecursiveTraversalOperator(LogicalOperator):
         edge_filter: QueryExpression | None = None,
         edge_filter_lambda_var: str = "",
         direction: RelationshipDirection = RelationshipDirection.FORWARD,
+        use_internal_union_for_bidirectional: bool = False,
+        swap_source_sink: bool = False,
     ) -> None:
         super().__init__()
         self.edge_types = edge_types
@@ -1110,6 +1129,18 @@ class RecursiveTraversalOperator(LogicalOperator):
         # BACKWARD: (a)<-[:TYPE*]-(b) - follow edges in reverse
         # BOTH: (a)-[:TYPE*]-(b) - follow edges in both directions (undirected)
         self.direction = direction
+
+        # Planner decision: whether to use UNION ALL inside the CTE for bidirectional traversal.
+        # This is set by the planner based on direction + EdgeAccessStrategy.
+        # When True: renderer generates CTE with internal UNION ALL (forward + backward)
+        # When False: renderer generates single-direction CTE
+        # This moves the semantic decision out of the renderer (SoC principle).
+        self.use_internal_union_for_bidirectional = use_internal_union_for_bidirectional
+
+        # Planner decision: whether to swap source/sink columns in the CTE.
+        # True for BACKWARD direction: edges are traversed in reverse
+        # This moves the direction interpretation out of the renderer (SoC principle).
+        self.swap_source_sink = swap_source_sink
 
     @property
     def depth(self) -> int:

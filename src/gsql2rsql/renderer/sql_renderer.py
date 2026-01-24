@@ -28,7 +28,6 @@ from gsql2rsql.parser.ast import (
     QueryExpressionProperty,
     QueryExpressionReduce,
     QueryExpressionValue,
-    RelationshipDirection,
     RelationshipEntity,
 )
 from gsql2rsql.parser.operators import (
@@ -52,7 +51,7 @@ from gsql2rsql.planner.operators import (
     UnwindOperator,
 )
 from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
-from gsql2rsql.common.schema import EdgeAccessStrategy, EdgeSchema
+from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.column_ref import ResolvedColumnRef, ColumnRefType
@@ -207,12 +206,6 @@ class SQLRenderer:
 
         # Configuration
         self._config = config or {}
-        # Feature flag: undirected relationship optimization strategy
-        # Default: 'union_edges' (Option A - UNION ALL of edges)
-        # Alternative: 'or_join' (current behavior - OR in JOIN condition)
-        self._undirected_strategy = self._config.get(
-            "undirected_strategy", "union_edges"
-        )
 
     def render_plan(self, plan: LogicalPlan) -> str:
         """
@@ -837,28 +830,23 @@ class SQLRenderer:
         # UNDIRECTED TRAVERSAL SUPPORT
         # ═══════════════════════════════════════════════════════════════════
         # For undirected patterns like (a)-[:TYPE*1..3]-(b), we need to
-        # traverse edges in BOTH directions. The implementation depends on
-        # the EdgeAccessStrategy from the schema provider:
+        # traverse edges in BOTH directions. The planner has already decided
+        # whether we need internal UNION ALL based on direction + storage model.
         #
-        # - EDGE_LIST: Edges stored as directed (src, dst) pairs.
-        #   Undirected requires UNION ALL of forward and backward traversals:
-        #   Forward:  e.src AS start_node, e.dst AS end_node
-        #   Backward: e.dst AS start_node, e.src AS end_node
+        # The renderer just uses op.use_internal_union_for_bidirectional:
+        # - True: Generate CTE with UNION ALL (forward + backward)
+        # - False: Generate single-direction CTE
         #
-        # - ADJACENCY_BIDIRECTIONAL (future): Edges pre-materialized with
-        #   reverse entries. Single query without UNION ALL.
+        # And op.swap_source_sink for backward direction:
+        # - True: Swap source/sink columns (BACKWARD direction)
+        # - False: Use normal column order (FORWARD direction)
         #
-        # This decouples semantic intent (BOTH direction) from physical
-        # storage model (how to implement it), following Separation of Concerns.
+        # This follows Separation of Concerns: planner decides, renderer executes.
         # ═══════════════════════════════════════════════════════════════════
-        is_undirected = op.direction == RelationshipDirection.BOTH
-        is_backward = op.direction == RelationshipDirection.BACKWARD
+        is_backward = op.swap_source_sink  # Planner-resolved (was: op.direction == BACKWARD)
 
-        # Check if we need UNION ALL for undirected traversal based on storage model
-        edge_access_strategy = self._graph_def.get_edge_access_strategy()
-        needs_union_for_undirected = (
-            is_undirected and edge_access_strategy == EdgeAccessStrategy.EDGE_LIST
-        )
+        # Use planner's decision for UNION ALL (no more semantic checks here)
+        needs_union_for_undirected = op.use_internal_union_for_bidirectional
 
         # Helper to generate base case SELECT for a given direction
         def build_base_case_select(
@@ -1932,16 +1920,16 @@ class SQLRenderer:
             - _render_undirected_edge_union(): Generates the UNION ALL subquery
             - docs/development/UNDIRECTED_OPTIMIZATION_IMPLEMENTATION.md
         """
-        if self._undirected_strategy != "union_edges":
-            return False
-
-        # Check if any join pair is undirected (EITHER, EITHER_AS_SOURCE, or EITHER_AS_SINK)
+        # Check if any join pair is undirected AND uses UNION strategy
+        # The use_union_for_undirected field is set by the planner based on the
+        # edge access strategy, moving this semantic decision out of the renderer.
         return any(
             pair.pair_type in (
                 JoinKeyPairType.EITHER,
                 JoinKeyPairType.EITHER_AS_SOURCE,
                 JoinKeyPairType.EITHER_AS_SINK,
             )
+            and pair.use_union_for_undirected
             for pair in op.join_pairs
         )
 
@@ -2599,8 +2587,9 @@ class SQLRenderer:
                                 rel_alias, rel_field.rel_sink_join_field.field_alias
                             )
 
-                    if self._undirected_strategy == "union_edges":
+                    if pair.use_union_for_undirected:
                         # OPTIMIZED: UNION ALL expansion - use appropriate key
+                        # Decision made by planner based on edge access strategy
                         if pair.pair_type == JoinKeyPairType.EITHER_AS_SOURCE:
                             rel_key = source_key or self._get_field_name(rel_alias, "source_id")
                         else:  # EITHER_AS_SINK
@@ -2641,7 +2630,8 @@ class SQLRenderer:
 
                     if source_key and sink_key:
                         # ========== STRATEGY SELECTION: OR vs UNION ALL ==========
-                        if self._undirected_strategy == "union_edges":
+                        # Decision now comes from planner via use_union_for_undirected
+                        if pair.use_union_for_undirected:
                             # **OPTIMIZED (UNION ALL of edges - default)**
                             # Edges are already expanded bidirectionally via UNION ALL
                             # in _render_undirected_edge_union(), so we can use simple
@@ -4021,7 +4011,9 @@ class SQLRenderer:
         # If we have both source and target entity names, use the direct lookup
         if source_entity_name and target_entity_name:
             # Compute edge_id for lookup
-            if relationship.direction == RelationshipDirection.BACKWARD:
+            # Use pre-resolved direction context from planner (SoC compliant)
+            # correlation_uses_source=False indicates BACKWARD direction
+            if not expr.correlation_uses_source:
                 edge_id = EdgeSchema.get_edge_id(
                     rel_name, target_entity_name, source_entity_name
                 )
@@ -4030,7 +4022,7 @@ class SQLRenderer:
                     rel_name, source_entity_name, target_entity_name
                 )
             rel_table_desc = self._graph_def.get_sql_table_descriptors(edge_id)
-            if relationship.direction == RelationshipDirection.BACKWARD:
+            if not expr.correlation_uses_source:
                 edge_schema = self._graph_def.get_edge_definition(
                     rel_name, target_entity_name, source_entity_name
                 )
@@ -4079,17 +4071,16 @@ class SQLRenderer:
                 if target_node_schema and target_node_schema.node_id_property:
                     target_node_id_col = target_node_schema.node_id_property.property_name
 
-                # Join direction depends on relationship direction
-                if relationship.direction == RelationshipDirection.BACKWARD:
-                    lines.append(
-                        f"JOIN {target_table} _exists_target "
-                        f"ON _exists_rel.{source_id_col} = _exists_target.{target_node_id_col}"
-                    )
+                # Join direction uses pre-resolved context from planner (SoC compliant)
+                # target_join_uses_sink=True means join target on sink column
+                if expr.target_join_uses_sink:
+                    edge_join_col = target_id_col  # sink column
                 else:
-                    lines.append(
-                        f"JOIN {target_table} _exists_target "
-                        f"ON _exists_rel.{target_id_col} = _exists_target.{target_node_id_col}"
-                    )
+                    edge_join_col = source_id_col  # source column (BACKWARD)
+                lines.append(
+                    f"JOIN {target_table} _exists_target "
+                    f"ON _exists_rel.{edge_join_col} = _exists_target.{target_node_id_col}"
+                )
 
         # Correlate with outer query using source node's ID
         # The source node's ID field should be in the outer context
@@ -4105,10 +4096,12 @@ class SQLRenderer:
         outer_field = f"{self.COLUMN_PREFIX}{source_alias}_{source_node_id_col}"
 
         # WHERE clause: correlate with outer query
-        if relationship.direction == RelationshipDirection.BACKWARD:
-            correlation = f"_exists_rel.{target_id_col} = {outer_field}"
-        else:
+        # Use pre-resolved context from planner (SoC compliant)
+        # correlation_uses_source=True means use source column for correlation
+        if expr.correlation_uses_source:
             correlation = f"_exists_rel.{source_id_col} = {outer_field}"
+        else:
+            correlation = f"_exists_rel.{target_id_col} = {outer_field}"
 
         where_parts = [correlation]
 

@@ -12,6 +12,7 @@ from gsql2rsql.common.schema import (
     EdgeSchema,
     EntityProperty,
 )
+from gsql2rsql.planner.operators import JoinOperator
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
     SQLTableDescriptor,
@@ -85,8 +86,11 @@ class TestUndirectedJoinOptimization:
 
     def test_undirected_join_uses_or_when_disabled(self):
         """
-        Test that undirected joins use OR condition when optimization is
-        disabled via feature flag.
+        Test that undirected joins use OR condition when use_union_for_undirected
+        is set to False on the JoinKeyPair.
+
+        The decision to use UNION ALL or OR is now made by the planner via
+        JoinKeyPair.use_union_for_undirected field, following SoC principles.
         """
         cypher = "MATCH (p:Person)-[:KNOWS]-(f:Person) RETURN p.name"
 
@@ -95,19 +99,22 @@ class TestUndirectedJoinOptimization:
         plan = LogicalPlan.process_query_tree(ast, self.schema)
         plan.resolve(original_query=cypher)
 
-        # Render with optimization disabled
-        renderer = SQLRenderer(
-            db_schema_provider=self.schema,
-            config={"undirected_strategy": "or_join"},
-        )
+        # Disable UNION optimization by setting use_union_for_undirected=False
+        # on all JoinKeyPairs in the plan (simulates planner decision)
+        for op in plan.all_operators():
+            if isinstance(op, JoinOperator):
+                for pair in op.join_pairs:
+                    pair.use_union_for_undirected = False
+
+        renderer = SQLRenderer(db_schema_provider=self.schema)
         sql = renderer.render_plan(plan)
 
         # Should use OR, not UNION ALL
         assert " OR " in sql.upper(), (
-            "Expected OR condition when optimization is disabled"
+            "Expected OR condition when use_union_for_undirected=False"
         )
         assert "UNION ALL" not in sql, (
-            "Should not have UNION ALL when optimization is disabled"
+            "Should not have UNION ALL when use_union_for_undirected=False"
         )
 
     def test_directed_joins_unchanged(self):

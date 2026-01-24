@@ -463,6 +463,11 @@ class QueryExpressionExists(QueryExpression):
 
     Represents EXISTS { pattern } or EXISTS { MATCH pattern WHERE cond RETURN ... }
     Used for semi-join semantics in WHERE clauses.
+
+    Resolved Context Fields (set by planner during resolution):
+        These fields are populated by the planner to encode direction-dependent
+        decisions. The renderer uses these pre-resolved values directly, avoiding
+        direction checks and maintaining Separation of Concerns.
     """
 
     # Pattern entities forming the EXISTS pattern (for pattern-based EXISTS)
@@ -473,6 +478,15 @@ class QueryExpressionExists(QueryExpression):
     is_negated: bool = False
     # For full subquery EXISTS (EXISTS { MATCH ... RETURN ... })
     subquery: "QueryNode | None" = None
+
+    # Pre-resolved context for rendering (populated by planner during resolution)
+    # These remove the need for the renderer to check relationship direction.
+    # correlation_uses_source: True = use source_id for outer correlation,
+    #                          False = use sink_id (for BACKWARD direction)
+    correlation_uses_source: bool = True
+    # target_join_uses_sink: True = join target node on sink_id,
+    #                        False = join on source_id (for BACKWARD direction)
+    target_join_uses_sink: bool = True
 
     @property
     def children(self) -> list[TreeNode]:
@@ -493,6 +507,32 @@ class QueryExpressionExists(QueryExpression):
         pattern = ", ".join(str(e) for e in self.pattern_entities)
         where_part = f" WHERE {self.where_expression}" if self.where_expression else ""
         return f"{neg}EXISTS {{ {pattern}{where_part} }}"
+
+    def resolve_direction_context(
+        self, direction: "RelationshipDirection"
+    ) -> None:
+        """Resolve direction-dependent fields based on relationship direction.
+
+        This method is called by the planner to pre-compute direction-based
+        decisions. The renderer uses these resolved values directly, maintaining
+        Separation of Concerns (planner decides semantics, renderer just generates SQL).
+
+        Args:
+            direction: The relationship direction from the EXISTS pattern.
+
+        Side Effects:
+            Sets correlation_uses_source and target_join_uses_sink fields.
+        """
+        # For BACKWARD direction (<-): source and sink are swapped from the
+        # pattern's perspective. The "source" node in the pattern actually
+        # correlates with the edge's sink column.
+        if direction == RelationshipDirection.BACKWARD:
+            self.correlation_uses_source = False  # Use sink_id for outer correlation
+            self.target_join_uses_sink = False  # Join target on source_id
+        else:
+            # FORWARD or BOTH: use standard direction
+            self.correlation_uses_source = True  # Use source_id for outer correlation
+            self.target_join_uses_sink = True  # Join target on sink_id
 
 
 # ==============================================================================

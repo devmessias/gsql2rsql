@@ -10,7 +10,7 @@ from gsql2rsql.common.exceptions import (
     UnsupportedQueryPatternError,
 )
 from gsql2rsql.common.logging import ILoggable
-from gsql2rsql.common.schema import IGraphSchemaProvider
+from gsql2rsql.common.schema import EdgeAccessStrategy, IGraphSchemaProvider
 from gsql2rsql.common.utils import change_indentation
 from gsql2rsql.parser.ast import (
     Entity,
@@ -22,6 +22,7 @@ from gsql2rsql.parser.ast import (
     QueryExpression,
     QueryExpressionAggregationFunction,
     QueryExpressionBinary,
+    QueryExpressionExists,
     QueryExpressionFunction,
     QueryExpressionMapLiteral,
     QueryExpressionProperty,
@@ -133,7 +134,43 @@ class LogicalPlan:
         self._original_query = original_query
         resolver = ColumnResolver()
         self._resolution_result = resolver.resolve(self, original_query)
+
+        # Resolve EXISTS pattern direction context (SoC: planner decides, renderer uses)
+        self._resolve_exists_patterns()
+
         return self._resolution_result
+
+    def _resolve_exists_patterns(self) -> None:
+        """Resolve direction context for all EXISTS expressions in the plan.
+
+        This method walks through all operators and their expressions to find
+        EXISTS patterns, then resolves their direction-based fields. This allows
+        the renderer to use pre-computed values instead of checking direction.
+        """
+        for op in self.all_operators():
+            if isinstance(op, SelectionOperator) and op.filter_expression:
+                self._resolve_exists_in_expression(op.filter_expression)
+
+    def _resolve_exists_in_expression(self, expr: QueryExpression) -> None:
+        """Recursively resolve EXISTS patterns in an expression tree.
+
+        Args:
+            expr: The expression to search for EXISTS patterns.
+        """
+        if isinstance(expr, QueryExpressionExists):
+            # Find the relationship entity to get direction
+            for entity in expr.pattern_entities:
+                if isinstance(entity, RelationshipEntity):
+                    expr.resolve_direction_context(entity.direction)
+                    break
+        elif isinstance(expr, QueryExpressionBinary):
+            if expr.left_expression:
+                self._resolve_exists_in_expression(expr.left_expression)
+            if expr.right_expression:
+                self._resolve_exists_in_expression(expr.right_expression)
+        elif isinstance(expr, QueryExpressionFunction):
+            for param in expr.parameters:
+                self._resolve_exists_in_expression(param)
 
     def all_operators(self) -> list[LogicalOperator]:
         """Get all operators in the plan.
@@ -1120,6 +1157,23 @@ class LogicalPlan:
         # See RecursiveTraversalOperator docstring for detailed optimization
         # diagrams showing the performance impact.
         # ═══════════════════════════════════════════════════════════════════
+
+        # Determine if we need internal UNION ALL for bidirectional traversal.
+        # This is a planner decision based on:
+        # - Direction is BOTH (undirected pattern like (a)-[:TYPE*]-(b))
+        # - EdgeAccessStrategy is EDGE_LIST (edges stored as directed pairs)
+        # When both conditions are true, the CTE needs UNION ALL internally
+        # to traverse edges in both directions.
+        use_internal_union = (
+            rel.direction == RelationshipDirection.BOTH
+            and self._graph_schema is not None
+            and self._graph_schema.get_edge_access_strategy() == EdgeAccessStrategy.EDGE_LIST
+        )
+
+        # Planner decision: swap source/sink columns for BACKWARD direction.
+        # This moves the direction interpretation out of the renderer.
+        swap_source_sink = rel.direction == RelationshipDirection.BACKWARD
+
         recursive_op = RecursiveTraversalOperator(
             edge_types=edge_types,
             source_node_type=source_node.entity_name,
@@ -1142,6 +1196,10 @@ class LogicalPlan:
             edge_filter_lambda_var=path_info.edge_lambda_variable,
             # Direction for undirected traversal support
             direction=rel.direction,
+            # Planner decision: use internal UNION for bidirectional traversal
+            use_internal_union_for_bidirectional=use_internal_union,
+            # Planner decision: swap source/sink for backward traversal
+            swap_source_sink=swap_source_sink,
         )
         recursive_op.add_in_operator(source_ds)
         source_ds.add_out_operator(recursive_op)
