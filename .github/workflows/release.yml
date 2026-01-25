@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - main
+    paths:
+      # Only trigger release when source code or dependencies change
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
   workflow_dispatch:  # Allow manual trigger
 
 permissions:
