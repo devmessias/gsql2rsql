@@ -55,8 +55,10 @@ print(sql)
 
 ---
 
-!!! warning "Not for OLTP (obviously) or end-user queries"
-    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
+!!! warning "Early Stage Project — Not for OLTP or end-user queries"
+    This project is in **early development**. APIs may change, features may be incomplete, and bugs are expected. Contributions and feedback are welcome!
+
+    This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
 
 
 ## Real-World Examples

@@ -124,9 +124,11 @@ LIMIT 3
 
 ---
 
-> **Not for OLTP (obviously) or end-user queries**
+> **Early Stage Project — Not for OLTP or end-user queries**
 >
-> This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP  ! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
+> This project is in **early development**. APIs may change, features may be incomplete, and bugs are expected. Contributions and feedback are welcome!
+>
+> This transpiler is for **internal analytics and exploration** (data science, engineering, analysis). It obviously makes no sense for OLTP! If you plan to expose transpiled queries to end users, be careful: implement validation, rate limiting, and security. Use common sense.
 >
 >
 
@@ -215,8 +217,6 @@ renderer = SQLRenderer(db_schema_provider=schema)
 sql = renderer.render_plan(plan)
 ```
 
-API Reference →[](api-reference.md)
-
 ---
 
 ## Key Features
@@ -249,8 +249,6 @@ OpenCypher → Parser → Planner → Resolver → Renderer → SQL
 
 This separation ensures each phase has clear responsibilities and can be tested independently.
 
-[Architecture details →](architecture.md)
-
 ---
 
 ## Documentation
@@ -259,7 +257,6 @@ This separation ensures each phase has clear responsibilities and can be tested 
 |---------|-------------|
 | [**User Guide**](user-guide.md) | Getting started, GraphContext, schema setup |
 | [**Examples**](examples/index.md) | 69 complete queries with generated SQL |
-| [**Architecture**](architecture.md) | How the transpiler works |
 
 ---
 
