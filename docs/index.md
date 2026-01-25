@@ -147,7 +147,6 @@ renderer = SQLRenderer(db_schema_provider=schema)
 sql = renderer.render_plan(plan)
 ```
 
-API Reference →[](api-reference.md)
 
 ---
 
@@ -181,7 +180,6 @@ OpenCypher → Parser → Planner → Resolver → Renderer → SQL
 
 This separation ensures each phase has clear responsibilities and can be tested independently.
 
-[Architecture details →](architecture.md)
 
 ---
 
@@ -191,7 +189,7 @@ This separation ensures each phase has clear responsibilities and can be tested 
 |---------|-------------|
 | [**User Guide**](user-guide.md) | Getting started, GraphContext, schema setup |
 | [**Examples**](examples/index.md) | 69 complete queries with generated SQL |
-| [**Architecture**](architecture.md) | How the transpiler works |
+
 
 ---
 

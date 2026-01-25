@@ -407,8 +407,6 @@ This approach is useful when:
 - **Custom column mappings** beyond what GraphContext supports
 - **Integration with existing schemas** that don't follow Triple Store pattern
 
-See [API Reference](api-reference.md) for complete documentation of all classes.
-
 ---
 
 ## CLI Usage
@@ -423,7 +421,6 @@ echo "MATCH (p:Person) RETURN p.name" | gsql2rsql translate --schema schema.json
 gsql2rsql tui --schema schema.json
 ```
 
-See [CLI Commands](cli-commands.md) for full documentation.
 
 ---
 
@@ -438,5 +435,3 @@ See [CLI Commands](cli-commands.md) for full documentation.
 ## Next Steps
 
 - [**Examples Gallery**](examples/index.md) - 69 complete query examples
-- [**API Reference**](api-reference.md) - Full Python API documentation
-- [**Architecture**](architecture.md) - How the transpiler works
