@@ -27,6 +27,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionProperty,
     QueryExpressionReduce,
     QueryExpressionValue,
+    RelationshipDirection,
     RelationshipEntity,
 )
 from gsql2rsql.parser.operators import (
@@ -1213,7 +1214,14 @@ class SQLRenderer:
         lines.append("")
         lines.append("    UNION ALL")
         lines.append("")
-        lines.append("    -- Depth 1+: explore outgoing edges from source")
+
+        # Check if undirected (explore both edge directions)
+        is_undirected = op.direction == RelationshipDirection.BOTH
+
+        # Depth 1+: explore outgoing edges from source
+        lines.append("    -- Depth 1+: explore edges from source")
+        if is_undirected:
+            lines.append("    SELECT * FROM (")
         lines.append("    SELECT")
         lines.append(f"      e.{edge_dst_col} AS current_node,")
         lines.append("      1 AS depth,")
@@ -1232,10 +1240,41 @@ class SQLRenderer:
             where_parts.append(source_filter_sql)
         if where_parts:
             lines.append(f"    WHERE {' AND '.join(where_parts)}")
+
+        # For undirected: add UNION ALL with reverse direction
+        if is_undirected:
+            lines.append("")
+            lines.append("      UNION ALL")
+            lines.append("")
+            lines.append("    -- Reverse direction for undirected")
+            lines.append("    SELECT")
+            lines.append(f"      e.{edge_src_col} AS current_node,")
+            lines.append("      1 AS depth,")
+            lines.append(f"      ARRAY(e.{edge_dst_col}, e.{edge_src_col}) AS path,")
+            lines.append(f"      ARRAY({edge_struct}) AS path_edges")
+            lines.append(f"    FROM {edge_table_name} e")
+            if source_node_table:
+                lines.append(
+                    f"    JOIN {source_node_table.full_table_name} src "
+                    f"ON src.{node_id_col} = e.{edge_dst_col}"
+                )
+            where_parts_rev = []
+            if edge_filter_clause:
+                where_parts_rev.append(f"({edge_filter_clause})")
+            if source_filter_sql:
+                where_parts_rev.append(source_filter_sql)
+            if where_parts_rev:
+                lines.append(f"    WHERE {' AND '.join(where_parts_rev)}")
+            lines.append("    )")
+
         lines.append("")
         lines.append("    UNION ALL")
         lines.append("")
+
+        # Recursive case: extend forward
         lines.append("    -- Recursive case: extend forward")
+        if is_undirected:
+            lines.append("    SELECT * FROM (")
         lines.append("    SELECT")
         lines.append(f"      e.{edge_dst_col} AS current_node,")
         lines.append("      f.depth + 1 AS depth,")
@@ -1248,6 +1287,27 @@ class SQLRenderer:
         lines.append(f"      AND NOT ARRAY_CONTAINS(f.path, e.{edge_dst_col})")
         if edge_filter_clause:
             lines.append(f"      AND ({edge_filter_clause})")
+
+        # For undirected: add UNION ALL with reverse direction
+        if is_undirected:
+            lines.append("")
+            lines.append("      UNION ALL")
+            lines.append("")
+            lines.append("    -- Reverse direction for undirected")
+            lines.append("    SELECT")
+            lines.append(f"      e.{edge_src_col} AS current_node,")
+            lines.append("      f.depth + 1 AS depth,")
+            lines.append(f"      CONCAT(f.path, ARRAY(e.{edge_src_col})) AS path,")
+            lines.append(f"      CONCAT(f.path_edges, ARRAY({edge_struct})) AS path_edges")
+            lines.append(f"    FROM forward_{cte_name} f")
+            lines.append(f"    JOIN {edge_table_name} e")
+            lines.append(f"      ON f.current_node = e.{edge_dst_col}")
+            lines.append(f"    WHERE f.depth < {forward_depth}")
+            lines.append(f"      AND NOT ARRAY_CONTAINS(f.path, e.{edge_src_col})")
+            if edge_filter_clause:
+                lines.append(f"      AND ({edge_filter_clause})")
+            lines.append("    )")
+
         lines.append("  ),")
         lines.append("")
 
@@ -1279,7 +1339,11 @@ class SQLRenderer:
         lines.append("")
         lines.append("    UNION ALL")
         lines.append("")
-        lines.append("    -- Depth 1+: explore incoming edges to target")
+
+        # Depth 1+: explore incoming edges to target
+        lines.append("    -- Depth 1+: explore edges to target")
+        if is_undirected:
+            lines.append("    SELECT * FROM (")
         lines.append("    SELECT")
         lines.append(f"      e.{edge_src_col} AS current_node,")
         lines.append("      1 AS depth,")
@@ -1298,10 +1362,41 @@ class SQLRenderer:
             where_parts_bwd.append(target_filter_sql)
         if where_parts_bwd:
             lines.append(f"    WHERE {' AND '.join(where_parts_bwd)}")
+
+        # For undirected: add UNION ALL with reverse direction
+        if is_undirected:
+            lines.append("")
+            lines.append("      UNION ALL")
+            lines.append("")
+            lines.append("    -- Reverse direction for undirected")
+            lines.append("    SELECT")
+            lines.append(f"      e.{edge_dst_col} AS current_node,")
+            lines.append("      1 AS depth,")
+            lines.append(f"      ARRAY(e.{edge_dst_col}, e.{edge_src_col}) AS path,")
+            lines.append(f"      ARRAY({edge_struct}) AS path_edges")
+            lines.append(f"    FROM {edge_table_name} e")
+            if target_node_table:
+                lines.append(
+                    f"    JOIN {target_node_table.full_table_name} tgt "
+                    f"ON tgt.{node_id_col} = e.{edge_src_col}"
+                )
+            where_parts_bwd_rev = []
+            if edge_filter_clause:
+                where_parts_bwd_rev.append(f"({edge_filter_clause})")
+            if target_filter_sql:
+                where_parts_bwd_rev.append(target_filter_sql)
+            if where_parts_bwd_rev:
+                lines.append(f"    WHERE {' AND '.join(where_parts_bwd_rev)}")
+            lines.append("    )")
+
         lines.append("")
         lines.append("    UNION ALL")
         lines.append("")
+
+        # Recursive case: extend backward
         lines.append("    -- Recursive case: extend backward")
+        if is_undirected:
+            lines.append("    SELECT * FROM (")
         lines.append("    SELECT")
         lines.append(f"      e.{edge_src_col} AS current_node,")
         lines.append("      b.depth + 1 AS depth,")
@@ -1314,6 +1409,27 @@ class SQLRenderer:
         lines.append(f"      AND NOT ARRAY_CONTAINS(b.path, e.{edge_src_col})")
         if edge_filter_clause:
             lines.append(f"      AND ({edge_filter_clause})")
+
+        # For undirected: add UNION ALL with reverse direction
+        if is_undirected:
+            lines.append("")
+            lines.append("      UNION ALL")
+            lines.append("")
+            lines.append("    -- Reverse direction for undirected")
+            lines.append("    SELECT")
+            lines.append(f"      e.{edge_dst_col} AS current_node,")
+            lines.append("      b.depth + 1 AS depth,")
+            lines.append(f"      CONCAT(ARRAY(e.{edge_dst_col}), b.path) AS path,")
+            lines.append(f"      CONCAT(ARRAY({edge_struct}), b.path_edges) AS path_edges")
+            lines.append(f"    FROM backward_{cte_name} b")
+            lines.append(f"    JOIN {edge_table_name} e")
+            lines.append(f"      ON b.current_node = e.{edge_src_col}")
+            lines.append(f"    WHERE b.depth < {backward_depth}")
+            lines.append(f"      AND NOT ARRAY_CONTAINS(b.path, e.{edge_dst_col})")
+            if edge_filter_clause:
+                lines.append(f"      AND ({edge_filter_clause})")
+            lines.append("    )")
+
         lines.append("  ),")
         lines.append("")
 

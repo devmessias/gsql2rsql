@@ -333,8 +333,8 @@ class GraphContext:
             query: OpenCypher query string
             optimize: Enable optimizations (predicate pushdown, flattening)
             bidirectional_mode: BFS bidirectional optimization mode:
-                - "off": Disable bidirectional BFS (default, safest)
-                - "recursive": Use WITH RECURSIVE forward/backward CTEs
+                - "off": Disable bidirectional BFS
+                - "recursive": Use WITH RECURSIVE forward/backward CTEs (default)
                 - "unrolling": Use unrolled CTEs (fwd0, fwd1, bwd0, bwd1)
                 - "auto": Auto-select based on query characteristics
 

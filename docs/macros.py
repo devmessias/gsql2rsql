@@ -144,14 +144,12 @@ def simple_match_sql() -> str:
 def bidirectional_example_sql(
     mode: str = "off",
     include_fence: bool = True,
-    max_lines: int | None = None,
 ) -> str:
     """Generate bidirectional BFS example SQL.
 
     Args:
         mode: Bidirectional mode ("off", "recursive", "unrolling", "auto")
         include_fence: If True, include ```sql``` code fence markers
-        max_lines: If set, truncate output to this many lines
 
     Returns:
         SQL string with optional code fence
@@ -176,11 +174,6 @@ def bidirectional_example_sql(
 
     sql = graph.transpile(dedent(cypher).strip(), bidirectional_mode=mode)
 
-    if max_lines:
-        lines = sql.split("\n")
-        if len(lines) > max_lines:
-            sql = "\n".join(lines[:max_lines]) + "\n-- ... (truncated)"
-
     if include_fence:
         sql = f"```sql\n{sql}\n```"
 
@@ -196,6 +189,70 @@ def bidirectional_cypher_example() -> str:
     """).strip()
 
 
+def userguide_try_it_now_sql(indent: int = 0, include_fence: bool = True) -> str:
+    """Generate SQL for the 'Try It Now' example in user guide."""
+    from gsql2rsql import GraphContext
+
+    graph = GraphContext(
+        nodes_table="my_nodes",
+        edges_table="my_edges",
+    )
+    graph.set_types(
+        node_types=["Person", "Company"],
+        edge_types=["WORKS_AT"],
+    )
+
+    cypher = """
+        MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+        RETURN p.node_id, c.node_id
+    """
+
+    sql = graph.transpile(dedent(cypher).strip())
+
+    if include_fence:
+        sql = f"```sql\n{sql}\n```"
+
+    if indent > 0:
+        prefix = " " * indent
+        sql = "\n".join(prefix + line if line else line for line in sql.split("\n"))
+
+    return sql
+
+
+def userguide_with_attrs_sql(indent: int = 0, include_fence: bool = True) -> str:
+    """Generate SQL for the 'With Node/Edge Attributes' example in user guide."""
+    from gsql2rsql import GraphContext
+
+    graph = GraphContext(
+        nodes_table="catalog.schema.nodes",
+        edges_table="catalog.schema.edges",
+        extra_node_attrs={"name": str, "age": int, "score": float, "industry": str},
+        extra_edge_attrs={"weight": float, "timestamp": str},
+    )
+    graph.set_types(
+        node_types=["Person", "Company", "Account"],
+        edge_types=["KNOWS", "WORKS_AT", "OWNS"],
+    )
+
+    cypher = """
+        MATCH (p:Person)-[:WORKS_AT]->(c:Company)
+        WHERE c.industry = 'Technology'
+        RETURN p.name, c.name AS company
+        LIMIT 100
+    """
+
+    sql = graph.transpile(dedent(cypher).strip())
+
+    if include_fence:
+        sql = f"```sql\n{sql}\n```"
+
+    if indent > 0:
+        prefix = " " * indent
+        sql = "\n".join(prefix + line if line else line for line in sql.split("\n"))
+
+    return sql
+
+
 def define_env(env):
     """Register macros for mkdocs-macros plugin."""
     env.macro(transpile_cypher, "transpile_cypher")
@@ -203,3 +260,5 @@ def define_env(env):
     env.macro(simple_match_sql, "simple_match_sql")
     env.macro(bidirectional_example_sql, "bidirectional_example_sql")
     env.macro(bidirectional_cypher_example, "bidirectional_cypher_example")
+    env.macro(userguide_try_it_now_sql, "userguide_try_it_now_sql")
+    env.macro(userguide_with_attrs_sql, "userguide_with_attrs_sql")

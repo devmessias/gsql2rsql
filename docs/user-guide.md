@@ -52,34 +52,7 @@ print(sql)  # Copy this SQL to run on Databricks
 
 ??? example "Generated SQL Output"
 
-    ```sql
-    SELECT
-       _gsql2rsql_p_node_id AS node_id
-      ,_gsql2rsql_c_node_id AS node_id
-    FROM (
-      SELECT
-         _left._gsql2rsql_p_node_id AS _gsql2rsql_p_node_id
-        ,_right._gsql2rsql_c_node_id AS _gsql2rsql_c_node_id
-      FROM (
-        SELECT
-           _left._gsql2rsql_p_node_id AS _gsql2rsql_p_node_id
-        FROM (
-          SELECT node_id AS _gsql2rsql_p_node_id
-          FROM my_nodes WHERE (node_type = 'Person')
-        ) AS _left
-        INNER JOIN (
-          SELECT src AS _gsql2rsql__anon1_src, dst AS _gsql2rsql__anon1_dst
-          FROM my_edges WHERE (relationship_type = 'WORKS_AT')
-        ) AS _right
-        ON _left._gsql2rsql_p_node_id = _right._gsql2rsql__anon1_src
-      ) AS _left
-      INNER JOIN (
-        SELECT node_id AS _gsql2rsql_c_node_id
-        FROM my_nodes WHERE (node_type = 'Company')
-      ) AS _right
-      ON _right._gsql2rsql_c_node_id = _left._gsql2rsql__anon1_dst
-    ) AS _proj
-    ```
+{{ userguide_try_it_now_sql(indent=4) }}
 
 ---
 
@@ -118,44 +91,7 @@ print(sql)
 
 ??? example "Generated SQL"
 
-    ```sql
-    SELECT
-       _gsql2rsql_p_name AS name
-      ,_gsql2rsql_c_name AS company
-    FROM (
-      SELECT
-         _left._gsql2rsql_p_id AS _gsql2rsql_p_id
-        ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
-        ,_right._gsql2rsql_c_id AS _gsql2rsql_c_id
-        ,_right._gsql2rsql_c_name AS _gsql2rsql_c_name
-        ,_right._gsql2rsql_c_industry AS _gsql2rsql_c_industry
-      FROM (
-        SELECT
-           _left._gsql2rsql_p_id AS _gsql2rsql_p_id
-          ,_left._gsql2rsql_p_name AS _gsql2rsql_p_name
-          ,_right._gsql2rsql__anon1_src AS _gsql2rsql__anon1_src
-          ,_right._gsql2rsql__anon1_dst AS _gsql2rsql__anon1_dst
-        FROM (
-          SELECT id AS _gsql2rsql_p_id, name AS _gsql2rsql_p_name
-          FROM catalog.schema.nodes
-          WHERE (node_type = 'Person')
-        ) AS _left
-        INNER JOIN (
-          SELECT src AS _gsql2rsql__anon1_src, dst AS _gsql2rsql__anon1_dst
-          FROM catalog.schema.edges
-          WHERE (relationship_type = 'WORKS_AT')
-        ) AS _right
-        ON _left._gsql2rsql_p_id = _right._gsql2rsql__anon1_src
-      ) AS _left
-      INNER JOIN (
-        SELECT id AS _gsql2rsql_c_id, name AS _gsql2rsql_c_name, industry AS _gsql2rsql_c_industry
-        FROM catalog.schema.nodes
-        WHERE (node_type = 'Company') AND ((industry) = ('Technology'))
-      ) AS _right
-      ON _right._gsql2rsql_c_id = _left._gsql2rsql__anon1_dst
-    ) AS _proj
-    LIMIT 100
-    ```
+{{ userguide_with_attrs_sql(indent=4) }}
 
 ### GraphContext Parameters
 
@@ -234,6 +170,47 @@ sql = graph.transpile("""
 - **Cycle detection**: Automatic `ARRAY_CONTAINS` checks prevent infinite loops
 - **Path functions**: `length(path)`, `nodes(path)`, `relationships(path)`
 - **Path variable**: Captures the entire path for analysis
+
+### Bidirectional BFS Optimization
+
+When BOTH source AND target have equality filters on ID, bidirectional BFS can enable queries that would otherwise **fail due to Spark's recursion limits**.
+
+```python
+sql = graph.transpile(
+    """
+    MATCH path = (a:Person)-[:KNOWS*1..4]->(b:Person)
+    WHERE a.node_id = 'alice' AND b.node_id = 'dave'
+    RETURN nodes(path) AS path_nodes
+    """,
+    bidirectional_mode="recursive"  # Enable optimization
+)
+```
+
+??? example "Generated SQL (bidirectional off vs recursive)"
+
+    === "bidirectional_mode='off'"
+
+{{ bidirectional_example_sql(mode="off", include_fence=True) | indent(8, first=True) }}
+
+    === "bidirectional_mode='recursive'"
+
+{{ bidirectional_example_sql(mode="recursive", include_fence=True) | indent(8, first=True) }}
+
+**Why use it:**
+
+- **Unidirectional BFS** explores ALL paths from source (exponential growth)
+- **Bidirectional BFS** explores from both ends and prunes paths that don't meet
+- For small graphs: bidirectional has ~20-30% overhead
+- For large graphs: unidirectional **fails** (hits `maxRowsPerIteration` limit), bidirectional **succeeds**
+
+**Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `"off"` | Standard unidirectional BFS |
+| `"recursive"` | WITH RECURSIVE forward/backward CTEs (default) |
+| `"unrolling"` | Unrolled CTEs (best for depth ≤6) |
+| `"auto"` | Auto-select based on max_hops |
 
 ---
 

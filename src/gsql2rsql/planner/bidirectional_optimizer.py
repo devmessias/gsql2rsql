@@ -36,7 +36,6 @@ from gsql2rsql.parser.ast import (
     QueryExpressionBinary,
     QueryExpressionProperty,
     QueryExpressionValue,
-    RelationshipDirection,
 )
 from gsql2rsql.planner.operators import (
     LogicalOperator,
@@ -115,18 +114,16 @@ class BidirectionalBFSOptimizer:
         """Check if this VLP operator can use bidirectional BFS and enable it.
 
         Criteria for bidirectional BFS:
-        1. Traversal is DIRECTED (not undirected/BOTH)
-        2. start_node_filter exists and contains equality on source ID
-        3. sink_node_filter exists and contains equality on target ID
+        1. start_node_filter exists and contains equality on source ID
+        2. sink_node_filter exists and contains equality on target ID
+
+        Note: Both DIRECTED and UNDIRECTED traversals are supported.
+        For undirected, the renderer generates UNION ALL to explore
+        edges in both directions.
 
         Args:
             op: The RecursiveTraversalOperator to potentially optimize
         """
-        # Skip undirected traversals - bidirectional BFS optimization
-        # doesn't work correctly with undirected edges
-        if op.direction == RelationshipDirection.BOTH:
-            return
-
         # Get ID column names for source and target
         source_id_col = self._get_id_column(op.source_node_type, op.source_id_column)
         target_id_col = self._get_id_column(op.target_node_type, op.target_id_column)
