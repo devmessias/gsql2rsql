@@ -2,6 +2,29 @@
 
 
 
+## v0.8.0 (2026-01-26)
+
+### Documentation
+
+* docs: update warnings to reflect early project status and clarify usage limitations ([`6db2c20`](https://github.com/devmessias/gsql2rsql/commit/6db2c2076640c7ae6cb4762b15cfa56560a85324))
+
+* docs: fix links ([`d14bede`](https://github.com/devmessias/gsql2rsql/commit/d14bedeccb9bf8e429be0721b825a99be80361e9))
+
+* docs: disclaimers ([`08c2e4d`](https://github.com/devmessias/gsql2rsql/commit/08c2e4dd60b6a522c770d93e77c8669d4d1639f3))
+
+### Feature
+
+* feat: add BFS bidirectional optimization for variable-length path queries ([`fda2632`](https://github.com/devmessias/gsql2rsql/commit/fda2632878261daf8676f7b200e0da8dda7ea878))
+
+### Fix
+
+* fix:  release trigger paths ([`a0c1636`](https://github.com/devmessias/gsql2rsql/commit/a0c16368ae52a246fa4c149e51fb5b581bf88862))
+
+### Performance
+
+* perf: add bidirectional BFS support for undirected traversals ([`c136617`](https://github.com/devmessias/gsql2rsql/commit/c136617b7bf298ea9399fb332bf9726857d949e5))
+
+
 ## v0.7.3 (2026-01-24)
 
 ### Documentation
