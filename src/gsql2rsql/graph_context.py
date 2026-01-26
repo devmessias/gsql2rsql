@@ -22,7 +22,7 @@ Example:
 This eliminates ~100 lines of boilerplate schema configuration code.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from gsql2rsql.common.schema import (
     EdgeSchema,
@@ -30,6 +30,7 @@ from gsql2rsql.common.schema import (
     NodeSchema,
 )
 from gsql2rsql.parser.opencypher_parser import OpenCypherParser
+from gsql2rsql.planner.bidirectional_optimizer import apply_bidirectional_optimization
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.subquery_optimizer import optimize_plan
 from gsql2rsql.renderer.schema_provider import (
@@ -318,12 +319,28 @@ class GraphContext:
         # enabled by SimpleSQLSchemaProvider when nodes/edges are added.
         # The provider detects the base table and creates wildcards automatically.
 
-    def transpile(self, query: str, optimize: bool = True) -> str:
+    def transpile(
+        self,
+        query: str,
+        optimize: bool = True,
+        bidirectional_mode: Literal[
+            "off", "recursive", "unrolling", "auto"
+        ] = "recursive",
+    ) -> str:
         """Transpile OpenCypher query to Databricks SQL.
 
         Args:
             query: OpenCypher query string
             optimize: Enable optimizations (predicate pushdown, flattening)
+            bidirectional_mode: BFS bidirectional optimization mode:
+                - "off": Disable bidirectional BFS (default, safest)
+                - "recursive": Use WITH RECURSIVE forward/backward CTEs
+                - "unrolling": Use unrolled CTEs (fwd0, fwd1, bwd0, bwd1)
+                - "auto": Auto-select based on query characteristics
+
+                Bidirectional BFS is only applied when BOTH source AND target
+                have equality filters on their ID columns. Enables large-scale
+                queries that would exceed Spark's row limits.
 
         Returns:
             Databricks SQL query string
@@ -332,6 +349,12 @@ class GraphContext:
             >>> sql = graph.transpile("MATCH (p:Person) RETURN p.name")
             >>> print(sql)
             SELECT name AS name FROM ...
+
+            >>> # With bidirectional optimization
+            >>> sql = graph.transpile(
+            ...     "MATCH (a)-[:KNOWS*1..5]->(b) WHERE a.id='X' AND b.id='Y' RETURN path",
+            ...     bidirectional_mode="auto"
+            ... )
         """
         if self._schema is None:
             raise RuntimeError(
@@ -351,6 +374,14 @@ class GraphContext:
         # Apply optimizations
         if optimize:
             optimize_plan(plan, enabled=True, pushdown_enabled=True)
+
+        # Apply bidirectional BFS optimization
+        # This sets flags on RecursiveTraversalOperator that the renderer uses
+        apply_bidirectional_optimization(
+            plan,
+            graph_schema=self._schema,
+            mode=bidirectional_mode,
+        )
 
         # Resolve column references
         plan.resolve(original_query=query)

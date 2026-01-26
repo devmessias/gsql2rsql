@@ -141,8 +141,65 @@ def simple_match_sql() -> str:
     )
 
 
+def bidirectional_example_sql(
+    mode: str = "off",
+    include_fence: bool = True,
+    max_lines: int | None = None,
+) -> str:
+    """Generate bidirectional BFS example SQL.
+
+    Args:
+        mode: Bidirectional mode ("off", "recursive", "unrolling", "auto")
+        include_fence: If True, include ```sql``` code fence markers
+        max_lines: If set, truncate output to this many lines
+
+    Returns:
+        SQL string with optional code fence
+    """
+    from gsql2rsql import GraphContext
+
+    graph = GraphContext(
+        nodes_table="graph.nodes",
+        edges_table="graph.edges",
+    )
+    graph.set_types(
+        node_types=["Person"],
+        edge_types=["KNOWS"],
+        edge_combinations=[("Person", "KNOWS", "Person")],
+    )
+
+    cypher = """
+        MATCH path = (a:Person)-[:KNOWS*1..4]->(b:Person)
+        WHERE a.node_id = 'alice' AND b.node_id = 'dave'
+        RETURN nodes(path) AS path_nodes
+    """
+
+    sql = graph.transpile(dedent(cypher).strip(), bidirectional_mode=mode)
+
+    if max_lines:
+        lines = sql.split("\n")
+        if len(lines) > max_lines:
+            sql = "\n".join(lines[:max_lines]) + "\n-- ... (truncated)"
+
+    if include_fence:
+        sql = f"```sql\n{sql}\n```"
+
+    return sql
+
+
+def bidirectional_cypher_example() -> str:
+    """Return the Cypher query used in bidirectional examples."""
+    return dedent("""
+        MATCH path = (a:Person)-[:KNOWS*1..4]->(b:Person)
+        WHERE a.node_id = 'alice' AND b.node_id = 'dave'
+        RETURN nodes(path) AS path_nodes
+    """).strip()
+
+
 def define_env(env):
     """Register macros for mkdocs-macros plugin."""
     env.macro(transpile_cypher, "transpile_cypher")
     env.macro(fraud_example_sql, "fraud_example_sql")
     env.macro(simple_match_sql, "simple_match_sql")
+    env.macro(bidirectional_example_sql, "bidirectional_example_sql")
+    env.macro(bidirectional_cypher_example, "bidirectional_cypher_example")

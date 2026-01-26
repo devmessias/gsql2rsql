@@ -1266,6 +1266,11 @@ class RecursiveTraversalOperator(LogicalOperator):
         direction: RelationshipDirection = RelationshipDirection.FORWARD,
         use_internal_union_for_bidirectional: bool = False,
         swap_source_sink: bool = False,
+        # BFS Bidirectional optimization fields
+        bidirectional_bfs_mode: str = "off",  # "off", "recursive", "unrolling"
+        bidirectional_depth_forward: int | None = None,
+        bidirectional_depth_backward: int | None = None,
+        bidirectional_target_value: str | None = None,
     ) -> None:
         super().__init__()
         self.edge_types = edge_types
@@ -1308,6 +1313,22 @@ class RecursiveTraversalOperator(LogicalOperator):
         # True for BACKWARD direction: edges are traversed in reverse
         # This moves the direction interpretation out of the renderer (SoC principle).
         self.swap_source_sink = swap_source_sink
+
+        # BFS Bidirectional optimization
+        # ===============================
+        # When both source AND target have equality filters on their ID columns,
+        # bidirectional BFS can enable large-scale queries that would hit row limits.
+        #
+        # Modes:
+        # - "off": Disable bidirectional BFS (default, safest)
+        # - "recursive": Use WITH RECURSIVE forward/backward CTEs
+        # - "unrolling": Use unrolled CTEs (fwd0, fwd1, bwd0, bwd1)
+        #
+        # The optimizer sets these fields; the renderer uses them.
+        self.bidirectional_bfs_mode = bidirectional_bfs_mode
+        self.bidirectional_depth_forward = bidirectional_depth_forward
+        self.bidirectional_depth_backward = bidirectional_depth_backward
+        self.bidirectional_target_value = bidirectional_target_value
 
     @property
     def depth(self) -> int:

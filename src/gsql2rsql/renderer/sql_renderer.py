@@ -595,6 +595,21 @@ class SQLRenderer:
         extracts it from ALL() expressions and rewrites variable names
         (e.g., "rel.amount" → "e.amount") for use inside the CTE.
         """
+        # ═══════════════════════════════════════════════════════════════════
+        # BIDIRECTIONAL BFS OPTIMIZATION DISPATCH
+        # ═══════════════════════════════════════════════════════════════════
+        # If the optimizer has enabled bidirectional BFS for this operator,
+        # dispatch to the specialized bidirectional renderer.
+        #
+        # Bidirectional BFS enables large-scale queries when BOTH source and
+        # target have equality filters on their ID columns.
+        # ═══════════════════════════════════════════════════════════════════
+        if op.bidirectional_bfs_mode == "recursive":
+            return self._render_bidirectional_recursive_cte(op)
+        elif op.bidirectional_bfs_mode == "unrolling":
+            return self._render_bidirectional_unrolling_cte(op)
+
+        # Standard unidirectional rendering follows...
         from gsql2rsql.common.schema import EdgeSchema
 
         self._cte_counter += 1
@@ -1111,6 +1126,571 @@ class SQLRenderer:
         lines.append("  )")
 
         return "\n".join(lines)
+
+    def _render_bidirectional_recursive_cte(
+        self, op: RecursiveTraversalOperator
+    ) -> str:
+        """Render bidirectional BFS using WITH RECURSIVE forward/backward CTEs.
+
+        This implements the recursive CTE approach for bidirectional BFS:
+        - forward CTE: explores from source toward target
+        - backward CTE: explores from target toward source
+        - final: JOINs forward and backward where they meet
+
+        The depth split is approximately half for each direction.
+
+        Mathematical speedup:
+        - Unidirectional: O(b^d) where b=branching factor, d=depth
+        - Bidirectional: O(2 * b^(d/2))
+        - Speedup: ~b^(d/2) / 2 (e.g., 500x for b=10, d=6)
+        """
+        from gsql2rsql.common.schema import EdgeSchema
+
+        self._cte_counter += 1
+        cte_name = f"paths_{self._cte_counter}"
+        op.cte_name = cte_name
+
+        # Get configuration
+        forward_depth = op.bidirectional_depth_forward or 5
+        backward_depth = op.bidirectional_depth_backward or 5
+        target_value = op.bidirectional_target_value
+        min_depth = op.min_hops if op.min_hops is not None else 1
+        max_depth = op.max_hops or 10
+
+        # Get edge table info
+        edge_table_name = self._get_edge_table_name(op)
+        edge_filter_clause = self._get_edge_filter_clause(op)
+
+        # Get edge column names from schema (src, dst columns on edges table)
+        edge_src_col, edge_dst_col = self._get_edge_column_names(op)
+
+        # Node ID column (for node table joins)
+        node_id_col = op.source_id_column or "id"
+
+        # Get source node table for filter
+        source_node_table = self._get_table_descriptor_with_wildcard(
+            op.source_node_type
+        )
+        source_filter_sql = self._render_source_filter_for_bidirectional(
+            op, node_id_col
+        )
+        target_filter_sql = self._render_target_filter_for_bidirectional(
+            op, node_id_col, target_value
+        )
+
+        # Build edge struct for path_edges collection
+        edge_props: list[str] = list(op.edge_properties) if op.edge_properties else []
+        struct_fields = [f"e.{edge_src_col} AS src", f"e.{edge_dst_col} AS dst"]
+        for prop in edge_props:
+            struct_fields.append(f"e.{prop}")
+        edge_struct = f"NAMED_STRUCT({', '.join(repr(f.split(' AS ')[1] if ' AS ' in f else f.split('.')[1]) + ', ' + f.split(' AS ')[0] for f in struct_fields)})"
+        # Simpler: just STRUCT with src, dst
+        edge_struct = f"STRUCT(e.{edge_src_col} AS src, e.{edge_dst_col} AS dst)"
+
+        lines: list[str] = []
+
+        # Forward CTE: starts from source, explores forward
+        lines.append(f"  forward_{cte_name} AS (")
+        lines.append("    -- Depth 0: source node itself (for meeting with backward)")
+        lines.append("    SELECT")
+        lines.append(f"      src.{node_id_col} AS current_node,")
+        lines.append("      0 AS depth,")
+        lines.append(f"      ARRAY(src.{node_id_col}) AS path,")
+        lines.append(
+            "      CAST(ARRAY() AS ARRAY<STRUCT<src: STRING, dst: STRING>>) AS path_edges"
+        )
+        if source_node_table:
+            lines.append(f"    FROM {source_node_table.full_table_name} src")
+        else:
+            # Fallback - use edge table to find source
+            lines.append(f"    FROM {edge_table_name} e")
+            lines.append(
+                f"    JOIN (SELECT DISTINCT {edge_src_col} AS {node_id_col} "
+                f"FROM {edge_table_name}) src ON 1=1"
+            )
+        if source_filter_sql:
+            lines.append(f"    WHERE {source_filter_sql}")
+        lines.append("")
+        lines.append("    UNION ALL")
+        lines.append("")
+        lines.append("    -- Depth 1+: explore outgoing edges from source")
+        lines.append("    SELECT")
+        lines.append(f"      e.{edge_dst_col} AS current_node,")
+        lines.append("      1 AS depth,")
+        lines.append(f"      ARRAY(e.{edge_src_col}, e.{edge_dst_col}) AS path,")
+        lines.append(f"      ARRAY({edge_struct}) AS path_edges")
+        lines.append(f"    FROM {edge_table_name} e")
+        if source_node_table:
+            lines.append(
+                f"    JOIN {source_node_table.full_table_name} src "
+                f"ON src.{node_id_col} = e.{edge_src_col}"
+            )
+        where_parts = []
+        if edge_filter_clause:
+            where_parts.append(f"({edge_filter_clause})")
+        if source_filter_sql:
+            where_parts.append(source_filter_sql)
+        if where_parts:
+            lines.append(f"    WHERE {' AND '.join(where_parts)}")
+        lines.append("")
+        lines.append("    UNION ALL")
+        lines.append("")
+        lines.append("    -- Recursive case: extend forward")
+        lines.append("    SELECT")
+        lines.append(f"      e.{edge_dst_col} AS current_node,")
+        lines.append("      f.depth + 1 AS depth,")
+        lines.append(f"      CONCAT(f.path, ARRAY(e.{edge_dst_col})) AS path,")
+        lines.append(f"      CONCAT(f.path_edges, ARRAY({edge_struct})) AS path_edges")
+        lines.append(f"    FROM forward_{cte_name} f")
+        lines.append(f"    JOIN {edge_table_name} e")
+        lines.append(f"      ON f.current_node = e.{edge_src_col}")
+        lines.append(f"    WHERE f.depth < {forward_depth}")
+        lines.append(f"      AND NOT ARRAY_CONTAINS(f.path, e.{edge_dst_col})")
+        if edge_filter_clause:
+            lines.append(f"      AND ({edge_filter_clause})")
+        lines.append("  ),")
+        lines.append("")
+
+        # Backward CTE: starts from target, explores backward
+        # Get target node table for filter
+        target_node_table = self._get_table_descriptor_with_wildcard(
+            op.target_node_type
+        )
+        lines.append(f"  backward_{cte_name} AS (")
+        lines.append("    -- Depth 0: target node itself (for meeting with forward)")
+        lines.append("    SELECT")
+        lines.append(f"      tgt.{node_id_col} AS current_node,")
+        lines.append("      0 AS depth,")
+        lines.append(f"      ARRAY(tgt.{node_id_col}) AS path,")
+        lines.append(
+            "      CAST(ARRAY() AS ARRAY<STRUCT<src: STRING, dst: STRING>>) AS path_edges"
+        )
+        if target_node_table:
+            lines.append(f"    FROM {target_node_table.full_table_name} tgt")
+        else:
+            # Fallback - use edge table to find target
+            lines.append(f"    FROM {edge_table_name} e")
+            lines.append(
+                f"    JOIN (SELECT DISTINCT {edge_dst_col} AS {node_id_col} "
+                f"FROM {edge_table_name}) tgt ON 1=1"
+            )
+        if target_filter_sql:
+            lines.append(f"    WHERE {target_filter_sql}")
+        lines.append("")
+        lines.append("    UNION ALL")
+        lines.append("")
+        lines.append("    -- Depth 1+: explore incoming edges to target")
+        lines.append("    SELECT")
+        lines.append(f"      e.{edge_src_col} AS current_node,")
+        lines.append("      1 AS depth,")
+        lines.append(f"      ARRAY(e.{edge_src_col}, e.{edge_dst_col}) AS path,")
+        lines.append(f"      ARRAY({edge_struct}) AS path_edges")
+        lines.append(f"    FROM {edge_table_name} e")
+        if target_node_table:
+            lines.append(
+                f"    JOIN {target_node_table.full_table_name} tgt "
+                f"ON tgt.{node_id_col} = e.{edge_dst_col}"
+            )
+        where_parts_bwd = []
+        if edge_filter_clause:
+            where_parts_bwd.append(f"({edge_filter_clause})")
+        if target_filter_sql:
+            where_parts_bwd.append(target_filter_sql)
+        if where_parts_bwd:
+            lines.append(f"    WHERE {' AND '.join(where_parts_bwd)}")
+        lines.append("")
+        lines.append("    UNION ALL")
+        lines.append("")
+        lines.append("    -- Recursive case: extend backward")
+        lines.append("    SELECT")
+        lines.append(f"      e.{edge_src_col} AS current_node,")
+        lines.append("      b.depth + 1 AS depth,")
+        lines.append(f"      CONCAT(ARRAY(e.{edge_src_col}), b.path) AS path,")
+        lines.append(f"      CONCAT(ARRAY({edge_struct}), b.path_edges) AS path_edges")
+        lines.append(f"    FROM backward_{cte_name} b")
+        lines.append(f"    JOIN {edge_table_name} e")
+        lines.append(f"      ON b.current_node = e.{edge_dst_col}")
+        lines.append(f"    WHERE b.depth < {backward_depth}")
+        lines.append(f"      AND NOT ARRAY_CONTAINS(b.path, e.{edge_src_col})")
+        if edge_filter_clause:
+            lines.append(f"      AND ({edge_filter_clause})")
+        lines.append("  ),")
+        lines.append("")
+
+        # Final CTE: join forward and backward where they meet
+        lines.append(f"  {cte_name} AS (")
+        lines.append("    -- Intersection: paths that meet in the middle")
+        lines.append("    -- Use DISTINCT to deduplicate paths found via different meeting points")
+        lines.append("    SELECT DISTINCT")
+        lines.append("      f.path[0] AS start_node,")
+        lines.append("      b.path[SIZE(b.path) - 1] AS end_node,")
+        lines.append("      f.depth + b.depth AS depth,")
+        lines.append("      -- Combine paths: forward path (except last) + backward path")
+        lines.append(
+            "      CONCAT(SLICE(f.path, 1, SIZE(f.path) - 1), b.path) AS path,"
+        )
+        lines.append("      -- Combine path_edges from forward and backward")
+        lines.append("      CONCAT(f.path_edges, b.path_edges) AS path_edges")
+        lines.append(f"    FROM forward_{cte_name} f")
+        lines.append(f"    JOIN backward_{cte_name} b")
+        lines.append("      ON f.current_node = b.current_node")
+        lines.append(f"    WHERE f.depth + b.depth >= {min_depth}")
+        lines.append(f"      AND f.depth + b.depth <= {max_depth}")
+        lines.append("      -- Prevent duplicate nodes in combined path")
+        lines.append(
+            "      AND SIZE(ARRAY_INTERSECT(SLICE(f.path, 1, SIZE(f.path) - 1), b.path)) = 0"
+        )
+        lines.append("  )")
+
+        return "\n".join(lines)
+
+    def _render_bidirectional_unrolling_cte(
+        self, op: RecursiveTraversalOperator
+    ) -> str:
+        """Render bidirectional BFS using unrolled CTEs (one per level).
+
+        This implements the unrolling approach for bidirectional BFS:
+        - fwd_0, fwd_1, fwd_2, ...: forward CTEs, one per depth level
+        - bwd_0, bwd_1, bwd_2, ...: backward CTEs, one per depth level
+        - final: UNION ALL of all valid (fwd_i, bwd_j) combinations
+
+        Benefits over recursive:
+        - TRUE frontier behavior (each level only sees previous level)
+        - Potentially better memory usage
+        - No recursive CTE overhead
+
+        Drawbacks:
+        - SQL size grows O(depth^2)
+        - Fixed depth at transpile time
+        """
+        from gsql2rsql.common.schema import EdgeSchema
+
+        self._cte_counter += 1
+        cte_name = f"paths_{self._cte_counter}"
+        op.cte_name = cte_name
+
+        # Get configuration
+        forward_depth = op.bidirectional_depth_forward or 3
+        backward_depth = op.bidirectional_depth_backward or 3
+        target_value = op.bidirectional_target_value
+        min_depth = op.min_hops if op.min_hops is not None else 1
+        max_depth = op.max_hops or 6
+
+        # Get edge table info - use edge column names, not node ID columns
+        edge_src_col, edge_dst_col = self._get_edge_column_names(op)
+        edge_table_name = self._get_edge_table_name(op)
+        edge_filter_clause = self._get_edge_filter_clause(op)
+
+        # Get source/target filters (these use node ID columns for node table filtering)
+        source_id_col = op.source_id_column or "node_id"
+        target_id_col = op.target_id_column or "node_id"
+        source_filter_sql = self._render_source_filter_for_bidirectional(
+            op, source_id_col
+        )
+        target_filter_sql = self._render_target_filter_for_bidirectional(
+            op, target_id_col, target_value
+        )
+
+        source_node_table = self._get_table_descriptor_with_wildcard(
+            op.source_node_type
+        )
+        target_node_table = self._get_table_descriptor_with_wildcard(
+            op.target_node_type
+        )
+
+        # Build edge struct for path_edges collection
+        edge_struct = f"STRUCT(e.{edge_src_col} AS src, e.{edge_dst_col} AS dst)"
+
+        lines: list[str] = []
+
+        # Generate forward CTEs: fwd_0, fwd_1, ..., fwd_n
+        for level in range(forward_depth + 1):
+            if level == 0:
+                # Base case: fwd_0 = source node (no edges yet)
+                lines.append(f"  fwd_{level}_{cte_name} AS (")
+                lines.append("    SELECT")
+                lines.append(f"      src.{op.source_id_column} AS current_node,")
+                lines.append(f"      ARRAY(src.{op.source_id_column}) AS path,")
+                lines.append(
+                    "      CAST(ARRAY() AS ARRAY<STRUCT<src: STRING, dst: STRING>>) AS path_edges"
+                )
+                if source_node_table:
+                    lines.append(f"    FROM {source_node_table.full_table_name} src")
+                    if source_filter_sql:
+                        lines.append(f"    WHERE {source_filter_sql}")
+                lines.append("  ),")
+            else:
+                # Recursive level: fwd_i = extend fwd_{i-1}
+                lines.append(f"  fwd_{level}_{cte_name} AS (")
+                lines.append("    SELECT")
+                lines.append(f"      e.{edge_dst_col} AS current_node,")
+                lines.append(f"      CONCAT(f.path, ARRAY(e.{edge_dst_col})) AS path,")
+                lines.append(f"      CONCAT(f.path_edges, ARRAY({edge_struct})) AS path_edges")
+                lines.append(f"    FROM fwd_{level - 1}_{cte_name} f")
+                lines.append(f"    JOIN {edge_table_name} e")
+                lines.append(f"      ON f.current_node = e.{edge_src_col}")
+                where_parts = [f"NOT ARRAY_CONTAINS(f.path, e.{edge_dst_col})"]
+                if edge_filter_clause:
+                    where_parts.append(f"({edge_filter_clause})")
+                lines.append(f"    WHERE {' AND '.join(where_parts)}")
+                lines.append("  ),")
+            lines.append("")
+
+        # Generate backward CTEs: bwd_0, bwd_1, ..., bwd_n
+        for level in range(backward_depth + 1):
+            if level == 0:
+                # Base case: bwd_0 = target node (no edges yet)
+                lines.append(f"  bwd_{level}_{cte_name} AS (")
+                lines.append("    SELECT")
+                lines.append(f"      tgt.{op.target_id_column} AS current_node,")
+                lines.append(f"      ARRAY(tgt.{op.target_id_column}) AS path,")
+                lines.append(
+                    "      CAST(ARRAY() AS ARRAY<STRUCT<src: STRING, dst: STRING>>) AS path_edges"
+                )
+                if target_node_table:
+                    lines.append(f"    FROM {target_node_table.full_table_name} tgt")
+                    if target_filter_sql:
+                        lines.append(f"    WHERE {target_filter_sql}")
+                lines.append("  ),")
+            else:
+                # Recursive level: bwd_i = extend bwd_{i-1} backward
+                lines.append(f"  bwd_{level}_{cte_name} AS (")
+                lines.append("    SELECT")
+                lines.append(f"      e.{edge_src_col} AS current_node,")
+                lines.append(
+                    f"      CONCAT(ARRAY(e.{edge_src_col}), b.path) AS path,"
+                )
+                lines.append(
+                    f"      CONCAT(ARRAY({edge_struct}), b.path_edges) AS path_edges"
+                )
+                lines.append(f"    FROM bwd_{level - 1}_{cte_name} b")
+                lines.append(f"    JOIN {edge_table_name} e")
+                lines.append(f"      ON b.current_node = e.{edge_dst_col}")
+                where_parts = [f"NOT ARRAY_CONTAINS(b.path, e.{edge_src_col})"]
+                if edge_filter_clause:
+                    where_parts.append(f"({edge_filter_clause})")
+                lines.append(f"    WHERE {' AND '.join(where_parts)}")
+                lines.append("  ),")
+            lines.append("")
+
+        # Generate final CTE: UNION ALL of all valid combinations
+        lines.append(f"  {cte_name} AS (")
+        union_parts: list[str] = []
+
+        for fwd_level in range(forward_depth + 1):
+            for bwd_level in range(backward_depth + 1):
+                # Total path length = fwd_level + bwd_level
+                # (fwd_0 has 1 node, fwd_1 has 2 nodes, etc.)
+                total_length = fwd_level + bwd_level
+                if total_length < min_depth or total_length > max_depth:
+                    continue
+                if fwd_level == 0 and bwd_level == 0:
+                    # Both at base = direct source=target (skip if min > 0)
+                    if min_depth > 0:
+                        continue
+
+                union_sql = []
+                union_sql.append("    SELECT")
+                union_sql.append("      f.path[0] AS start_node,")
+                union_sql.append("      b.path[SIZE(b.path) - 1] AS end_node,")
+                union_sql.append(f"      {total_length} AS depth,")
+                if fwd_level == 0:
+                    # Only backward path and path_edges
+                    union_sql.append("      b.path AS path,")
+                    union_sql.append("      b.path_edges AS path_edges")
+                elif bwd_level == 0:
+                    # Only forward path and path_edges
+                    union_sql.append("      f.path AS path,")
+                    union_sql.append("      f.path_edges AS path_edges")
+                else:
+                    # Combine: forward (except meeting node) + backward
+                    union_sql.append(
+                        "      CONCAT(SLICE(f.path, 1, SIZE(f.path) - 1), b.path) AS path,"
+                    )
+                    union_sql.append(
+                        "      CONCAT(f.path_edges, b.path_edges) AS path_edges"
+                    )
+                union_sql.append(f"    FROM fwd_{fwd_level}_{cte_name} f")
+                union_sql.append(f"    JOIN bwd_{bwd_level}_{cte_name} b")
+                union_sql.append("      ON f.current_node = b.current_node")
+                # Prevent duplicate nodes in combined path
+                if fwd_level > 0 and bwd_level > 0:
+                    union_sql.append(
+                        "    WHERE SIZE(ARRAY_INTERSECT("
+                        "SLICE(f.path, 1, SIZE(f.path) - 1), b.path)) = 0"
+                    )
+
+                union_parts.append("\n".join(union_sql))
+
+        if union_parts:
+            # Use UNION (not UNION ALL) to deduplicate paths found via different meeting points
+            # E.g., path A→B→C→D can be found with fwd=1/bwd=2 or fwd=2/bwd=1
+            lines.append("\n    UNION\n".join(union_parts))
+        else:
+            # Fallback: empty result if no valid combinations
+            lines.append("    SELECT")
+            lines.append("      NULL AS start_node,")
+            lines.append("      NULL AS end_node,")
+            lines.append("      0 AS depth,")
+            lines.append("      ARRAY() AS path,")
+            lines.append(
+                "      CAST(ARRAY() AS ARRAY<STRUCT<src: STRING, dst: STRING>>) AS path_edges"
+            )
+            lines.append("    WHERE FALSE")
+
+        lines.append("  )")
+
+        return "\n".join(lines)
+
+    def _get_edge_column_names(
+        self, op: RecursiveTraversalOperator
+    ) -> tuple[str, str]:
+        """Get the edge source and destination column names.
+
+        Returns:
+            Tuple of (source_col, dest_col) for the edges table
+        """
+        from gsql2rsql.common.schema import EdgeSchema
+
+        edge_types = op.edge_types if op.edge_types else []
+        if edge_types and op.source_node_type and op.target_node_type:
+            edge_type = edge_types[0]
+            edge_schema = self._db_schema.get_edge_definition(
+                edge_type, op.source_node_type, op.target_node_type
+            )
+            if edge_schema and edge_schema.source_id_property and edge_schema.sink_id_property:
+                src_col = edge_schema.source_id_property.property_name
+                dst_col = edge_schema.sink_id_property.property_name
+                return (src_col, dst_col)
+
+        # Try partial lookup
+        if edge_types:
+            edges = self._db_schema.find_edges_by_verb(
+                edge_types[0],
+                from_node_name=op.source_node_type or None,
+                to_node_name=op.target_node_type or None,
+            )
+            if edges:
+                edge_schema = edges[0]
+                if edge_schema.source_id_property and edge_schema.sink_id_property:
+                    src_col = edge_schema.source_id_property.property_name
+                    dst_col = edge_schema.sink_id_property.property_name
+                    return (src_col, dst_col)
+
+        # Fallback to wildcard edge
+        wildcard_edge = self._db_schema.get_wildcard_edge_definition()
+        if wildcard_edge and wildcard_edge.source_id_property and wildcard_edge.sink_id_property:
+            src_col = wildcard_edge.source_id_property.property_name
+            dst_col = wildcard_edge.sink_id_property.property_name
+            return (src_col, dst_col)
+
+        # Default fallback
+        return ("src", "dst")
+
+    def _get_edge_table_name(self, op: RecursiveTraversalOperator) -> str:
+        """Get the edge table name for a RecursiveTraversalOperator."""
+        from gsql2rsql.common.schema import EdgeSchema
+
+        edge_types = op.edge_types if op.edge_types else []
+        if edge_types:
+            edge_type = edge_types[0]
+            # Try exact lookup
+            if op.source_node_type and op.target_node_type:
+                edge_id = EdgeSchema.get_edge_id(
+                    edge_type, op.source_node_type, op.target_node_type
+                )
+                edge_table = self._db_schema.get_sql_table_descriptors(edge_id)
+                if edge_table:
+                    return edge_table.full_table_name
+            # Try partial lookup
+            edges = self._db_schema.find_edges_by_verb(
+                edge_type,
+                from_node_name=op.source_node_type or None,
+                to_node_name=op.target_node_type or None,
+            )
+            if edges:
+                edge_schema = edges[0]
+                edge_table = self._db_schema.get_sql_table_descriptors(edge_schema.id)
+                if edge_table:
+                    return edge_table.full_table_name
+
+        # Fallback to wildcard edge table
+        wildcard = self._db_schema.get_wildcard_edge_table_descriptor()
+        if wildcard:
+            return wildcard.full_table_name
+
+        raise TranspilerInternalErrorException(
+            "No edge table found for bidirectional traversal"
+        )
+
+    def _get_edge_filter_clause(self, op: RecursiveTraversalOperator) -> str | None:
+        """Get the edge type filter clause (e.g., relationship_type = 'KNOWS')."""
+        edge_types = op.edge_types if op.edge_types else []
+        if not edge_types:
+            return None
+
+        if len(edge_types) == 1:
+            # Single type lookup
+            edge_type = edge_types[0]
+            if op.source_node_type and op.target_node_type:
+                from gsql2rsql.common.schema import EdgeSchema
+
+                edge_id = EdgeSchema.get_edge_id(
+                    edge_type, op.source_node_type, op.target_node_type
+                )
+                edge_table = self._db_schema.get_sql_table_descriptors(edge_id)
+                if edge_table and edge_table.filter:
+                    return edge_table.filter
+
+        # Multiple types or lookup failed - build OR clause
+        filters = []
+        for edge_type in edge_types:
+            if op.source_node_type and op.target_node_type:
+                from gsql2rsql.common.schema import EdgeSchema
+
+                edge_id = EdgeSchema.get_edge_id(
+                    edge_type, op.source_node_type, op.target_node_type
+                )
+                edge_table = self._db_schema.get_sql_table_descriptors(edge_id)
+                if edge_table and edge_table.filter:
+                    filters.append(f"({edge_table.filter})")
+
+        if filters:
+            return " OR ".join(filters)
+        return None
+
+    def _render_source_filter_for_bidirectional(
+        self, op: RecursiveTraversalOperator, source_id_col: str
+    ) -> str | None:
+        """Render source node filter for bidirectional base case."""
+        if not op.start_node_filter:
+            return None
+
+        # Rewrite filter: p.name -> src.name
+        rewritten = rewrite_predicate_for_edge_alias(
+            op.start_node_filter,
+            op.source_alias,
+            edge_alias="src",
+        )
+        return self._render_edge_filter_expression(rewritten)
+
+    def _render_target_filter_for_bidirectional(
+        self,
+        op: RecursiveTraversalOperator,
+        target_id_col: str,
+        target_value: str | None,
+    ) -> str | None:
+        """Render target node filter for bidirectional backward base case."""
+        if not op.sink_node_filter:
+            return None
+
+        # Rewrite filter: b.id -> tgt.id
+        rewritten = rewrite_predicate_for_edge_alias(
+            op.sink_node_filter,
+            op.target_alias,
+            edge_alias="tgt",
+        )
+        return self._render_edge_filter_expression(rewritten)
 
     def _render_operator(self, op: LogicalOperator, depth: int) -> str:
         """Render a logical operator to SQL."""
