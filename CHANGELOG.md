@@ -2,6 +2,19 @@
 
 
 
+## v0.8.1 (2026-01-31)
+
+### Fix
+
+* fix: return entity struct (named tuple)
+
+MATCH (s)-[r]-&gt;(d) return r ([`ee19f67`](https://github.com/devmessias/gsql2rsql/commit/ee19f671d596db5ff3478b741155da833397f9ce))
+
+### Performance
+
+* perf: remove dead tables ([`c0ffe12`](https://github.com/devmessias/gsql2rsql/commit/c0ffe12532eec7b7bbc1783bb7741d7ce8849ab6))
+
+
 ## v0.8.0 (2026-01-26)
 
 ### Documentation
