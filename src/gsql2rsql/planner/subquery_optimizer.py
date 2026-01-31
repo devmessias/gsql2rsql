@@ -1689,23 +1689,43 @@ def optimize_plan(
     plan: LogicalPlan,
     enabled: bool = True,
     pushdown_enabled: bool = True,
+    dead_table_elimination_enabled: bool = True,
 ) -> FlatteningStats:
     """Convenience function to optimize a logical plan.
 
-    Runs two optimization passes:
-    1. SelectionPushdownOptimizer: Pushes predicates into DataSource operators
-    2. SubqueryFlatteningOptimizer: Merges Selection → Projection patterns
+    Runs optimization passes in order:
+    1. DeadTableEliminationOptimizer: Removes unnecessary JOINs with unused tables
+    2. SelectionPushdownOptimizer: Pushes predicates into DataSource operators
+    3. SubqueryFlatteningOptimizer: Merges Selection → Projection patterns
+
+    Dead Table Elimination runs FIRST because it can remove entire JoinOperators,
+    making the subsequent optimizations simpler and faster.
 
     Args:
         plan: The logical plan to optimize.
         enabled: Whether to run subquery flattening optimization.
         pushdown_enabled: Whether to run selection pushdown optimization.
+        dead_table_elimination_enabled: Whether to run dead table elimination.
+            Disabling this preserves INNER JOINs that filter orphan edges.
 
     Returns:
         Statistics about the flattening optimization performed.
+
+    See Also:
+        new_bugs/002_dead_table_elimination.md: Documentation on dead table
+        elimination, including trade-offs (orphan edges, performance, etc.)
     """
-    # Run selection pushdown first (before flattening)
-    # This pushes WHERE predicates into DataSource operators
+    # Import here to avoid circular dependency
+    from gsql2rsql.planner.dead_table_eliminator import DeadTableEliminationOptimizer
+
+    # Run dead table elimination FIRST
+    # This removes JOINs with node tables when only edges are needed
+    # Must run before other optimizations to simplify the plan
+    if dead_table_elimination_enabled:
+        dead_table_optimizer = DeadTableEliminationOptimizer(enabled=True)
+        dead_table_optimizer.optimize(plan)
+
+    # Run selection pushdown (pushes WHERE predicates into DataSource operators)
     if pushdown_enabled:
         pushdown_optimizer = SelectionPushdownOptimizer(enabled=True)
         pushdown_optimizer.optimize(plan)

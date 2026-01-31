@@ -64,6 +64,11 @@ class GraphContext:
             combinations instead of creating all possible combinations. This can
             dramatically reduce schema size (e.g., 15 real edges vs 500 possible).
             Requires spark session. Default: False for backward compatibility.
+        optimize_dead_tables: If True (default), removes unnecessary JOINs when
+            nodes/entities are not used in RETURN/WHERE/ORDER BY clauses.
+            For example: `MATCH (a)-[r]->(b) RETURN r` won't JOIN with nodes table.
+            Set to False to preserve INNER JOINs that filter out orphan edges
+            (edges pointing to non-existent nodes). See new_bugs/002_dead_table_elimination.md.
 
     Example:
         >>> # Basic usage (creates all possible edge combinations)
@@ -98,6 +103,7 @@ class GraphContext:
         extra_node_attrs: dict[str, type] | None = None,
         extra_edge_attrs: dict[str, type] | None = None,
         discover_edge_combinations: bool = False,
+        optimize_dead_tables: bool = True,
     ):
         """Initialize GraphContext with Triple Store tables.
 
@@ -105,6 +111,11 @@ class GraphContext:
             discover_edge_combinations: If True, queries database to find actual
                 edge combinations (source_type, edge_type, sink_type) instead of
                 creating all possible combinations. Requires spark session.
+            optimize_dead_tables: If True (default), enables Dead Table Elimination
+                optimization which removes unnecessary JOINs when nodes/entities
+                are not used in RETURN/WHERE/ORDER BY. Set to False if you need
+                to filter out orphan edges (edges pointing to non-existent nodes).
+                See new_bugs/002_dead_table_elimination.md for details.
         """
         self.spark = spark
         self.nodes_table = nodes_table
@@ -117,6 +128,7 @@ class GraphContext:
         self.extra_node_attrs = extra_node_attrs or {}
         self.extra_edge_attrs = extra_edge_attrs or {}
         self.discover_edge_combinations = discover_edge_combinations
+        self.optimize_dead_tables = optimize_dead_tables
 
         # Validate required parameters
         if nodes_table is None:
@@ -373,7 +385,12 @@ class GraphContext:
 
         # Apply optimizations
         if optimize:
-            optimize_plan(plan, enabled=True, pushdown_enabled=True)
+            optimize_plan(
+                plan,
+                enabled=True,
+                pushdown_enabled=True,
+                dead_table_elimination_enabled=self.optimize_dead_tables,
+            )
 
         # Apply bidirectional BFS optimization
         # This sets flags on RecursiveTraversalOperator that the renderer uses
