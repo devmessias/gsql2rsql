@@ -264,12 +264,22 @@ class GraphContext:
 
         # Create node schemas
         for node_type in self._node_types:
+            # Build properties list: system properties + user-defined properties
+            node_properties = [
+                # System properties (always available)
+                EntityProperty(property_name=self.node_id_col, data_type=str),
+                EntityProperty(property_name=self.node_type_col, data_type=str),
+            ] + [
+                # User-defined properties
+                EntityProperty(property_name=prop_name, data_type=data_type)
+                for prop_name, data_type in self.extra_node_attrs.items()
+                # Skip if user already defined system columns (avoid duplicates)
+                if prop_name not in (self.node_id_col, self.node_type_col)
+            ]
+
             node_schema = NodeSchema(
                 name=node_type,
-                properties=[
-                    EntityProperty(property_name=prop_name, data_type=data_type)
-                    for prop_name, data_type in self.extra_node_attrs.items()
-                ],
+                properties=node_properties,
                 node_id_property=EntityProperty(
                     property_name=self.node_id_col, data_type=str
                 )
@@ -300,6 +310,22 @@ class GraphContext:
         for source_type, edge_type, sink_type in combinations:
             edge_id = f"{source_type}@{edge_type}@{sink_type}"
 
+            # Build properties list: system properties + user-defined properties
+            edge_properties = [
+                # System properties (always available)
+                EntityProperty(property_name=self.edge_src_col, data_type=str),
+                EntityProperty(property_name=self.edge_dst_col, data_type=str),
+                EntityProperty(property_name=self.edge_type_col, data_type=str),
+            ] + [
+                # User-defined properties
+                EntityProperty(property_name=prop_name, data_type=data_type)
+                for prop_name, data_type in self.extra_edge_attrs.items()
+                # Skip if user already defined system columns (avoid duplicates)
+                if prop_name not in (
+                    self.edge_src_col, self.edge_dst_col, self.edge_type_col
+                )
+            ]
+
             edge_schema = EdgeSchema(
                 name=edge_type,
                 source_node_id=source_type,
@@ -310,12 +336,7 @@ class GraphContext:
                 sink_id_property=EntityProperty(
                     property_name=self.edge_dst_col, data_type=str
                 ),
-                properties=[
-                    EntityProperty(
-                        property_name=prop_name, data_type=data_type
-                    )
-                    for prop_name, data_type in self.extra_edge_attrs.items()
-                ]
+                properties=edge_properties,
             )
             self._schema.add_edge(
                 edge_schema,

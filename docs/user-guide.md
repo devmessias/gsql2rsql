@@ -107,6 +107,37 @@ print(sql)
 | `extra_node_attrs` | dict | Additional node properties `{name: type}` |
 | `extra_edge_attrs` | dict | Additional edge properties `{name: type}` |
 | `spark` | SparkSession | Optional: for auto-discovery and execution |
+| `optimize_dead_tables` | bool | Enable dead table elimination optimization (default: `True`) |
+
+### Automatic System Properties
+
+GraphContext automatically exposes system properties for use in queries, without needing to declare them in `extra_node_attrs` or `extra_edge_attrs`:
+
+**Node system properties:**
+
+| Property | Default Column | Description |
+|----------|---------------|-------------|
+| `node_id` | `node_id` | Unique node identifier |
+| `node_type` | `node_type` | Node label/type |
+
+**Edge system properties:**
+
+| Property | Default Column | Description |
+|----------|---------------|-------------|
+| `src` | `src` | Source node ID |
+| `dst` | `dst` | Target node ID |
+| `relationship_type` | `relationship_type` | Edge label/type |
+
+This allows queries like:
+
+```python
+# Filter by node_type without declaring it in extra_node_attrs
+sql = graph.transpile("""
+    MATCH (a)-[r]->(b)
+    WHERE a.node_type IN ['Person', 'Company']
+    RETURN a.node_id, r.relationship_type, b.node_id
+""")
+```
 
 ### Expected Table Structure
 
@@ -405,6 +436,10 @@ gsql2rsql tui --schema schema.json
 
 - **Databricks new Runtime** required for `WITH RECURSIVE` and HoF
 - **Write operations** not supported (`CREATE`, `DELETE`, `SET`)
+- **Multi-label node syntax** not yet supported:
+    - `(a:Person|Company)` - pipe OR syntax causes parser error
+    - `(a:Person:Company)` - colon AND syntax silently ignores additional labels
+    - **Workaround:** Use `WHERE a.node_type IN ['Person', 'Company']`
 - **Some Cypher features** not yet implemented
 
 ---
