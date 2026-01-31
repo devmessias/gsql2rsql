@@ -4,7 +4,7 @@ version = "0.8.0"
 description = "Transpile Graph Query Language (openCypher) to Recursive SQL (Databricks)"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [
     { name = "Bruno Messias", email = "devmessias@gmail.com" },
 ]
@@ -209,6 +209,7 @@ dev = [
     "mkdocs-macros-plugin>=1.5.0",
     "mkdocs-material>=9.7.1",
     "mkdocs-minify-plugin>=0.8.0",
+    "pyspark>=4.1.0",
     "pytest-xdist>=3.8.0",
     "vulture>=2.14",
 ]
