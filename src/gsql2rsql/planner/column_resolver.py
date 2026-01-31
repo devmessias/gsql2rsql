@@ -479,9 +479,25 @@ class ColumnResolver:
                 )
                 entity_id_column = None
                 if is_entity_ref and isinstance(expr, QueryExpressionProperty):
-                    entity_id_column = compute_sql_column_name(
-                        expr.variable_name, None
-                    )
+                    # Only set entity_id_column for NODES, not relationships.
+                    # Relationships don't have an 'id' column - they have src/dst.
+                    # Check if this entity is a node by looking up schema.
+                    entity_var = expr.variable_name
+                    entity_entry = self._symbol_table.lookup(entity_var)
+                    node_def = None
+                    if entity_entry and self._graph_schema and entity_entry.data_type_name:
+                        node_def = self._graph_schema.get_node_definition(
+                            entity_entry.data_type_name
+                        )
+                    if node_def is not None:
+                        # Use the actual node ID property name from schema
+                        # (e.g., "id" for YAML schemas, "node_id" for single-table schemas)
+                        id_prop_name = None
+                        if node_def.node_id_property:
+                            id_prop_name = node_def.node_id_property.property_name
+                        entity_id_column = compute_sql_column_name(
+                            expr.variable_name, id_prop_name
+                        )
 
                 resolved_projections.append(ResolvedProjection(
                     alias=alias,
@@ -793,16 +809,36 @@ class ColumnResolver:
         if property_name is None:
             # Bare entity reference (e.g., "p" in RETURN p)
             ref_type = ColumnRefType.ENTITY_ID
-            sql_name = compute_sql_column_name(variable, None)
 
             # If this is a value symbol (not entity), use VALUE_ALIAS type
             if entry.symbol_type == SymbolType.VALUE:
                 ref_type = ColumnRefType.VALUE_ALIAS
                 sql_name = variable  # Use the alias directly
+            elif entry.symbol_type == SymbolType.PATH:
+                # PATH variables use their own column naming (e.g., _gsql2rsql_path_id)
+                sql_name = compute_sql_column_name(variable, None)
             else:
                 # This is a bare entity reference - mark as potential entity return
                 # (will be used in projection context to expand to all properties)
                 is_entity_return = True
+
+                # For nodes: use the actual node ID property from schema
+                # For relationships: use _gsql2rsql_{var}_src since edges don't have an 'id' column
+                # Check if this is a relationship by trying to get node definition
+                node_def = None
+                if self._graph_schema and entry.data_type_name:
+                    node_def = self._graph_schema.get_node_definition(entry.data_type_name)
+
+                if node_def is not None:
+                    # Use the actual node ID property name from schema
+                    # (e.g., "id" for YAML schemas, "node_id" for single-table schemas)
+                    id_prop_name = None
+                    if node_def.node_id_property:
+                        id_prop_name = node_def.node_id_property.property_name
+                    sql_name = compute_sql_column_name(variable, id_prop_name)
+                else:
+                    # Relationship: use 'src' as the primary identifier column
+                    sql_name = compute_sql_column_name(variable, "src")  # _gsql2rsql_{var}_src
 
         else:
             # Property access (e.g., "p.name")

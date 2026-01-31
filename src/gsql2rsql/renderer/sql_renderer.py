@@ -36,7 +36,7 @@ from gsql2rsql.parser.operators import (
     Function,
     ListPredicateType,
 )
-from gsql2rsql.planner.column_ref import ResolvedColumnRef
+from gsql2rsql.planner.column_ref import ResolvedColumnRef, ResolvedProjection
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
@@ -428,6 +428,16 @@ class SQLRenderer:
                     if ref.original_property is None:
                         self._required_value_fields.add(ref.original_variable)
 
+                # IMPORTANT: When returning an entity (RETURN a, RETURN r),
+                # we need ALL its properties for NAMED_STRUCT, not just the ID.
+                # Add all entity columns to _required_columns.
+                if resolved_proj.is_entity_ref:
+                    self._add_entity_columns_to_required(op, resolved_proj)
+
+                # ALSO: Handle collect(entity) - need ALL entity properties for NAMED_STRUCT
+                # inside COLLECT_LIST(NAMED_STRUCT(...))
+                self._add_entity_columns_for_collect(op, resolved_proj)
+
         # Handle JoinOperator join keys (still need schema for join keys)
         if isinstance(op, JoinOperator):
             self._collect_join_key_columns(op)
@@ -533,6 +543,147 @@ class SQLRenderer:
                                 rel_alias, rel_field.rel_sink_join_field.field_alias
                             )
                         self._required_columns.add(sink_key)
+
+    def _add_entity_columns_to_required(
+        self,
+        op: LogicalOperator,
+        resolved_proj: "ResolvedProjection",
+    ) -> None:
+        """Add all entity columns to _required_columns for RETURN entity.
+
+        When RETURN a (node) or RETURN r (edge) is used, we need ALL the entity's
+        properties available for NAMED_STRUCT, not just the ID column.
+
+        This method looks up the entity in the operator's input schema and adds:
+        - For nodes: node_id + all encapsulated properties
+        - For edges: src, dst + all encapsulated properties
+        """
+        # Get the entity variable name from the expression
+        refs = list(resolved_proj.expression.all_refs())
+        if not refs:
+            return
+
+        entity_var = refs[0].original_variable
+        prefix = f"{self.COLUMN_PREFIX}{entity_var}_"
+
+        # Look up the EntityField in the input schema
+        entity_field: EntityField | None = None
+        if hasattr(op, 'input_schema') and op.input_schema:
+            for field in op.input_schema:
+                if isinstance(field, EntityField) and field.field_alias == entity_var:
+                    entity_field = field
+                    break
+
+        if not entity_field:
+            return
+
+        # Add all columns for this entity
+        # DEFENSIVE: Some field_names may already be fully prefixed (e.g., _gsql2rsql_sink_id)
+        # In that case, use them directly instead of double-prefixing.
+        def add_column(prop_name: str) -> None:
+            if prop_name.startswith(self.COLUMN_PREFIX):
+                # Already prefixed - use directly
+                self._required_columns.add(prop_name)
+            else:
+                # Add prefix
+                self._required_columns.add(f"{prefix}{prop_name}")
+
+        if entity_field.entity_type == EntityType.NODE:
+            # Node: add node_id and all encapsulated properties
+            if entity_field.node_join_field:
+                add_column(entity_field.node_join_field.field_name)
+            for prop_field in entity_field.encapsulated_fields:
+                add_column(prop_field.field_name)
+        else:
+            # Edge/Relationship: add src, dst, and all encapsulated properties
+            if entity_field.rel_source_join_field:
+                self._required_columns.add(f"{prefix}src")
+            if entity_field.rel_sink_join_field:
+                self._required_columns.add(f"{prefix}dst")
+            for prop_field in entity_field.encapsulated_fields:
+                add_column(prop_field.field_name)
+
+    def _add_entity_columns_for_collect(
+        self,
+        op: LogicalOperator,
+        resolved_proj: "ResolvedProjection",
+    ) -> None:
+        """Add all entity columns to _required_columns for collect(entity) aggregations.
+
+        When we have collect(b) or collect(r), the entity inside the collect
+        needs ALL its properties for the NAMED_STRUCT wrapping, not just the ID.
+
+        This method checks if the projection is a collect() aggregation with a
+        bare entity reference inside, and if so, adds all entity columns.
+
+        Args:
+            op: The operator context
+            resolved_proj: The resolved projection to check
+        """
+        from gsql2rsql.parser.ast import (
+            QueryExpressionAggregationFunction,
+            QueryExpressionProperty,
+        )
+        from gsql2rsql.parser.operators import AggregationFunction
+
+        # Get the original expression from the projection
+        # The resolved_proj.expression contains the ResolvedExpression which wraps the original
+        original_expr = resolved_proj.expression.original_expression
+
+        # Check if this is a COLLECT aggregation
+        if not isinstance(original_expr, QueryExpressionAggregationFunction):
+            return
+        if original_expr.aggregation_function != AggregationFunction.COLLECT:
+            return
+
+        # Check if the inner expression is a bare entity reference
+        inner_expr = original_expr.inner_expression
+        if not isinstance(inner_expr, QueryExpressionProperty):
+            return
+        if inner_expr.property_name is not None:
+            # Not a bare entity, it's a property access (e.g., collect(b.name))
+            return
+
+        # This is collect(entity) - add all entity columns
+        entity_var = inner_expr.variable_name
+        prefix = f"{self.COLUMN_PREFIX}{entity_var}_"
+
+        # Look up the EntityField in the input schema
+        entity_field: EntityField | None = None
+        if hasattr(op, 'input_schema') and op.input_schema:
+            for field in op.input_schema:
+                if isinstance(field, EntityField) and field.field_alias == entity_var:
+                    entity_field = field
+                    break
+
+        if not entity_field:
+            return
+
+        # Add all columns for this entity
+        # DEFENSIVE: Some field_names may already be fully prefixed (e.g., _gsql2rsql_sink_id)
+        # In that case, use them directly instead of double-prefixing.
+        def add_column(prop_name: str) -> None:
+            if prop_name.startswith(self.COLUMN_PREFIX):
+                # Already prefixed - use directly
+                self._required_columns.add(prop_name)
+            else:
+                # Add prefix
+                self._required_columns.add(f"{prefix}{prop_name}")
+
+        if entity_field.entity_type == EntityType.NODE:
+            # Node: add node_id and all encapsulated properties
+            if entity_field.node_join_field:
+                add_column(entity_field.node_join_field.field_name)
+            for prop_field in entity_field.encapsulated_fields:
+                add_column(prop_field.field_name)
+        else:
+            # Edge/Relationship: add src, dst, and all encapsulated properties
+            if entity_field.rel_source_join_field:
+                self._required_columns.add(f"{prefix}src")
+            if entity_field.rel_sink_join_field:
+                self._required_columns.add(f"{prefix}dst")
+            for prop_field in entity_field.encapsulated_fields:
+                add_column(prop_field.field_name)
 
     def _collect_required_columns(self, op: LogicalOperator) -> None:
         """
@@ -3491,23 +3642,19 @@ class SQLRenderer:
         # Note: Check for aggregation first since we need it for alias logic
         has_aggregation = any(self._has_aggregation(expr) for _, expr in op.projections)
 
+        # Get resolved projections for entity struct rendering
+        resolved_projections_map: dict[str, "ResolvedProjection"] = {}
+        if op.operator_debug_id in self._resolved.resolved_projections:
+            for rp in self._resolved.resolved_projections[op.operator_debug_id]:
+                resolved_projections_map[rp.alias] = rp
+
+        # Track which entity variables are rendered as STRUCT (to skip extra columns)
+        entities_rendered_as_struct: set[str] = set()
+
         for i, (alias, expr) in enumerate(op.projections):
             rendered = self._render_expression(expr, op)
             prefix = " " if i == 0 else ","
 
-            # Bug fix: In aggregation contexts or intermediate projections, entity IDs should
-            # keep their full column names instead of being aliased to short names. This
-            # prevents UNRESOLVED_COLUMN errors in PySpark when outer queries try to
-            # reference the original column name.
-            #
-            # Example bug: WITH p, COUNT(t) AS total
-            #   - Buggy:  _gsql2rsql_p_id AS p  (aliases away the column)
-            #   - Fixed:  _gsql2rsql_p_id AS _gsql2rsql_p_id  (preserves column name)
-            #
-            # This applies to:
-            # 1. Aggregating projections (has_aggregation=True)
-            # 2. Intermediate projections (depth > 0) that pass entities through
-            #
             # Check if this is a bare entity reference (not an aggregate, not a property access)
             is_bare_entity = (
                 isinstance(expr, QueryExpressionProperty)
@@ -3515,16 +3662,39 @@ class SQLRenderer:
                 and not self._has_aggregation(expr)
             )
 
-            if (has_aggregation or depth > 0) and is_bare_entity:
-                # Use full column name as alias to preserve column availability
+            # NEW: For root projection (depth == 0), render entities as NAMED_STRUCT
+            # This implements OpenCypher semantics where RETURN a returns the whole entity
+            if depth == 0 and is_bare_entity and not has_aggregation:
+                # Get the resolved projection for this alias
+                resolved_proj = resolved_projections_map.get(alias)
+                if resolved_proj and resolved_proj.is_entity_ref:
+                    # Type assertion: is_bare_entity implies expr is QueryExpressionProperty
+                    assert isinstance(expr, QueryExpressionProperty)
+                    entity_var = expr.variable_name
+                    # Render as NAMED_STRUCT with all properties
+                    # Returns None if the variable is not an entity (e.g., UNWIND variables)
+                    struct_rendered = self._render_entity_as_struct(resolved_proj, entity_var, op)
+                    if struct_rendered is not None:
+                        rendered = struct_rendered
+                        entities_rendered_as_struct.add(entity_var)
+                    output_alias = alias
+                else:
+                    output_alias = alias
+            elif (has_aggregation or depth > 0) and is_bare_entity:
+                # Bug fix: In aggregation contexts or intermediate projections, entity IDs should
+                # keep their full column names instead of being aliased to short names. This
+                # prevents UNRESOLVED_COLUMN errors in PySpark when outer queries try to
+                # reference the original column name.
+                #
+                # Example bug: WITH p, COUNT(t) AS total
+                #   - Buggy:  _gsql2rsql_p_id AS p  (aliases away the column)
+                #   - Fixed:  _gsql2rsql_p_id AS _gsql2rsql_p_id  (preserves column name)
                 output_alias = rendered
             else:
                 # Use user-provided alias (normal behavior)
                 output_alias = alias
 
             lines.append(f"{indent}  {prefix}{rendered} AS {output_alias}")
-
-        # has_aggregation was already computed above (line 2081) for alias logic
 
         # Bug #1 Fix: When projecting entity variables through a WITH clause,
         # we need to also project any entity properties that are required downstream.
@@ -3535,9 +3705,9 @@ class SQLRenderer:
         # 1. ALL aggregating projections (GROUP BY loses columns not in SELECT/GROUP BY)
         # 2. INTERMEDIATE non-aggregating projections (depth > 0) where entity variables
         #    are passed through and downstream needs their properties
-        # 3. ROOT projection (depth == 0) with entity returns (RETURN p projects all properties)
         #
-        # Check if there are any entity returns in this projection
+        # NOTE: For root projections (depth == 0) with entity returns rendered as STRUCT,
+        # we DON'T add extra columns because the STRUCT already contains all properties.
         has_entity_return = False
         if op.operator_debug_id in self._resolved.resolved_projections:
             has_entity_return = any(
@@ -3546,8 +3716,24 @@ class SQLRenderer:
             )
 
         extra_columns: list[str] = []
-        if self._required_columns and (has_aggregation or depth > 0 or has_entity_return):
+        # Only add extra columns for intermediate projections or aggregations
+        # Skip for root projections where entities are rendered as STRUCT
+        should_add_extra_columns = (
+            self._required_columns
+            and (has_aggregation or depth > 0)
+            and not (depth == 0 and has_entity_return and not has_aggregation)
+        )
+        if should_add_extra_columns:
             extra_columns = self._get_entity_properties_for_aggregation(op)
+            # Filter out columns for entities that were rendered as STRUCT
+            if entities_rendered_as_struct:
+                extra_columns = [
+                    col for col in extra_columns
+                    if not any(
+                        col.startswith(f"{self.COLUMN_PREFIX}{ent}_")
+                        for ent in entities_rendered_as_struct
+                    )
+                ]
             for col_alias in extra_columns:
                 lines.append(f"{indent}  ,{col_alias} AS {col_alias}")
 
@@ -3606,10 +3792,15 @@ class SQLRenderer:
                     lines.append(f"{indent}WHERE {having_sql}")
 
         # Order by
+        # When entities are rendered as NAMED_STRUCT, ORDER BY expressions that reference
+        # entity properties need to use struct field access (e.g., a.id instead of _gsql2rsql_a_id)
         if op.order_by:
             order_parts: list[str] = []
             for expr, is_desc in op.order_by:
-                rendered = self._render_expression(expr, op)
+                # Check if this is a property access on an entity rendered as struct
+                rendered = self._render_order_by_expression(
+                    expr, op, entities_rendered_as_struct, resolved_projections_map
+                )
                 direction = "DESC" if is_desc else "ASC"
                 order_parts.append(f"{rendered} {direction}")
             lines.append(f"{indent}ORDER BY {', '.join(order_parts)}")
@@ -3663,6 +3854,63 @@ class SQLRenderer:
         lines.append(self._render_operator(right_op, depth))
 
         return "\n".join(lines)
+
+    def _render_order_by_expression(
+        self,
+        expr: QueryExpression,
+        context_op: LogicalOperator,
+        entities_rendered_as_struct: set[str],
+        resolved_projections_map: dict[str, "ResolvedProjection"],
+    ) -> str:
+        """Render an ORDER BY expression, handling struct field access for entity returns.
+
+        When an entity is returned as NAMED_STRUCT (e.g., RETURN a renders as
+        NAMED_STRUCT(...) AS a), ORDER BY expressions referencing that entity's
+        properties need to use struct field access syntax.
+
+        For example:
+            RETURN DISTINCT a ORDER BY a.id
+            ->
+            SELECT DISTINCT NAMED_STRUCT(...) AS a ... ORDER BY a.id
+
+        Instead of:
+            ORDER BY _gsql2rsql_a_id  (wrong - column not available after STRUCT wrapping)
+
+        Args:
+            expr: The ORDER BY expression
+            context_op: The operator context
+            entities_rendered_as_struct: Set of entity variables rendered as NAMED_STRUCT
+            resolved_projections_map: Map of alias -> ResolvedProjection
+
+        Returns:
+            SQL string for the ORDER BY expression
+        """
+        # Check if this is a property access on an entity rendered as struct
+        if isinstance(expr, QueryExpressionProperty) and entities_rendered_as_struct:
+            entity_var = expr.variable_name
+            property_name = expr.property_name
+
+            if entity_var in entities_rendered_as_struct:
+                # Find the output alias for this entity
+                # It's typically the same as the entity variable, but could be aliased
+                output_alias = entity_var
+                for alias, resolved_proj in resolved_projections_map.items():
+                    if resolved_proj.is_entity_ref:
+                        refs = list(resolved_proj.expression.all_refs())
+                        if refs and refs[0].original_variable == entity_var:
+                            output_alias = alias
+                            break
+
+                if property_name is None:
+                    # Bare entity reference in ORDER BY (e.g., ORDER BY a)
+                    # This doesn't really make sense, but return the alias
+                    return output_alias
+                else:
+                    # Property access - use struct field access syntax
+                    return f"{output_alias}.{property_name}"
+
+        # Default: use normal expression rendering
+        return self._render_expression(expr, context_op)
 
     def _render_expression(
         self, expr: QueryExpression, context_op: LogicalOperator
@@ -4186,6 +4434,9 @@ class SQLRenderer:
                 ),
                 s -> s._value
             )
+
+        Also supports collecting entities as STRUCT:
+        COLLECT(a) where a is a node -> COLLECT_LIST(NAMED_STRUCT('prop1', col1, ...))
         """
         # Handle ordered COLLECT specially
         if (
@@ -4194,6 +4445,18 @@ class SQLRenderer:
             and expr.inner_expression
         ):
             return self._render_ordered_collect(expr, context_op)
+
+        # Check if this is COLLECT of an entity (node or edge)
+        if (
+            expr.aggregation_function == AggregationFunction.COLLECT
+            and expr.inner_expression
+            and isinstance(expr.inner_expression, QueryExpressionProperty)
+            and expr.inner_expression.property_name is None  # Bare entity reference
+        ):
+            entity_var = expr.inner_expression.variable_name
+            # Generate NAMED_STRUCT for the entity
+            entity_struct = self._render_entity_in_collect_as_struct(entity_var, context_op)
+            return f"COLLECT_LIST({entity_struct})"
 
         inner = (
             self._render_expression(expr.inner_expression, context_op)
@@ -4922,6 +5185,174 @@ class SQLRenderer:
             c if c.isalnum() or c == "_" else "" for c in prefix
         )
         return f"{self.COLUMN_PREFIX}{clean_prefix}_{field_name}"
+
+    def _render_entity_as_struct(
+        self,
+        resolved_proj: "ResolvedProjection",
+        entity_var: str,
+        context_op: "LogicalOperator",
+    ) -> str | None:
+        """Render an entity reference as NAMED_STRUCT with all properties.
+
+        When RETURN a (node) or RETURN r (edge) is used, this generates:
+        NAMED_STRUCT('prop1', col1, 'prop2', col2, ...)
+
+        Uses the schema information from the operator's input_schema to get
+        all properties for the entity, ensuring we include ALL properties
+        (not just those explicitly used in the query).
+
+        Args:
+            resolved_proj: The resolved projection containing column refs
+            entity_var: The entity variable name (e.g., "a", "r")
+            context_op: The operator for accessing input schema
+
+        Returns:
+            SQL NAMED_STRUCT expression, or None if the variable is not an entity
+            (e.g., for UNWIND variables which are values, not entities)
+        """
+        from gsql2rsql.planner.schema import EntityField, EntityType
+
+        prefix = f"{self.COLUMN_PREFIX}{entity_var}_"
+        entity_props: list[tuple[str, str]] = []  # (prop_name, sql_col)
+
+        # Try to get entity field from the operator's input schema
+        # This is the authoritative way to determine if something is an entity
+        entity_field: EntityField | None = None
+        if hasattr(context_op, 'input_schema') and context_op.input_schema:
+            for field in context_op.input_schema:
+                if isinstance(field, EntityField) and field.field_alias == entity_var:
+                    entity_field = field
+                    break
+
+        # If no EntityField found, this is NOT an entity (e.g., UNWIND variable)
+        # Return None to signal the caller should use normal rendering
+        if not entity_field:
+            return None
+
+        # Use schema information - this is the authoritative source
+        if entity_field.entity_type == EntityType.NODE:
+            # Node: add node_id and all encapsulated properties
+            if entity_field.node_join_field:
+                prop_name = entity_field.node_join_field.field_name
+                # field_name is like "node_id" - use it directly
+                entity_props.append((prop_name, f"{prefix}{prop_name}"))
+            for prop_field in entity_field.encapsulated_fields:
+                prop_name = prop_field.field_name
+                entity_props.append((prop_name, f"{prefix}{prop_name}"))
+        else:
+            # Edge/Relationship: add src, dst, and all encapsulated properties
+            if entity_field.rel_source_join_field:
+                entity_props.append(("src", f"{prefix}src"))
+            if entity_field.rel_sink_join_field:
+                entity_props.append(("dst", f"{prefix}dst"))
+            for prop_field in entity_field.encapsulated_fields:
+                prop_name = prop_field.field_name
+                entity_props.append((prop_name, f"{prefix}{prop_name}"))
+
+        # Sort by property name and deduplicate
+        seen = set()
+        sorted_props = []
+        for prop_name, sql_col in sorted(entity_props, key=lambda x: x[0]):
+            if prop_name not in seen:
+                seen.add(prop_name)
+                sorted_props.append((prop_name, sql_col))
+
+        # Build NAMED_STRUCT parts
+        struct_parts = [f"'{prop_name}', {sql_col}" for prop_name, sql_col in sorted_props]
+
+        if struct_parts:
+            return f"NAMED_STRUCT({', '.join(struct_parts)})"
+        else:
+            # Fallback: if no properties found, just use the ID
+            id_col = resolved_proj.entity_id_column or f"{prefix}id"
+            return f"NAMED_STRUCT('id', {id_col})"
+
+    def _render_entity_in_collect_as_struct(
+        self,
+        entity_var: str,
+        context_op: "LogicalOperator",
+    ) -> str:
+        """Render an entity inside collect() as NAMED_STRUCT.
+
+        For collect(a) or collect(r), generates NAMED_STRUCT with all properties.
+
+        Uses the schema information from the operator's input_schema to get
+        all properties for the entity, ensuring we include ALL properties
+        (not just those explicitly used in the query).
+
+        Args:
+            entity_var: The entity variable name
+            context_op: The operator context for looking up resolved refs
+
+        Returns:
+            SQL NAMED_STRUCT expression
+        """
+        from gsql2rsql.planner.schema import EntityField, EntityType
+
+        prefix = f"{self.COLUMN_PREFIX}{entity_var}_"
+        entity_props: list[tuple[str, str]] = []  # (prop_name, sql_col)
+
+        # Try to get entity field from the operator's input schema
+        entity_field: EntityField | None = None
+        if hasattr(context_op, 'input_schema') and context_op.input_schema:
+            for field in context_op.input_schema:
+                if isinstance(field, EntityField) and field.field_alias == entity_var:
+                    entity_field = field
+                    break
+
+        if entity_field:
+            # Use schema information - this is the authoritative source
+            if entity_field.entity_type == EntityType.NODE:
+                # Node: add node_id and all encapsulated properties
+                if entity_field.node_join_field:
+                    prop_name = entity_field.node_join_field.field_name
+                    entity_props.append((prop_name, f"{prefix}{prop_name}"))
+                for prop_field in entity_field.encapsulated_fields:
+                    prop_name = prop_field.field_name
+                    entity_props.append((prop_name, f"{prefix}{prop_name}"))
+            else:
+                # Edge/Relationship: add src, dst, and all encapsulated properties
+                if entity_field.rel_source_join_field:
+                    entity_props.append(("src", f"{prefix}src"))
+                if entity_field.rel_sink_join_field:
+                    entity_props.append(("dst", f"{prefix}dst"))
+                for prop_field in entity_field.encapsulated_fields:
+                    prop_name = prop_field.field_name
+                    entity_props.append((prop_name, f"{prefix}{prop_name}"))
+
+        # Fallback 1: Try required columns
+        if not entity_props and self._required_columns:
+            for col in sorted(self._required_columns):
+                if col.startswith(prefix):
+                    prop_name = col[len(prefix):]
+                    entity_props.append((prop_name, col))
+
+        # Fallback 2: Try resolved expressions
+        if not entity_props:
+            op_id = context_op.operator_debug_id
+            if op_id in self._resolved.resolved_projections:
+                for resolved_proj in self._resolved.resolved_projections[op_id]:
+                    for key, ref in resolved_proj.expression.column_refs.items():
+                        if ref.original_variable == entity_var:
+                            prop_name = ref.original_property if ref.original_property else "id"
+                            entity_props.append((prop_name, ref.sql_column_name))
+
+        # Sort by property name and deduplicate
+        seen = set()
+        sorted_props = []
+        for prop_name, sql_col in sorted(entity_props, key=lambda x: x[0]):
+            if prop_name not in seen:
+                seen.add(prop_name)
+                sorted_props.append((prop_name, sql_col))
+
+        # Build NAMED_STRUCT parts
+        struct_parts = [f"'{prop_name}', {sql_col}" for prop_name, sql_col in sorted_props]
+
+        if struct_parts:
+            return f"NAMED_STRUCT({', '.join(struct_parts)})"
+        else:
+            id_col = f"{self.COLUMN_PREFIX}{entity_var}_id"
+            return f"NAMED_STRUCT('id', {id_col})"
 
     def _get_entity_properties_for_aggregation(
         self, op: ProjectionOperator
