@@ -2,6 +2,15 @@
 
 
 
+## v0.8.2 (2026-01-31)
+
+### Fix
+
+* fix: graph context deve pegar as colunas essenciais por default
+
+facilita nossa vida ([`90b4f5b`](https://github.com/devmessias/gsql2rsql/commit/90b4f5b4e96cd49dfc3fdc7b84a69248a60efec7))
+
+
 ## v0.8.1 (2026-01-31)
 
 ### Fix
