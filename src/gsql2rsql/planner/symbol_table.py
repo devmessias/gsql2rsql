@@ -62,6 +62,11 @@ class SymbolEntry:
     is_aggregated: bool = False
     source_expression_text: str = ""
 
+    # VLP relationship variable marker
+    # When True, this symbol represents the list of relationships in a VLP
+    # and should be resolved to path_edges instead of normal entity columns
+    is_vlp_relationship: bool = False
+
     def __str__(self) -> str:
         """Human-readable representation for debugging."""
         type_str = self.symbol_type.name.lower()

@@ -76,6 +76,11 @@ class LogicalPlan:
         """Return operators that are starting points of the logical plan."""
         return self._starting_operators
 
+    @starting_operators.setter
+    def starting_operators(self, value: list[StartLogicalOperator]) -> None:
+        """Set the starting operators of the logical plan."""
+        self._starting_operators = value
+
     @property
     def terminal_operators(self) -> list[LogicalOperator]:
         """Return operators that are terminals (representing output)."""

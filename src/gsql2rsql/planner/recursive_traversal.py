@@ -211,6 +211,11 @@ def create_recursive_match_tree(
         source_alias=source_node.alias,
         target_alias=target_node.alias,
         path_variable=match_clause.path_variable,
+        # Only pass relationship_variable if the user explicitly defined an alias
+        # (not auto-generated _anon* aliases from logical_plan.py)
+        relationship_variable=(
+            rel.alias if rel.alias and not rel.alias.startswith("_anon") else ""
+        ),
         # Optimization: Only collect edges when relationships(path) is used
         collect_edges=path_info.needs_edge_collection,
         collect_nodes=path_info.needs_node_collection,

@@ -355,6 +355,7 @@ class ColumnResolver:
 
         RecursiveTraversal introduces:
         - path_variable (if specified) - the named path variable
+        - relationship_variable (if specified) - the list of relationships traversed
         - Target nodes are handled by their own DataSourceOperators
 
         Args:
@@ -371,6 +372,21 @@ class ColumnResolver:
                 data_type_name="PATH",  # Path type
             )
             self._symbol_table.define_or_update(op.path_variable, entry)
+
+        # Add relationship variable if specified (e.g., 'r' in [r*1..3])
+        # In Cypher, this represents the list of relationships traversed
+        if op.relationship_variable:
+            edge_type = "|".join(op.edge_types) if op.edge_types else "Relationship"
+            entry = SymbolEntry(
+                name=op.relationship_variable,
+                symbol_type=SymbolType.ENTITY,
+                definition_operator_id=op.operator_debug_id,
+                definition_location=f"MATCH -[{op.relationship_variable}*]-",
+                scope_level=self._symbol_table.current_level,
+                data_type_name=f"LIST<{edge_type}>",  # List of relationships
+                is_vlp_relationship=True,  # Mark as VLP relationship for correct SQL mapping
+            )
+            self._symbol_table.define_or_update(op.relationship_variable, entry)
 
     def _build_symbols_for_projection(self, op: ProjectionOperator) -> None:
         """Build symbols for a projection operator.
@@ -817,6 +833,10 @@ class ColumnResolver:
             elif entry.symbol_type == SymbolType.PATH:
                 # PATH variables use their own column naming (e.g., _gsql2rsql_path_id)
                 sql_name = compute_sql_column_name(variable, None)
+            elif entry.is_vlp_relationship:
+                # VLP relationship variable (e.g., 'r' in [r*1..3])
+                # Maps to path_edges column from the recursive CTE
+                sql_name = "path_edges"
             else:
                 # This is a bare entity reference - mark as potential entity return
                 # (will be used in projection context to expand to all properties)

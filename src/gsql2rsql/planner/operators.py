@@ -1258,6 +1258,7 @@ class RecursiveTraversalOperator(LogicalOperator):
         source_alias: str = "",
         target_alias: str = "",
         path_variable: str = "",
+        relationship_variable: str = "",
         collect_nodes: bool = False,
         collect_edges: bool = False,
         edge_properties: list[str] | None = None,
@@ -1287,8 +1288,11 @@ class RecursiveTraversalOperator(LogicalOperator):
         self.target_alias = target_alias
         # Path accumulation support
         self.path_variable = path_variable
+        # Relationship variable for VLP (e.g., 'r' in [r*1..3])
+        # In Cypher, this represents the list of relationships traversed
+        self.relationship_variable = relationship_variable
         self.collect_nodes = collect_nodes or bool(path_variable)
-        self.collect_edges = collect_edges or bool(path_variable)
+        self.collect_edges = collect_edges or bool(path_variable) or bool(relationship_variable)
         self.edge_properties = edge_properties or []
 
         # Predicate pushdown for early path filtering

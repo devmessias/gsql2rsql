@@ -662,18 +662,7 @@ class DeadTableEliminationOptimizer:
             mark_reachable(terminal)
 
         # Filter starting operators to only those reachable
-        plan._starting_operators = [
-            op for op in plan._starting_operators
+        plan.starting_operators = [
+            op for op in plan.starting_operators
             if id(op) in reachable
         ]
-
-
-def _get_entity_type(entity: NodeEntity | RelationshipEntity | None) -> EntityType | None:
-    """Helper to get EntityType from an entity."""
-    if entity is None:
-        return None
-    if isinstance(entity, NodeEntity):
-        return EntityType.NODE
-    if isinstance(entity, RelationshipEntity):
-        return EntityType.RELATIONSHIP
-    return None
