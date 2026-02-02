@@ -88,11 +88,8 @@ jobs:
           uv sync --extra dev
           uv pip install -e ".[dev]"
 
-      - name: Generate golden files
-        run: make generate-golden-files
-
-      - name: Run tests
-        run: make test-no-pyspark
+      # Tests already ran in the 'release' job - no need to repeat here
+      # The build job only runs after release succeeds (needs: release)
 
       - name: Build package
         run: |
