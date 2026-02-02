@@ -2,6 +2,13 @@
 
 
 
+## v0.9.0 (2026-02-02)
+
+### Feature
+
+* feat: support VLP relationship variable in RETURN clause ([`fa20cb2`](https://github.com/devmessias/gsql2rsql/commit/fa20cb2323ff2dc20d511ca0d83f58867b42c0fe))
+
+
 ## v0.8.2 (2026-01-31)
 
 ### Fix
