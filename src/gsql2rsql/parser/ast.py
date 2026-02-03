@@ -61,7 +61,7 @@ class TreeNode(ABC):
             Nodes of the specified type.
         """
         if isinstance(self, node_type):
-            yield self  # type: ignore[misc]
+            yield self
         for child in self.children:
             yield from child.get_children_of_type(node_type)
 

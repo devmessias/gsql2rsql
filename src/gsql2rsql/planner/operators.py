@@ -104,7 +104,7 @@ class LogicalOperator(ABC):
     ) -> Iterator[_TLogicalOp]:
         """Get all downstream operators of a specific type."""
         if isinstance(self, op_type):
-            yield self  # type: ignore[misc]
+            yield self
         for out_op in self.graph_out_operators:
             yield from out_op.get_all_downstream_operators(op_type)
 
@@ -113,7 +113,7 @@ class LogicalOperator(ABC):
     ) -> Iterator[_TLogicalOp]:
         """Get all upstream operators of a specific type."""
         if isinstance(self, op_type):
-            yield self  # type: ignore[misc]
+            yield self
         for in_op in self.graph_in_operators:
             yield from in_op.get_all_upstream_operators(op_type)
 
