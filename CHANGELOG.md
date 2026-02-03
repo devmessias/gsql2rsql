@@ -2,6 +2,17 @@
 
 
 
+## v0.9.3 (2026-02-03)
+
+### Performance
+
+* perf(planner): propagate filters into VLP CTE base case across MATCH clauses
+
+Filters from previous MATCH clauses are now injected into subsequent
+VLP match clauses, enabling pushdown into the recursive CTE base case.
+This prevents full graph exploration when the source node is filtered. ([`962c4f4`](https://github.com/devmessias/gsql2rsql/commit/962c4f4d45a1256c8ebaba115207306197a84104))
+
+
 ## v0.9.2 (2026-02-03)
 
 ### Fix
