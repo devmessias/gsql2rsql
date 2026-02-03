@@ -981,6 +981,31 @@ class ProjectionOperator(UnaryLogicalOperator):
                                 # Without this, UNWIND loses the struct field info
                                 structured_type=fld.structured_type,
                             ))
+                            # BUG FIX: When projecting a path variable, also carry through
+                            # the associated _path_edges field. Without this, UNWIND
+                            # relationships(path) loses the struct type info for edges.
+                            # Detection: path variable has field_name like _gsql2rsql_X_id
+                            # and has a structured_type (ArrayType for path nodes).
+                            if (
+                                fld.structured_type is not None
+                                and fld.field_name
+                                and fld.field_name.endswith("_id")
+                            ):
+                                # Look for associated _path_edges_{var_name} field
+                                path_edges_alias = f"_path_edges_{var_name}"
+                                for edges_fld in self.input_schema:
+                                    if (
+                                        isinstance(edges_fld, ValueField)
+                                        and edges_fld.field_alias == path_edges_alias
+                                    ):
+                                        # Carry through the edges field unchanged
+                                        fields.append(ValueField(
+                                            field_alias=edges_fld.field_alias,
+                                            field_name=edges_fld.field_name,
+                                            data_type=edges_fld.data_type,
+                                            structured_type=edges_fld.structured_type,
+                                        ))
+                                        break
                             break
                     else:
                         # Fallback: create a generic value field

@@ -3830,7 +3830,8 @@ class SQLRenderer:
             for expr, is_desc in op.order_by:
                 # Check if this is a property access on an entity rendered as struct
                 rendered = self._render_order_by_expression(
-                    expr, op, entities_rendered_as_struct, resolved_projections_map
+                    expr, op, entities_rendered_as_struct, resolved_projections_map,
+                    op.projections
                 )
                 direction = "DESC" if is_desc else "ASC"
                 order_parts.append(f"{rendered} {direction}")
@@ -3892,6 +3893,7 @@ class SQLRenderer:
         context_op: LogicalOperator,
         entities_rendered_as_struct: set[str],
         resolved_projections_map: dict[str, "ResolvedProjection"],
+        projections: list[tuple[str, QueryExpression]] | None = None,
     ) -> str:
         """Render an ORDER BY expression, handling struct field access for entity returns.
 
@@ -3907,15 +3909,31 @@ class SQLRenderer:
         Instead of:
             ORDER BY _gsql2rsql_a_id  (wrong - column not available after STRUCT wrapping)
 
+        Also handles ORDER BY expressions that match projection expressions - in this case
+        we use the projection alias instead of the rendered expression. This is needed
+        when ORDER BY references struct fields (e.g., r.src) that were extracted in the
+        projection (e.g., r.src AS src).
+
         Args:
             expr: The ORDER BY expression
             context_op: The operator context
             entities_rendered_as_struct: Set of entity variables rendered as NAMED_STRUCT
             resolved_projections_map: Map of alias -> ResolvedProjection
+            projections: List of (alias, expr) tuples from the projection operator
 
         Returns:
             SQL string for the ORDER BY expression
         """
+        # First, check if the ORDER BY expression matches a projection expression.
+        # If so, use the projection alias. This handles cases like:
+        #   RETURN r.src AS src ORDER BY r.src  -->  SELECT r.src AS src ORDER BY src
+        # Without this, ORDER BY r.src would fail because r is not visible at outer level.
+        if projections:
+            expr_str = str(expr)
+            for alias, proj_expr in projections:
+                if str(proj_expr) == expr_str:
+                    return alias
+
         # Check if this is a property access on an entity rendered as struct
         if isinstance(expr, QueryExpressionProperty) and entities_rendered_as_struct:
             entity_var = expr.variable_name
@@ -5641,6 +5659,15 @@ class SQLRenderer:
                 return "TRUE" if expr.value else "FALSE"
             else:
                 return str(expr.value)
+
+        elif isinstance(expr, QueryExpressionList):
+            # Render list literals for IN operator: [1, 2, 3] -> (1, 2, 3)
+            # Use recursive call to _render_edge_filter_expression for items
+            # to maintain consistent rendering within the CTE context.
+            # List items in IN clauses are typically values (strings, numbers),
+            # which _render_edge_filter_expression handles correctly.
+            items = [self._render_edge_filter_expression(item) for item in expr.items]
+            return f"({', '.join(items)})"
 
         # Fallback: try the regular renderer (shouldn't normally reach here)
         # This is a safety net for expression types we haven't handled
