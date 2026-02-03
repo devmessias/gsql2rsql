@@ -2,6 +2,23 @@
 
 
 
+## v0.9.2 (2026-02-03)
+
+### Fix
+
+* fix: python 3.11 support ([`31e3150`](https://github.com/devmessias/gsql2rsql/commit/31e3150aac48c8d49d2449cd73131d34688ed822))
+
+### Refactor
+
+* refactor: remove type ignore comments in AST and operator classes ([`3e10a8c`](https://github.com/devmessias/gsql2rsql/commit/3e10a8caba7a1459a85487e479ecad47a2995b5c))
+
+### Unknown
+
+* tests: new testes unwind vlp ([`94619b5`](https://github.com/devmessias/gsql2rsql/commit/94619b56b194634b5ed50d715a1a59dcfbe4020b))
+
+* tes: tree unwind ([`7617868`](https://github.com/devmessias/gsql2rsql/commit/761786815eb37e2b0c0fe737056deb6a5844ace7))
+
+
 ## v0.9.1 (2026-02-03)
 
 ### Ci
