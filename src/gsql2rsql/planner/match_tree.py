@@ -55,6 +55,162 @@ def _extract_int_value(expr: QueryExpression | None) -> int | None:
     return None
 
 
+def _extract_filters_by_alias(
+    expr: QueryExpression | None,
+) -> dict[str, list[QueryExpression]]:
+    """Extract filters from an expression, grouped by the node alias they reference.
+
+    For filter pushdown optimization, we need to track which filters apply to which
+    node aliases so we can push them into VLP base cases in subsequent MATCH clauses.
+
+    Args:
+        expr: A WHERE expression (possibly compound with AND)
+
+    Returns:
+        Dict mapping node alias to list of filter expressions that reference ONLY
+        that alias. Filters referencing multiple aliases are not included.
+
+    Example:
+        WHERE root.id = "123" AND root.age > 30 AND target.name = "Bob"
+        Returns:
+            {
+                "root": [root.id = "123", root.age > 30],
+                "target": [target.name = "Bob"]
+            }
+    """
+    if expr is None:
+        return {}
+
+    result: dict[str, list[QueryExpression]] = {}
+
+    def collect_single_alias_filters(e: QueryExpression) -> None:
+        """Recursively collect filters that reference a single alias."""
+        if isinstance(e, QueryExpressionBinary):
+            # If this is an AND, recurse into both sides
+            if e.operator and e.operator.name.name == "AND":
+                if e.left_expression:
+                    collect_single_alias_filters(e.left_expression)
+                if e.right_expression:
+                    collect_single_alias_filters(e.right_expression)
+            else:
+                # This is a comparison or other binary expression
+                # Check if it references a single alias
+                alias = _get_single_alias_from_expression(e)
+                if alias:
+                    if alias not in result:
+                        result[alias] = []
+                    result[alias].append(e)
+        elif isinstance(e, QueryExpressionProperty):
+            # A standalone property reference (e.g., in EXISTS)
+            # Not a filter by itself, skip
+            pass
+
+    collect_single_alias_filters(expr)
+    return result
+
+
+def _get_single_alias_from_expression(expr: QueryExpression) -> str | None:
+    """Get the single alias referenced by an expression, or None if multiple.
+
+    Returns the alias if ALL property references in the expression use the same
+    variable name. Returns None if:
+    - No property references exist
+    - Multiple different aliases are referenced
+
+    Examples:
+        root.id = "123"          -> "root"
+        root.age > 30            -> "root"
+        root.id = target.id      -> None (multiple aliases)
+        1 = 1                    -> None (no property refs)
+    """
+    properties = _collect_property_refs(expr)
+
+    if not properties:
+        return None
+
+    aliases = {prop.variable_name for prop in properties}
+
+    if len(aliases) == 1:
+        return next(iter(aliases))
+
+    return None
+
+
+def _collect_property_refs(expr: QueryExpression) -> list[QueryExpressionProperty]:
+    """Collect all property references from an expression tree."""
+    properties: list[QueryExpressionProperty] = []
+
+    if isinstance(expr, QueryExpressionProperty):
+        properties.append(expr)
+    elif isinstance(expr, QueryExpressionBinary):
+        if expr.left_expression is not None:
+            properties.extend(_collect_property_refs(expr.left_expression))
+        if expr.right_expression is not None:
+            properties.extend(_collect_property_refs(expr.right_expression))
+    elif hasattr(expr, "children"):
+        for child in expr.children:
+            if isinstance(child, QueryExpression):
+                properties.extend(_collect_property_refs(child))
+
+    return properties
+
+
+def _has_variable_length_path(match_clause: MatchClause) -> bool:
+    """Check if a MATCH clause contains a variable-length path."""
+    for entity in match_clause.pattern_parts:
+        if isinstance(entity, RelationshipEntity) and entity.is_variable_length:
+            return True
+    return False
+
+
+def _get_vlp_source_alias(match_clause: MatchClause) -> str | None:
+    """Get the source node alias for a VLP in the match clause.
+
+    Returns None if no VLP exists or if the source node has no alias.
+    """
+    for i, entity in enumerate(match_clause.pattern_parts):
+        if isinstance(entity, RelationshipEntity) and entity.is_variable_length:
+            if i > 0:
+                prev = match_clause.pattern_parts[i - 1]
+                if isinstance(prev, NodeEntity) and prev.alias:
+                    return prev.alias
+    return None
+
+
+def _inject_filters_into_where(
+    match_clause: MatchClause,
+    filters: list[QueryExpression],
+) -> None:
+    """Inject filters into a match clause's where_expression.
+
+    Combines filters with AND. If where_expression is None, sets it directly.
+    If where_expression exists, prepends filters with AND.
+    """
+    if not filters:
+        return
+
+    and_op = BinaryOperatorInfo(BinaryOperator.AND, BinaryOperatorType.LOGICAL)
+
+    # Combine all filters with AND
+    combined: QueryExpression = filters[0]
+    for f in filters[1:]:
+        combined = QueryExpressionBinary(
+            left_expression=combined,
+            right_expression=f,
+            operator=and_op,
+        )
+
+    # Merge with existing where_expression
+    if match_clause.where_expression is None:
+        match_clause.where_expression = combined
+    else:
+        match_clause.where_expression = QueryExpressionBinary(
+            left_expression=combined,
+            right_expression=match_clause.where_expression,
+            operator=and_op,
+        )
+
+
 def create_standard_match_tree(
     match_clause: MatchClause,
     all_ops: list[LogicalOperator],
@@ -168,6 +324,19 @@ def create_partial_query_tree(
 ) -> LogicalOperator:
     """Create logical tree for a partial query (MATCH...RETURN).
 
+    This function includes cross-clause filter propagation optimization:
+    When a MATCH clause with VLP (variable-length path) references a node
+    that was filtered in a previous MATCH clause, the filter is injected
+    into the VLP match clause's where_expression. This enables the filter
+    to be pushed into the CTE base case for significant performance gains.
+
+    Example:
+        MATCH (root { id: "123" })
+        MATCH p = (root)-[:KNOWS*1..3]->(target)
+
+    Without optimization: CTE explores ALL paths, filters afterwards.
+    With optimization: CTE filters at base case (only paths from "123").
+
     Args:
         part: The partial query node
         all_ops: List to collect created operators
@@ -187,8 +356,38 @@ def create_partial_query_tree(
     # Track node aliases seen across all match clauses for correlation
     seen_node_aliases: set[str] = set()
 
+    # ═══════════════════════════════════════════════════════════════════
+    # CROSS-CLAUSE FILTER PROPAGATION
+    # ═══════════════════════════════════════════════════════════════════
+    # Track filters from previous MATCH clauses by the node alias they
+    # reference. When we encounter a VLP in a subsequent MATCH, we inject
+    # applicable filters into its where_expression so they can be pushed
+    # into the CTE base case.
+    #
+    # This is a critical optimization: without it, queries like
+    #   MATCH (root { id: "x" }) MATCH p = (root)-[*1..3]->()
+    # would explore ALL paths in the graph before filtering by root.id.
+    # ═══════════════════════════════════════════════════════════════════
+    accumulated_filters: dict[str, list[QueryExpression]] = {}
+
     # Process MATCH clauses
     for match_clause in part.match_clauses:
+        # ───────────────────────────────────────────────────────────────
+        # OPTIMIZATION: Inject filters from previous matches into VLP
+        # ───────────────────────────────────────────────────────────────
+        # Before creating the match tree, check if this match has a VLP
+        # and if any previous matches have filters on the VLP's source node.
+        # If so, inject those filters into this match's where_expression.
+        # ───────────────────────────────────────────────────────────────
+        if _has_variable_length_path(match_clause):
+            source_alias = _get_vlp_source_alias(match_clause)
+            if source_alias and source_alias in accumulated_filters:
+                # Inject filters from previous matches into this match
+                _inject_filters_into_where(
+                    match_clause,
+                    accumulated_filters[source_alias],
+                )
+
         match_op = create_match_tree_fn(match_clause, all_ops, return_exprs)
 
         if current_op is not None:
@@ -214,6 +413,20 @@ def create_partial_query_tree(
         for entity in match_clause.pattern_parts:
             if isinstance(entity, NodeEntity) and entity.alias:
                 seen_node_aliases.add(entity.alias)
+
+        # ───────────────────────────────────────────────────────────────
+        # ACCUMULATE FILTERS: Extract filters for future VLP optimization
+        # ───────────────────────────────────────────────────────────────
+        # Extract filters from this match clause's where_expression and
+        # add them to accumulated_filters for use by subsequent VLPs.
+        # Note: We do this BEFORE the where is consumed below.
+        # ───────────────────────────────────────────────────────────────
+        if match_clause.where_expression:
+            filters_by_alias = _extract_filters_by_alias(match_clause.where_expression)
+            for alias, filters in filters_by_alias.items():
+                if alias not in accumulated_filters:
+                    accumulated_filters[alias] = []
+                accumulated_filters[alias].extend(filters)
 
         # Process WHERE clause from MatchClause
         if match_clause.where_expression and current_op:
