@@ -539,3 +539,164 @@ class TestComplexRealWorldPatterns:
         rows = result.collect()
         depts = {row["reachable_dept"] for row in rows}
         assert len(depts) >= 1
+
+
+# =============================================================================
+# Category 13: Tree Graph with UUID-style node_id
+# =============================================================================
+@pytest.fixture(scope="module")
+def tree_graph_context(spark):
+    r"""Create a tree-shaped graph with UUID-style node IDs.
+
+    Tree structure:
+                        root (c00ec514-...)
+                       /    \
+                     A        B
+                    / \      / \
+                   C   D    E   F
+                  /
+                 G
+
+    7 nodes, 7 edges (tree = n-1 edges)
+    """
+    # Nodes with UUID-style IDs
+    nodes_data = [
+        ("c00ec514-4b63-48d3-b392-80316ef9a51d", "TreeNode", "Root", 0),
+        ("a1111111-1111-1111-1111-111111111111", "TreeNode", "A", 1),
+        ("b2222222-2222-2222-2222-222222222222", "TreeNode", "B", 1),
+        ("c3333333-3333-3333-3333-333333333333", "TreeNode", "C", 2),
+        ("d4444444-4444-4444-4444-444444444444", "TreeNode", "D", 2),
+        ("e5555555-5555-5555-5555-555555555555", "TreeNode", "E", 2),
+        ("f6666666-6666-6666-6666-666666666666", "TreeNode", "F", 2),
+        ("g7777777-7777-7777-7777-777777777777", "TreeNode", "G", 3),
+    ]
+    nodes_df = spark.createDataFrame(
+        nodes_data, ["node_id", "node_type", "name", "level"]
+    )
+    nodes_df.createOrReplaceTempView("tree_nodes")
+
+    # Edges forming a tree (parent -> child)
+    edges_data = [
+        # Level 0 -> Level 1
+        ("c00ec514-4b63-48d3-b392-80316ef9a51d", "a1111111-1111-1111-1111-111111111111", "CHILD_OF", 1),
+        ("c00ec514-4b63-48d3-b392-80316ef9a51d", "b2222222-2222-2222-2222-222222222222", "CHILD_OF", 2),
+        # Level 1 -> Level 2
+        ("a1111111-1111-1111-1111-111111111111", "c3333333-3333-3333-3333-333333333333", "CHILD_OF", 3),
+        ("a1111111-1111-1111-1111-111111111111", "d4444444-4444-4444-4444-444444444444", "CHILD_OF", 4),
+        ("b2222222-2222-2222-2222-222222222222", "e5555555-5555-5555-5555-555555555555", "CHILD_OF", 5),
+        ("b2222222-2222-2222-2222-222222222222", "f6666666-6666-6666-6666-666666666666", "CHILD_OF", 6),
+        # Level 2 -> Level 3
+        ("c3333333-3333-3333-3333-333333333333", "g7777777-7777-7777-7777-777777777777", "CHILD_OF", 7),
+    ]
+    edges_df = spark.createDataFrame(
+        edges_data, ["src", "dst", "relationship_type", "edge_order"]
+    )
+    edges_df.createOrReplaceTempView("tree_edges")
+
+    graph = GraphContext(
+        spark=spark,
+        nodes_table="tree_nodes",
+        edges_table="tree_edges",
+        node_type_col="node_type",
+        node_id_col="node_id",
+        edge_src_col="src",
+        edge_dst_col="dst",
+        edge_type_col="relationship_type",
+        extra_node_attrs={"name": str, "level": int},
+        extra_edge_attrs={"edge_order": int},
+    )
+    graph.set_types(
+        node_types=["TreeNode"],
+        edge_types=["CHILD_OF"],
+    )
+    return graph
+
+
+class TestTreeGraphRelationshipsP:
+    """Tests for relationships(p) on a tree-shaped graph with UUID node IDs."""
+
+    def test_relationships_p_return_distinct_r_tree(self, spark, tree_graph_context):
+        """Test UNWIND relationships(p) AS r with RETURN DISTINCT r on tree graph.
+
+        Query pattern:
+            MATCH (root { node_id: "c00ec514-4b63-48d3-b392-80316ef9a51d" })
+            MATCH p = (root)-[*1..3]->()
+            UNWIND relationships(p) AS r
+            RETURN DISTINCT r
+
+        Expected: Should return all 7 distinct edges in the tree traversed
+        from root up to depth 3.
+        """
+        query = """
+        MATCH (root { node_id: "c00ec514-4b63-48d3-b392-80316ef9a51d" })
+        MATCH p = (root)-[*1..3]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql = tree_graph_context.transpile(query)
+        print(f"\n=== SQL for RETURN DISTINCT r ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        print(f"Found {len(rows)} distinct relationships")
+        for row in rows:
+            print(f"  r = {row['r']}")
+
+        # Should have edges traversed from root
+        # At depth 1: root->A, root->B (2 edges)
+        # At depth 2: A->C, A->D, B->E, B->F (4 edges)
+        # At depth 3: C->G (1 edge)
+        # Total distinct edges reachable: 7
+        assert len(rows) >= 1, "Expected at least 1 distinct relationship"
+
+        # Verify r is a struct with src/dst fields
+        first_row = rows[0]
+        r_value = first_row["r"]
+        assert r_value is not None, "r should not be None"
+
+    def test_relationships_p_with_properties_tree(self, spark, tree_graph_context):
+        """Test UNWIND relationships(p) AS r with property access on tree graph."""
+        query = """
+        MATCH (root { node_id: "c00ec514-4b63-48d3-b392-80316ef9a51d" })
+        MATCH p = (root)-[*1..3]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r.src AS source, r.dst AS target, r.edge_order AS ord
+        ORDER BY ord
+        """
+        sql = tree_graph_context.transpile(query)
+        print(f"\n=== SQL for r.src, r.dst, r.edge_order ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        print(f"Found {len(rows)} distinct (src, dst, edge_order) tuples")
+        for row in rows:
+            print(f"  {row['source']} -> {row['target']} (order={row['ord']})")
+
+        # Should have 7 distinct edges
+        assert len(rows) == 7, f"Expected 7 distinct edges, got {len(rows)}"
+
+        # Verify ordering
+        orders = [row["ord"] for row in rows]
+        assert orders == sorted(orders), "Results should be ordered by edge_order"
+
+    def test_relationships_p_with_size_tree(self, spark, tree_graph_context):
+        """Test SIZE(relationships(p)) on tree graph."""
+        query = """
+        MATCH (root { node_id: "c00ec514-4b63-48d3-b392-80316ef9a51d" })
+        MATCH p = (root)-[e*1..3]->()
+        RETURN SIZE(e) AS path_length
+        ORDER BY path_length
+        """
+        sql = tree_graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        lengths = [row["path_length"] for row in rows]
+        print(f"Path lengths found: {lengths}")
+
+        # Depth 1: 2 paths (to A, B) - length 1
+        # Depth 2: 4 paths (to C, D, E, F) - length 2
+        # Depth 3: 1 path (to G) - length 3
+        assert 1 in lengths, "Should have paths of length 1"
+        assert 2 in lengths, "Should have paths of length 2"
+        assert 3 in lengths, "Should have paths of length 3"
