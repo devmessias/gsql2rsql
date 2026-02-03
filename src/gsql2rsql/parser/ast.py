@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
+from typing import Any, TypeVar
 
 from gsql2rsql.common.utils import change_indentation
 from gsql2rsql.parser.operators import (
@@ -15,6 +15,10 @@ from gsql2rsql.parser.operators import (
     Function,
     ListPredicateType,
 )
+
+# TypeVars for generic methods (Python 3.11 compatible, replaces PEP 695 syntax)
+_TTreeNode = TypeVar("_TTreeNode", bound="TreeNode")
+_TQueryExpr = TypeVar("_TQueryExpr", bound="QueryExpression")
 
 
 class TreeNode(ABC):
@@ -44,7 +48,9 @@ class TreeNode(ABC):
             lines.append(child.dump_tree(depth + 1))
         return "\n".join(lines)
 
-    def get_children_of_type[T: TreeNode](self, node_type: type[T]) -> Iterator[T]:
+    def get_children_of_type(
+        self, node_type: type[_TTreeNode]
+    ) -> Iterator[_TTreeNode]:
         """
         Get all descendants of a specific type.
 
@@ -55,7 +61,7 @@ class TreeNode(ABC):
             Nodes of the specified type.
         """
         if isinstance(self, node_type):
-            yield self
+            yield self  # type: ignore[misc]
         for child in self.children:
             yield from child.get_children_of_type(node_type)
 
@@ -83,9 +89,9 @@ class QueryExpression(TreeNode, ABC):
         """
         ...
 
-    def get_children_query_expression_type[T: QueryExpression](
-        self, expr_type: type[T]
-    ) -> Iterator[T]:
+    def get_children_query_expression_type(
+        self, expr_type: type[_TQueryExpr]
+    ) -> Iterator[_TQueryExpr]:
         """Get all descendant expressions of a specific type."""
         return self.get_children_of_type(expr_type)
 

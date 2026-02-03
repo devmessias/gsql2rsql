@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from gsql2rsql.common.exceptions import TranspilerInternalErrorException
 from gsql2rsql.common.schema import IGraphSchemaProvider
@@ -31,6 +31,9 @@ from gsql2rsql.planner.schema import (
 
 if TYPE_CHECKING:
     pass
+
+# TypeVar for generic methods (Python 3.11 compatible, replaces PEP 695 syntax)
+_TLogicalOp = TypeVar("_TLogicalOp", bound="LogicalOperator")
 
 
 class IBindable(ABC):
@@ -96,21 +99,21 @@ class LogicalOperator(ABC):
             raise TranspilerInternalErrorException(f"Operator {op} already added")
         self.graph_out_operators.append(op)
 
-    def get_all_downstream_operators[T: LogicalOperator](
-        self, op_type: type[T]
-    ) -> Iterator[T]:
+    def get_all_downstream_operators(
+        self, op_type: type[_TLogicalOp]
+    ) -> Iterator[_TLogicalOp]:
         """Get all downstream operators of a specific type."""
         if isinstance(self, op_type):
-            yield self
+            yield self  # type: ignore[misc]
         for out_op in self.graph_out_operators:
             yield from out_op.get_all_downstream_operators(op_type)
 
-    def get_all_upstream_operators[T: LogicalOperator](
-        self, op_type: type[T]
-    ) -> Iterator[T]:
+    def get_all_upstream_operators(
+        self, op_type: type[_TLogicalOp]
+    ) -> Iterator[_TLogicalOp]:
         """Get all upstream operators of a specific type."""
         if isinstance(self, op_type):
-            yield self
+            yield self  # type: ignore[misc]
         for in_op in self.graph_in_operators:
             yield from in_op.get_all_upstream_operators(op_type)
 
@@ -922,7 +925,14 @@ class ProjectionOperator(UnaryLogicalOperator):
         """
         from gsql2rsql.parser.ast import (
             QueryExpressionAggregationFunction,
+            QueryExpressionMapLiteral,
             QueryExpressionProperty,
+        )
+        from gsql2rsql.planner.data_types import (
+            ArrayType,
+            PrimitiveType,
+            StructField,
+            StructType,
         )
 
         fields: list[Field] = []
@@ -1040,17 +1050,45 @@ class ProjectionOperator(UnaryLogicalOperator):
             elif isinstance(expr, QueryExpressionAggregationFunction):
                 # Infer type from aggregation function
                 agg_name = expr.aggregation_function.name if expr.aggregation_function else ""
+                data_type = None
+                structured_type = None
+
                 if agg_name in ("COUNT",):
                     data_type = int
                 elif agg_name in ("SUM", "AVG"):
                     data_type = float
-                else:
-                    data_type = None
+                elif agg_name in ("COLLECT",):
+                    # COLLECT returns an array. If the inner expression is a map literal,
+                    # we create a structured_type so that UNWIND can access struct fields.
+                    # e.g., COLLECT({name: a.name, dept: a.dept}) -> ArrayType(StructType)
+                    data_type = list
+                    if (
+                        expr.inner_expression
+                        and isinstance(expr.inner_expression, QueryExpressionMapLiteral)
+                    ):
+                        map_literal = expr.inner_expression
+                        # Extract field names from the map literal entries
+                        struct_fields: list[StructField] = []
+                        for key, _ in map_literal.entries:
+                            struct_fields.append(
+                                StructField(
+                                    name=key,
+                                    data_type=PrimitiveType.STRING,
+                                    sql_name=key,
+                                )
+                            )
+                        if struct_fields:
+                            element_struct = StructType(
+                                name=f"CollectedStruct_{alias}",
+                                fields=tuple(struct_fields),
+                            )
+                            structured_type = ArrayType(element_type=element_struct)
 
                 fields.append(ValueField(
                     field_alias=alias,
                     field_name=f"_gsql2rsql_{alias}",
                     data_type=data_type,
+                    structured_type=structured_type,
                 ))
 
             # Case 4: Other expressions (computed values)
