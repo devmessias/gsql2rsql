@@ -170,11 +170,43 @@ class TestNestedUnwindPatterns:
         rows = result.collect()
         assert len(rows) >= 1
 
-    @pytest.mark.xfail(reason="Double UNWIND with struct access not implemented")
-    def test_double_unwind_vlp(self, spark, graph_context):
-        """Two VLPs with UNWIND on both."""
+    @pytest.mark.xfail(
+        reason="ARCHITECTURAL LIMITATION: Chained VLPs in a single MATCH pattern "
+               "(a)-[e1*]->(b)-[e2*]->(c) are not supported. The planner only processes "
+               "the LAST VLP segment, losing earlier variables. "
+               "WORKAROUND: Use separate MATCH clauses: "
+               "MATCH (a)-[e1*]->(b) MATCH (b)-[e2*]->(c)"
+    )
+    def test_double_unwind_vlp_single_match(self, spark, graph_context):
+        """Two VLPs in single MATCH - NOT SUPPORTED.
+
+        This pattern fails because the planner only processes the last VLP:
+            (a)-[e1*]->(b)-[e2*]->(c)
+
+        The first segment (a)-[e1*]->(b) with variables 'a' and 'e1' is lost.
+
+        WORKAROUND: Use separate MATCH clauses (see test_double_unwind_vlp_workaround).
+        """
         query = """
         MATCH (a {name: "Alice"})-[e1:KNOWS*1..2]->(b)-[e2:KNOWS*1..2]->(c)
+        UNWIND e1 AS r1
+        UNWIND e2 AS r2
+        RETURN r1.src AS first_src, r2.dst AS last_dst
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+
+    def test_double_unwind_vlp_workaround(self, spark, graph_context):
+        """Two VLPs using separate MATCH clauses - WORKS.
+
+        This is the workaround for chained VLPs: use separate MATCH clauses
+        instead of a single pattern.
+        """
+        query = """
+        MATCH (a {name: "Alice"})-[e1:KNOWS*1..2]->(b)
+        MATCH (b)-[e2:KNOWS*1..2]->(c)
         UNWIND e1 AS r1
         UNWIND e2 AS r2
         RETURN r1.src AS first_src, r2.dst AS last_dst
@@ -206,7 +238,6 @@ class TestCollectUnwindRoundtrip:
         salaries = [row["s"] for row in rows]
         assert salaries == sorted(salaries, reverse=True)
 
-    @pytest.mark.xfail(reason="COLLECT struct UNWIND property access not implemented")
     def test_collect_struct_unwind_property(self, spark, graph_context):
         """COLLECT structs then UNWIND and access properties."""
         query = """
@@ -214,6 +245,210 @@ class TestCollectUnwindRoundtrip:
         WITH a, COLLECT({name: b.name, dept: b.department}) AS friends
         UNWIND friends AS f
         RETURN a.name AS person, f.name AS friend_name, f.dept AS friend_dept
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+
+    def test_collect_struct_with_many_fields(self, spark, graph_context):
+        """COLLECT struct with many fields, access all after UNWIND."""
+        query = """
+        MATCH (a:Person)-[r:KNOWS]->(b:Person)
+        WITH a, COLLECT({
+            friend_name: b.name,
+            friend_dept: b.department,
+            friend_salary: b.salary,
+            friend_age: b.age
+        }) AS friend_details
+        UNWIND friend_details AS fd
+        RETURN a.name AS person,
+               fd.friend_name AS name,
+               fd.friend_dept AS dept,
+               fd.friend_salary AS salary,
+               fd.friend_age AS age
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+        # Verify all fields are accessible
+        for row in rows:
+            assert "person" in row.asDict()
+            assert "name" in row.asDict()
+            assert "dept" in row.asDict()
+            assert "salary" in row.asDict()
+            assert "age" in row.asDict()
+
+    def test_collect_with_chain_then_unwind(self, spark, graph_context):
+        """COLLECT in first WITH, pass through second WITH, then UNWIND."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH a, COLLECT({name: b.name, dept: b.department}) AS friends
+        WITH a, friends, SIZE(friends) AS friend_count
+        UNWIND friends AS f
+        RETURN a.name AS person, f.name AS friend_name, friend_count
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+        # Verify friend_count matches actual friends
+        for row in rows:
+            assert row["friend_count"] >= 1
+
+    def test_collect_struct_unwind_with_filter(self, spark, graph_context):
+        """COLLECT structs, UNWIND, then filter on struct property."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH a, COLLECT({name: b.name, salary: b.salary}) AS connections
+        UNWIND connections AS c
+        WITH a, c WHERE c.salary > 80000
+        RETURN a.name AS person, c.name AS rich_friend, c.salary AS salary
+        ORDER BY salary DESC
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        # All returned salaries should be > 80000
+        for row in rows:
+            assert row["salary"] > 80000
+
+    def test_collect_unwind_aggregation(self, spark, graph_context):
+        """COLLECT structs, UNWIND, then aggregate on struct properties."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH a, COLLECT({name: b.name, salary: b.salary}) AS friends
+        UNWIND friends AS f
+        WITH a, SUM(f.salary) AS total_friend_salary, COUNT(f.name) AS friend_count
+        RETURN a.name AS person, total_friend_salary, friend_count
+        ORDER BY total_friend_salary DESC
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+        for row in rows:
+            assert row["total_friend_salary"] is not None
+            assert row["friend_count"] >= 1
+
+    def test_multiple_collect_same_with(self, spark, graph_context):
+        """Multiple COLLECT expressions in same WITH clause."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH a,
+             COLLECT({name: b.name}) AS names_only,
+             COLLECT({dept: b.department}) AS depts_only
+        UNWIND names_only AS n
+        RETURN a.name AS person, n.name AS friend_name
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+
+    def test_collect_struct_unwind_distinct(self, spark, graph_context):
+        """COLLECT structs, UNWIND, DISTINCT on struct property."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH COLLECT({dept: b.department}) AS all_depts
+        UNWIND all_depts AS d
+        RETURN DISTINCT d.dept AS department
+        ORDER BY department
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        depts = [row["department"] for row in rows]
+        # Should have unique departments
+        assert len(depts) == len(set(depts))
+
+    def test_collect_vlp_edges_then_unwind(self, spark, graph_context):
+        """COLLECT VLP relationship edges, then UNWIND and access properties."""
+        query = """
+        MATCH (start {name: "Alice"})-[e:KNOWS*1..2]->(target)
+        UNWIND e AS rel
+        WITH COLLECT({src: rel.src, dst: rel.dst, weight: rel.weight}) AS all_edges
+        UNWIND all_edges AS edge
+        RETURN DISTINCT edge.src AS source, edge.dst AS dest, edge.weight AS w
+        ORDER BY source, dest
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+        for row in rows:
+            assert row["source"] is not None
+            assert row["dest"] is not None
+
+    def test_collect_with_relationships_p_unwind(self, spark, graph_context):
+        """Combine COLLECT with relationships(p) and double UNWIND."""
+        query = """
+        MATCH p = (a {name: "Alice"})-[:KNOWS*1..2]->(b)
+        UNWIND relationships(p) AS r
+        WITH a, COLLECT({edge_src: r.src, edge_dst: r.dst}) AS path_edges
+        UNWIND path_edges AS pe
+        RETURN a.name AS start, pe.edge_src AS from_node, pe.edge_dst AS to_node
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+        for row in rows:
+            assert row["start"] == "Alice"
+            assert row["from_node"] is not None
+            assert row["to_node"] is not None
+
+    def test_collect_struct_nested_with_chain(self, spark, graph_context):
+        """Complex WITH chain with COLLECT struct at each level."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH a, COLLECT({name: b.name, sal: b.salary}) AS level1
+        WITH a, level1, SIZE(level1) AS cnt
+        UNWIND level1 AS item
+        WITH a.name AS person, item.name AS friend, item.sal AS salary, cnt
+        RETURN person, friend, salary, cnt
+        ORDER BY person, salary DESC
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+
+    def test_collect_struct_with_edge_properties(self, spark, graph_context):
+        """COLLECT struct containing both node and edge properties."""
+        query = """
+        MATCH (a:Person)-[r:KNOWS]->(b:Person)
+        WITH a, COLLECT({
+            friend: b.name,
+            relationship_weight: r.weight,
+            relationship_since: r.since,
+            relationship_context: r.context
+        }) AS connections
+        UNWIND connections AS conn
+        RETURN a.name AS person,
+               conn.friend AS friend,
+               conn.relationship_weight AS weight,
+               conn.relationship_since AS since,
+               conn.relationship_context AS context
+        ORDER BY weight DESC
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+        assert len(rows) >= 1
+        for row in rows:
+            assert row["weight"] is not None
+
+    def test_collect_unwind_group_by_struct_field(self, spark, graph_context):
+        """COLLECT structs, UNWIND, then GROUP BY a struct field."""
+        query = """
+        MATCH (a:Person)-[:KNOWS]->(b:Person)
+        WITH COLLECT({dept: b.department, sal: b.salary}) AS all_people
+        UNWIND all_people AS p
+        WITH p.dept AS department, SUM(p.sal) AS total_salary
+        RETURN department, total_salary
+        ORDER BY total_salary DESC
         """
         sql = graph_context.transpile(query)
         result = spark.sql(sql)
