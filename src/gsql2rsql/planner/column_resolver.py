@@ -54,7 +54,7 @@ from gsql2rsql.planner.operators import (
     SelectionOperator,
     UnwindOperator,
 )
-from gsql2rsql.planner.schema import EntityField, ValueField
+from gsql2rsql.planner.schema import EntityField, EntityType, ValueField
 from gsql2rsql.planner.symbol_table import (
     SymbolEntry,
     SymbolInfo,
@@ -881,8 +881,11 @@ class ColumnResolver:
                     if node_def.node_id_property:
                         id_prop_name = node_def.node_id_property.property_name
                     sql_name = compute_sql_column_name(variable, id_prop_name)
-                elif entry.symbol_type == SymbolType.ENTITY and not entry.is_vlp_relationship:
-                    # Schema lookup failed but symbol is marked as ENTITY (not VLP relationship)
+                elif (
+                    entry.entity_info is not None
+                    and entry.entity_info.entity_type == EntityType.NODE
+                ):
+                    # Schema lookup failed but entity_info confirms this is a NODE
                     # This can happen when nodes are projected through WITH clause after VLP
                     # Use default node_id column name (commonly "node_id" for GraphContext)
                     # See docs_help_dev/WITH_VLP_BUG_ANALYSIS.md for details

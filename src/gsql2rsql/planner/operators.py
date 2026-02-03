@@ -974,6 +974,9 @@ class ProjectionOperator(UnaryLogicalOperator):
                                 field_alias=alias,
                                 field_name=fld.field_name,
                                 data_type=fld.data_type,
+                                # Preserve structured_type for VLP arrays/structs
+                                # Without this, UNWIND loses the struct field info
+                                structured_type=fld.structured_type,
                             ))
                             break
                     else:

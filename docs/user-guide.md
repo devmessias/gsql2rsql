@@ -432,6 +432,81 @@ gsql2rsql tui --schema schema.json
 
 ---
 
+## OpenCypher Grammar Notes
+
+gsql2rsql follows the **standard OpenCypher grammar**. Some patterns that might seem intuitive are actually invalid Cypher syntax.
+
+### WHERE Clause Placement
+
+`WHERE` can only appear directly after `MATCH` or `WITH` clauses - **not after `UNWIND`**:
+
+```python
+# ❌ INVALID - WHERE cannot follow UNWIND directly
+sql = graph.transpile("""
+    MATCH (s)-[e:KNOWS*1..3]->(o)
+    UNWIND e AS r
+    WHERE r.weight > 5
+    RETURN r.src, r.dst
+""")
+# Error: no viable alternative at input 'WHERE'
+
+# ✅ CORRECT - Use WITH to enable WHERE filtering
+sql = graph.transpile("""
+    MATCH (s)-[e:KNOWS*1..3]->(o)
+    UNWIND e AS r
+    WITH r WHERE r.weight > 5
+    RETURN r.src, r.dst
+""")
+```
+
+This is standard Cypher behavior (same as Neo4j).
+
+### Reserved Words
+
+Some words are reserved and cannot be used as variable names:
+
+| Reserved Word | Used In | Workaround |
+|---------------|---------|------------|
+| `end` | `CASE ... END` | Use `target`, `endpoint`, `dest` |
+| `start` | Legacy syntax | Use `source`, `origin`, `from_node` |
+| `match` | `MATCH` clause | Use `matched`, `result` |
+| `return` | `RETURN` clause | Use `result`, `output` |
+
+```python
+# ❌ INVALID - 'end' is a reserved word
+sql = graph.transpile("""
+    MATCH (start)-[:KNOWS]->(end)
+    RETURN end.name
+""")
+# Error: no viable alternative at input '...)->(end'
+
+# ✅ CORRECT - Use a different variable name
+sql = graph.transpile("""
+    MATCH (start)-[:KNOWS]->(target)
+    RETURN target.name
+""")
+```
+
+### String Concatenation
+
+Cypher uses `+` for string concatenation, but Spark SQL uses `CONCAT()`. Use the SQL function directly:
+
+```python
+# ❌ May fail in Spark - '+' not supported for strings
+sql = graph.transpile("""
+    MATCH (p:Person)
+    RETURN p.first_name + ' ' + p.last_name AS full_name
+""")
+
+# ✅ CORRECT - Use CONCAT function
+sql = graph.transpile("""
+    MATCH (p:Person)
+    RETURN CONCAT(p.first_name, ' ', p.last_name) AS full_name
+""")
+```
+
+---
+
 ## Limitations
 
 - **Databricks new Runtime** required for `WITH RECURSIVE` and HoF
