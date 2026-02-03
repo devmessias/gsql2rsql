@@ -744,3 +744,356 @@ class TestVLPEdgeCases:
         rows = result.collect()
 
         assert len(rows) == 0, f"Expected 0 rows for isolated node, got {len(rows)}"
+
+
+# =============================================================================
+# WITH + VLP + UNWIND Regression Tests (for fixed bugs)
+# =============================================================================
+class TestWithVLPUnwindRegression:
+    """Regression tests for WITH + VLP + UNWIND bugs that were fixed.
+
+    These tests cover:
+    1. Node resolution after WITH clause in VLP queries
+    2. structured_type preservation when projecting ValueField through WITH
+    3. LATERAL EXPLODE syntax for COLLECT → UNWIND pattern
+    """
+
+    def test_with_before_unwind(self, spark, graph_context):
+        """WITH clause before VLP + UNWIND pattern.
+
+        Bug: Nodes projected through WITH were incorrectly treated as relationships.
+        Fix: column_resolver.py uses entity_info.entity_type == EntityType.NODE
+        """
+        query = """
+        MATCH (s:Person)
+        WHERE s.name = "Alice"
+        WITH s
+        MATCH (s)-[e:KNOWS*1..2]->(o)
+        UNWIND e AS r
+        RETURN DISTINCT r.src AS src, r.dst AS dst
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should successfully resolve s after WITH
+        edges = {(row["src"], row["dst"]) for row in rows}
+        assert len(edges) >= 2
+        assert ("alice", "bob") in edges or ("alice", "eve") in edges
+
+    def test_with_after_unwind_aggregation(self, spark, graph_context):
+        """WITH clause after UNWIND for aggregation.
+
+        Bug: structured_type was not preserved when projecting ValueField through WITH.
+        Fix: operators.py preserves structured_type in ProjectionOperator.
+        """
+        query = """
+        MATCH (s {name: "Alice"})-[e:KNOWS*1..2]->(o)
+        UNWIND e AS r
+        WITH r.dst AS destination, r.weight AS w
+        RETURN destination, SUM(w) AS total
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should successfully access r.dst and r.weight after WITH
+        assert len(rows) >= 1
+        for row in rows:
+            assert row["destination"] is not None
+            assert row["total"] > 0
+
+    def test_with_node_projection_after_vlp(self, spark, graph_context):
+        """WITH projecting node after VLP - tests node resolution fix.
+
+        This is the exact pattern that was failing before the fix.
+        """
+        query = """
+        MATCH (s {name: "Alice"})-[e:KNOWS*1..2]->(o)
+        WITH s, o, e
+        UNWIND e AS r
+        RETURN s.name AS start, o.name AS end, r.weight AS weight
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should successfully access s.name and o.name after WITH
+        for row in rows:
+            assert row["start"] == "Alice"
+            assert row["end"] is not None
+            assert row["weight"] is not None
+
+    def test_collect_then_unwind(self, spark, graph_context):
+        """COLLECT → UNWIND pattern that required LATERAL EXPLODE fix.
+
+        Bug: Comma-join syntax didn't work when EXPLODE referenced columns from subquery.
+        Fix: sql_renderer.py uses LATERAL EXPLODE syntax.
+        """
+        query = """
+        MATCH (n:Person)
+        WHERE n.name IN ["Alice", "Bob", "Carol"]
+        WITH COLLECT(n.name) AS names
+        UNWIND names AS name
+        RETURN name
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should successfully unwind the collected names
+        names = {row["name"] for row in rows}
+        assert "Alice" in names
+        assert "Bob" in names
+        assert "Carol" in names
+
+    def test_with_vlp_multiple_projections(self, spark, graph_context):
+        """Multiple WITH projections with VLP - comprehensive regression test."""
+        query = """
+        MATCH (s:Person)
+        WHERE s.name = "Alice"
+        WITH s
+        MATCH (s)-[e:KNOWS*1..2]->(o)
+        WITH s, o, e, SIZE(e) AS hops
+        WHERE hops = 2
+        UNWIND e AS r
+        RETURN s.name AS start, o.name AS end, r.src AS edge_src, r.dst AS edge_dst
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should return edges for 2-hop paths only
+        for row in rows:
+            assert row["start"] == "Alice"
+            assert row["end"] is not None
+            assert row["edge_src"] is not None
+            assert row["edge_dst"] is not None
+
+    def test_relationships_function_with_path_variable(self, spark, graph_context):
+        """Test relationships(p) function with path variable.
+
+        Bug: Path variable projection used _gsql2rsql_p but CTE produces _gsql2rsql_p_id.
+        Fix: operators.py now uses _gsql2rsql_p_id suffix for path field_name.
+
+        This is the exact pattern from user report:
+        MATCH (root{node_id: "..."})
+        MATCH p = (root)-[*1..3]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        query = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[*1..2]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql = graph_context.transpile(query)
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should return distinct relationship structs
+        assert len(rows) >= 2
+        for row in rows:
+            r = row["r"]
+            assert r is not None
+            # The struct should have src and dst fields
+            assert hasattr(r, "src") or "src" in str(r)
+
+
+# =============================================================================
+# 2.13 Relationships(p) Function Comprehensive Tests
+# =============================================================================
+class TestRelationshipsFunction:
+    """Test relationships(p) function with various patterns.
+
+    The relationships(p) function extracts relationships from a path variable.
+    It should work with:
+    - Anonymous path patterns: p = ()-[*1..3]->()
+    - Named relationship variables: p = ()-[e*1..3]->()
+    - Typed relationships: p = ()-[:KNOWS*1..3]->()
+    - Different depth ranges
+    """
+
+    def test_relationships_path_only_anonymous(self, spark, graph_context):
+        """Test relationships(p) with only path variable (no named rel var).
+
+        Pattern: MATCH p = (root)-[*1..3]->()
+        """
+        query = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[*1..3]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql = graph_context.transpile(query)
+        print(f"\n=== SQL for anonymous VLP ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should return relationships from all paths from Alice
+        assert len(rows) >= 2, f"Expected at least 2 relationships, got {len(rows)}"
+
+    def test_relationships_path_with_named_rel_variable(self, spark, graph_context):
+        """Test relationships(p) with named relationship variable.
+
+        Pattern: MATCH p = (root)-[e*1..3]->()
+        """
+        query = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[e*1..3]->(f)
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql = graph_context.transpile(query)
+        print(f"\n=== SQL for named rel var ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should return relationships from all paths from Alice
+        assert len(rows) >= 2, f"Expected at least 2 relationships, got {len(rows)}"
+
+    def test_relationships_path_with_typed_rel(self, spark, graph_context):
+        """Test relationships(p) with typed relationship.
+
+        Pattern: MATCH p = (root)-[e:KNOWS*1..3]->()
+        """
+        query = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[e:KNOWS*1..3]->(f)
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql = graph_context.transpile(query)
+        print(f"\n=== SQL for typed rel ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should return only KNOWS relationships
+        assert len(rows) >= 2, f"Expected at least 2 relationships, got {len(rows)}"
+
+    def test_relationships_path_different_depths(self, spark, graph_context):
+        """Test relationships(p) with different depth ranges."""
+        # Depth 1..2
+        query1 = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[*1..2]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql1 = graph_context.transpile(query1)
+        print(f"\n=== SQL for depth 1..2 ===\n{sql1}\n")
+        result1 = spark.sql(sql1)
+        rows1 = result1.collect()
+
+        # Depth 2..3
+        query2 = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[*2..3]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r
+        """
+        sql2 = graph_context.transpile(query2)
+        print(f"\n=== SQL for depth 2..3 ===\n{sql2}\n")
+        result2 = spark.sql(sql2)
+        rows2 = result2.collect()
+
+        # Both should work
+        assert len(rows1) >= 2, f"Depth 1..2: Expected >= 2, got {len(rows1)}"
+        assert len(rows2) >= 2, f"Depth 2..3: Expected >= 2, got {len(rows2)}"
+
+    def test_relationships_path_with_return_r_properties(self, spark, graph_context):
+        """Test relationships(p) returning specific properties."""
+        query = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[*1..2]->()
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r.src AS src, r.dst AS dst
+        """
+        sql = graph_context.transpile(query)
+        print(f"\n=== SQL for r.src, r.dst ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # Should have src and dst columns
+        assert len(rows) >= 2
+        for row in rows:
+            assert row["src"] is not None
+            assert row["dst"] is not None
+
+    def test_relationships_path_with_where_filter(self, spark, graph_context):
+        """Test relationships(p) with WHERE filter on unwound relationship.
+
+        Note: WHERE directly after UNWIND isn't supported, so we use WITH clause.
+        """
+        query = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[*1..3]->()
+        UNWIND relationships(p) AS r
+        WITH r
+        WHERE r.weight > 5
+        RETURN DISTINCT r
+        """
+        sql = graph_context.transpile(query)
+        print(f"\n=== SQL for WHERE filter ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        # All returned relationships should have weight > 5
+        for row in rows:
+            r = row["r"]
+            assert r.weight > 5, f"Expected weight > 5, got {r.weight}"
+
+    def test_relationships_vs_unwind_e_equivalence(self, spark, graph_context):
+        """Test that relationships(p) and UNWIND e produce equivalent results.
+
+        When we have: MATCH p = (s)-[e*1..2]->(t)
+        UNWIND relationships(p) AS r should be equivalent to UNWIND e AS r
+        """
+        # Using UNWIND e directly
+        query_e = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[e*1..2]->(target)
+        UNWIND e AS r
+        RETURN DISTINCT r.src AS src, r.dst AS dst
+        ORDER BY src, dst
+        """
+        sql_e = graph_context.transpile(query_e)
+        result_e = spark.sql(sql_e)
+        rows_e = result_e.collect()
+
+        # Using relationships(p)
+        query_p = """
+        MATCH (root {name: "Alice"})
+        MATCH p = (root)-[e*1..2]->(target)
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r.src AS src, r.dst AS dst
+        ORDER BY src, dst
+        """
+        sql_p = graph_context.transpile(query_p)
+        result_p = spark.sql(sql_p)
+        rows_p = result_p.collect()
+
+        # Results should be equivalent
+        set_e = {(row["src"], row["dst"]) for row in rows_e}
+        set_p = {(row["src"], row["dst"]) for row in rows_p}
+
+        assert set_e == set_p, f"UNWIND e: {set_e}, relationships(p): {set_p}"
+
+    def test_relationships_path_single_match(self, spark, graph_context):
+        """Test relationships(p) in single MATCH pattern.
+
+        Pattern: MATCH p = (root)-[*1..2]->() WHERE root.name = 'Alice'
+        """
+        query = """
+        MATCH p = (root)-[*1..2]->()
+        WHERE root.name = "Alice"
+        UNWIND relationships(p) AS r
+        RETURN DISTINCT r.src, r.dst
+        """
+        sql = graph_context.transpile(query)
+        print(f"\n=== SQL for single MATCH ===\n{sql}\n")
+        result = spark.sql(sql)
+        rows = result.collect()
+
+        assert len(rows) >= 2, f"Expected >= 2 relationships, got {len(rows)}"

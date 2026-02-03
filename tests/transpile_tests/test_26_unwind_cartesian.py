@@ -162,8 +162,9 @@ class TestUnwindCartesian:
         sql = self._transpile(cypher)
 
         sql_upper = sql.upper()
-        assert "LATERAL" not in sql_upper, \
-            "Should NOT use deprecated LATERAL keyword"
+        # Note: LATERAL VIEW is deprecated, but LATERAL with TVFs is modern (Databricks 12.2+)
+        assert "LATERAL VIEW" not in sql_upper, \
+            "Should NOT use deprecated LATERAL VIEW syntax"
 
     def test_fraud_cross_reference_watchlists(self) -> None:
         """Test fraud scenario: cross-reference multiple arrays.

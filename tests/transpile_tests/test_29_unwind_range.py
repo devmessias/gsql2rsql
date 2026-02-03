@@ -210,8 +210,12 @@ class TestUnwindRange:
         sql_upper = sql.upper()
         assert "SEQUENCE" in sql_upper
 
-    def test_no_lateral_keyword(self) -> None:
-        """Test that RANGE UNWIND doesn't use deprecated LATERAL."""
+    def test_no_lateral_view_keyword(self) -> None:
+        """Test that RANGE UNWIND doesn't use deprecated LATERAL VIEW.
+
+        Note: LATERAL VIEW is deprecated (Hive syntax), but LATERAL with TVFs
+        is the modern recommended approach in Databricks SQL 12.2+.
+        """
         cypher = """
         MATCH (a:Account)
         UNWIND RANGE(0, 5) AS idx
@@ -220,4 +224,7 @@ class TestUnwindRange:
         sql = self._transpile(cypher)
 
         sql_upper = sql.upper()
-        assert "LATERAL" not in sql_upper
+        assert "LATERAL VIEW" not in sql_upper, \
+            "Should NOT use deprecated LATERAL VIEW syntax"
+        # Modern LATERAL EXPLODE is OK
+        assert "LATERAL EXPLODE" in sql_upper or "EXPLODE" in sql_upper

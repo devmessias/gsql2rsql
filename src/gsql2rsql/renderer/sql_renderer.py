@@ -2658,6 +2658,7 @@ class SQLRenderer:
         from gsql2rsql.parser.ast import (
             QueryExpressionBinary,
             QueryExpressionFunction,
+            QueryExpressionList,
             QueryExpressionParameter,
             QueryExpressionProperty,
             QueryExpressionValue,
@@ -2698,6 +2699,11 @@ class SQLRenderer:
                 return f"-({params[0]})" if params else "-(NULL)"
             # Add more function handlers as needed
             return f"{func.value}({', '.join(params)})"
+
+        elif isinstance(expr, QueryExpressionList):
+            # Render list literals for IN operator: [1, 2, 3] -> (1, 2, 3)
+            items = [self._render_datasource_filter(item, entity_alias) for item in expr.items]
+            return f"({', '.join(items)})"
 
         # For other expression types, fall back to standard rendering
         # This shouldn't happen for simple property filters
@@ -3634,23 +3640,14 @@ class SQLRenderer:
         lines.append(self._render_operator(op.in_operator, depth + 1))
         lines.append(f"{indent}) AS _unwind_source")
 
-        # Check if this is a VLP relationship variable that needs LATERAL VIEW syntax
-        # VLP relationship variables (like 'e' in [e*1..3]) are resolved to
-        # _gsql2rsql_{var}_edges columns which require LATERAL VIEW for proper scoping
-        is_vlp_explode = list_sql.startswith("_gsql2rsql_") and list_sql.endswith("_edges")
-
-        if is_vlp_explode:
-            # Use LATERAL VIEW syntax for VLP relationship variables
-            # This ensures proper column resolution from the _unwind_source subquery
-            lines.append(
-                f"{indent}LATERAL VIEW {explode_func}({list_sql}) _exploded AS {var_name}"
-            )
-        else:
-            # Use standard comma-join TVF syntax for regular UNWIND
-            lines[-1] += ","  # Add comma after _unwind_source
-            lines.append(
-                f"{indent}{explode_func}({list_sql}) AS _exploded({var_name})"
-            )
+        # Use LATERAL correlation with TVF for column resolution from _unwind_source.
+        # The plain comma-join (FROM x, EXPLODE(col)) doesn't work when 'col' is
+        # a column inside subquery 'x'. LATERAL enables the correlation.
+        # See: https://docs.databricks.com/aws/en/sql/language-manual/functions/explode
+        lines[-1] += ","  # Add comma after _unwind_source
+        lines.append(
+            f"{indent}LATERAL {explode_func}({list_sql}) AS _exploded({var_name})"
+        )
 
         return "\n".join(lines)
 

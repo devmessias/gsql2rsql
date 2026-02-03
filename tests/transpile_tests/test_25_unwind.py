@@ -143,12 +143,13 @@ class TestUnwind:
         sql = self._transpile(cypher)
 
         sql_upper = sql.upper()
-        # TVF syntax uses EXPLODE without LATERAL
+        # TVF syntax uses EXPLODE (possibly with LATERAL correlator)
         assert "EXPLODE" in sql_upper, \
             "Should use EXPLODE TVF syntax"
-        # Should NOT use deprecated LATERAL keyword
-        assert "LATERAL" not in sql_upper, \
-            "Should NOT use deprecated LATERAL keyword"
+        # Should NOT use deprecated LATERAL VIEW syntax (Hive)
+        # Note: LATERAL with TVFs is modern and OK per Databricks 12.2+
+        assert "LATERAL VIEW" not in sql_upper, \
+            "Should NOT use deprecated LATERAL VIEW syntax"
 
     def test_unwind_simple_property(self) -> None:
         """Test UNWIND on a simple array property."""
@@ -365,7 +366,8 @@ class TestUnwindBehaviorVariants:
 
         sql_upper = sql.upper()
         assert "EXPLODE" in sql_upper, "Should use EXPLODE function"
-        assert "LATERAL" not in sql_upper, "Should NOT use deprecated LATERAL"
+        # Note: LATERAL VIEW is deprecated, but LATERAL with TVFs is modern (Databricks 12.2+)
+        assert "LATERAL VIEW" not in sql_upper, "Should NOT use deprecated LATERAL VIEW"
 
     def test_unwind_null_drops_rows_default(self) -> None:
         """Test that UNWIND of NULL produces no rows (OpenCypher semantics).

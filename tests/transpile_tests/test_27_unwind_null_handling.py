@@ -190,8 +190,12 @@ class TestUnwindNullHandling:
         assert "EXPLODE" in sql_upper
         assert "COALESCE" in sql_upper
 
-    def test_no_lateral_in_null_handling(self) -> None:
-        """Test that NULL handling patterns don't use deprecated LATERAL."""
+    def test_no_lateral_view_in_null_handling(self) -> None:
+        """Test that NULL handling patterns don't use deprecated LATERAL VIEW.
+
+        Note: LATERAL VIEW is deprecated (Hive syntax), but LATERAL with TVFs
+        is the modern recommended approach in Databricks SQL 12.2+.
+        """
         cypher = """
         MATCH (a:Account)
         UNWIND COALESCE(a.tags, ['default']) AS tag
@@ -200,5 +204,7 @@ class TestUnwindNullHandling:
         sql = self._transpile(cypher)
 
         sql_upper = sql.upper()
-        assert "LATERAL" not in sql_upper, \
-            "Should NOT use deprecated LATERAL keyword"
+        assert "LATERAL VIEW" not in sql_upper, \
+            "Should NOT use deprecated LATERAL VIEW syntax"
+        # Modern LATERAL EXPLODE is OK
+        assert "LATERAL EXPLODE" in sql_upper or "EXPLODE" in sql_upper

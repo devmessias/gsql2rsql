@@ -15,9 +15,12 @@ from gsql2rsql.parser.ast import (
     Entity,
     NodeEntity,
     QueryExpression,
+    QueryExpressionFunction,
+    QueryExpressionProperty,
     RelationshipDirection,
     RelationshipEntity,
 )
+from gsql2rsql.parser.operators import Function
 from gsql2rsql.planner.schema import (
     EntityField,
     EntityType,
@@ -1426,6 +1429,13 @@ class RecursiveTraversalOperator(LogicalOperator):
             path_field = self._create_authoritative_path_field()
             fields.append(path_field)
 
+            # Also add path_edges field when collect_edges is enabled
+            # This is needed for relationships(path) function even without
+            # a named relationship variable (e.g., MATCH p = ()-[*1..3]->())
+            if self.collect_edges:
+                path_edges_field = self._create_path_edges_field()
+                fields.append(path_edges_field)
+
         # Add relationship variable if specified (e.g., 'e' in [e*1..3])
         # The relationship variable represents the list of edges traversed
         # and maps to the path_edges column in the CTE output
@@ -1487,11 +1497,59 @@ class RecursiveTraversalOperator(LogicalOperator):
         path_type = ArrayType(element_type=element_struct)
 
         # Create the ValueField with authoritative type
+        # The field_name uses _id suffix to match renderer output (path array of node IDs)
         return ValueField(
             field_alias=self.path_variable,
-            field_name=f"_gsql2rsql_{self.path_variable}",
+            field_name=f"_gsql2rsql_{self.path_variable}_id",
             data_type=list,  # Legacy type for backward compatibility
             structured_type=path_type,  # AUTHORITATIVE type declaration
+        )
+
+    def _create_path_edges_field(self) -> ValueField:
+        """Create a field for path_edges when using relationships(path).
+
+        When there's a path variable but no named relationship variable,
+        we still need the edges column for relationships(path) function.
+        This field uses a synthetic alias to avoid conflicts.
+
+        The renderer generates the column as _gsql2rsql_{path_variable}_edges.
+
+        Returns:
+            ValueField for the path edges column
+        """
+        from gsql2rsql.planner.data_types import (
+            ArrayType,
+            PrimitiveType,
+            StructField,
+            StructType,
+        )
+
+        # Build the struct fields for edge elements (same as relationship variable)
+        struct_fields: list[StructField] = [
+            StructField(name="src", data_type=PrimitiveType.STRING, sql_name="src"),
+            StructField(name="dst", data_type=PrimitiveType.STRING, sql_name="dst"),
+        ]
+
+        # Add edge properties if available
+        if self.edge_properties:
+            for prop in self.edge_properties:
+                struct_fields.append(
+                    StructField(name=prop, data_type=PrimitiveType.STRING, sql_name=prop)
+                )
+
+        element_struct = StructType(
+            name=f"PathEdge_{self.path_variable}",
+            fields=tuple(struct_fields),
+        )
+        edges_type = ArrayType(element_type=element_struct)
+
+        # Use synthetic alias to distinguish from path_id field
+        # The alias is internal and not exposed to users
+        return ValueField(
+            field_alias=f"_path_edges_{self.path_variable}",
+            field_name=f"_gsql2rsql_{self.path_variable}_edges",
+            data_type=list,
+            structured_type=edges_type,
         )
 
     def _create_authoritative_relationship_variable_field(self) -> ValueField:
@@ -1659,8 +1717,7 @@ class UnwindOperator(UnaryLogicalOperator):
             The element type (typically StructType) if the list expression is
             a VLP relationship variable with known array type, None otherwise.
         """
-        from gsql2rsql.parser.ast import QueryExpressionProperty
-        from gsql2rsql.planner.data_types import ArrayType, DataType
+        from gsql2rsql.planner.data_types import ArrayType
 
         if not self.input_schema or not self.list_expression:
             return None
@@ -1677,6 +1734,41 @@ class UnwindOperator(UnaryLogicalOperator):
                         if fld.structured_type and isinstance(fld.structured_type, ArrayType):
                             # Return the element type (StructType for VLP edges)
                             return fld.structured_type.element_type
+
+        # Handle case where list_expression is relationships(path) function
+        # e.g., UNWIND relationships(p) AS r
+        elif isinstance(self.list_expression, QueryExpressionFunction):
+            if self.list_expression.function == Function.RELATIONSHIPS:
+                # relationships(path) returns an array of edge structs
+                # Extract the path variable from the parameter
+                params = self.list_expression.parameters or []
+                if params and isinstance(params[0], QueryExpressionProperty):
+                    path_var = params[0].variable_name
+                    # Look for the path_edges ValueField in input schema
+                    # Priority 1: Check for exact path_edges field match
+                    for fld in self.input_schema.fields:
+                        if isinstance(fld, ValueField):
+                            # Check for path_edges field with matching path variable
+                            # Naming convention: _path_edges_{path_var}
+                            if (
+                                fld.field_alias == f"_path_edges_{path_var}"
+                                or fld.field_name == f"_gsql2rsql_{path_var}_edges"
+                            ):
+                                if fld.structured_type and isinstance(
+                                    fld.structured_type, ArrayType
+                                ):
+                                    return fld.structured_type.element_type
+                    # Priority 2: Check for relationship variable with edges
+                    # (e.g., 'e' in [e*1..3] which maps to _gsql2rsql_e_edges)
+                    for fld in self.input_schema.fields:
+                        if isinstance(fld, ValueField):
+                            if (
+                                fld.field_name
+                                and fld.field_name.endswith("_edges")
+                                and fld.structured_type
+                                and isinstance(fld.structured_type, ArrayType)
+                            ):
+                                return fld.structured_type.element_type
 
         return None
 

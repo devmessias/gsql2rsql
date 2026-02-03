@@ -38,6 +38,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionValue,
     QueryExpressionWithAlias,
 )
+from gsql2rsql.parser.operators import Function
 from gsql2rsql.planner.column_ref import (
     ColumnRefType,
     ResolvedColumnRef,
@@ -670,6 +671,27 @@ class ColumnResolver:
         elif isinstance(expr, QueryExpressionFunction):
             for param in expr.parameters or []:
                 self._resolve_expression_recursive(param, resolved)
+
+            # Special handling for relationships(path) function:
+            # The function returns path_edges column, not the path_id column.
+            # We need to add an explicit reference to the _edges column for column pruning.
+            if expr.function == Function.RELATIONSHIPS and expr.parameters:
+                param = expr.parameters[0]
+                if isinstance(param, QueryExpressionProperty) and param.property_name is None:
+                    # This is a bare path variable reference like relationships(p)
+                    path_var = param.variable_name
+                    # Create a column reference for the _edges column
+                    # The sql_column_name follows the pattern: _gsql2rsql_{path_var}_edges
+                    edges_col = f"_gsql2rsql_{path_var}_edges"
+                    edges_ref = ResolvedColumnRef(
+                        ref_type=ColumnRefType.VALUE_ALIAS,  # Path edges are a value column
+                        sql_column_name=edges_col,
+                        original_variable=path_var,
+                        original_property="_edges",  # Mark as edges property
+                        derivation=f"relationships({path_var}) -> {edges_col}",
+                    )
+                    resolved.column_refs[f"relationships({path_var})"] = edges_ref
+                    self._result.total_references_resolved += 1
 
         elif isinstance(expr, QueryExpressionAggregationFunction):
             if expr.inner_expression:
