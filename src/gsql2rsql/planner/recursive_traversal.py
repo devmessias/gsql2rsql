@@ -183,6 +183,47 @@ def create_recursive_match_tree(
         if target_node_schema and target_node_schema.node_id_property:
             target_id_col = target_node_schema.node_id_property.property_name
 
+    # Extract edge properties from schema for struct type definition.
+    # This enables property access like r.weight after UNWIND e AS r.
+    edge_props: list[str] = []
+    if graph_schema and edge_types:
+        # Get edge schema for the first edge type (all edges should have same props)
+        edge_schema = None
+        src_name = source_node.entity_name or ""
+        tgt_name = target_node.entity_name or ""
+        if src_name and tgt_name:
+            edge_schema = graph_schema.get_edge_definition(
+                edge_types[0], src_name, tgt_name
+            )
+        if not edge_schema:
+            # Try wildcard lookup
+            edge_schema = graph_schema.get_wildcard_edge_definition()
+        if edge_schema:
+            # Get edge src/dst column names from schema
+            edge_src_col = "src"
+            edge_dst_col = "dst"
+            if edge_schema.source_id_property:
+                edge_src_col = edge_schema.source_id_property.property_name
+            if edge_schema.sink_id_property:
+                edge_dst_col = edge_schema.sink_id_property.property_name
+            # Collect all edge properties except src/dst
+            for prop in edge_schema.properties:
+                if prop.property_name not in (edge_src_col, edge_dst_col):
+                    edge_props.append(prop.property_name)
+    elif graph_schema:
+        # No specific edge types - use wildcard edge
+        edge_schema = graph_schema.get_wildcard_edge_definition()
+        if edge_schema:
+            edge_src_col = "src"
+            edge_dst_col = "dst"
+            if edge_schema.source_id_property:
+                edge_src_col = edge_schema.source_id_property.property_name
+            if edge_schema.sink_id_property:
+                edge_dst_col = edge_schema.sink_id_property.property_name
+            for prop in edge_schema.properties:
+                if prop.property_name not in (edge_src_col, edge_dst_col):
+                    edge_props.append(prop.property_name)
+
     # Determine if we need internal UNION ALL for bidirectional traversal.
     # This is a planner decision based on:
     # - Direction is BOTH (undirected pattern like (a)-[:TYPE*]-(b))
@@ -219,6 +260,8 @@ def create_recursive_match_tree(
         # Optimization: Only collect edges when relationships(path) is used
         collect_edges=path_info.needs_edge_collection,
         collect_nodes=path_info.needs_node_collection,
+        # Edge properties from schema for struct type definition
+        edge_properties=edge_props,
         # Predicate pushdown: Filter edges DURING CTE recursion
         edge_filter=path_info.combined_edge_predicate,
         edge_filter_lambda_var=path_info.edge_lambda_variable,

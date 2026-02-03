@@ -97,8 +97,9 @@ class TestVLPRelationshipVariable:
         """
         sql = graph_context.transpile(query)
 
-        # SQL should reference path_edges AS r
-        assert "path_edges AS r" in sql or "path_edges as r" in sql.lower()
+        # SQL should reference path_edges with the relationship variable's internal name
+        # The internal column is _gsql2rsql_r_edges, which gets aliased to 'r' in final output
+        assert "_gsql2rsql_r_edges" in sql or "path_edges AS _gsql2rsql_r_edges" in sql
 
         result = spark.sql(sql)
         rows = result.collect()
@@ -123,8 +124,9 @@ class TestVLPRelationshipVariable:
         """
         sql = graph_context.transpile(query)
 
-        # SQL should reference path_edges AS r
-        assert "path_edges AS r" in sql or "path_edges as r" in sql.lower()
+        # SQL should reference path_edges with the relationship variable's internal name
+        # The internal column is _gsql2rsql_r_edges, which gets aliased to 'r' in final output
+        assert "_gsql2rsql_r_edges" in sql or "path_edges AS _gsql2rsql_r_edges" in sql
 
         result = spark.sql(sql)
         rows = result.collect()

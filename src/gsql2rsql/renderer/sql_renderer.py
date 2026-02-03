@@ -2139,6 +2139,12 @@ class SQLRenderer:
             if recursive_op.collect_edges:
                 field_lines.append("p.path_edges")
 
+        # Handle relationship_variable separately (e.g., 'e' in [e*1..3])
+        # The relationship variable maps to path_edges with a specific alias
+        if recursive_op.relationship_variable:
+            edges_alias = f"{self.COLUMN_PREFIX}{recursive_op.relationship_variable}_edges"
+            field_lines.append(f"p.path_edges AS {edges_alias}")
+
         for i, field in enumerate(field_lines):
             prefix = " " if i == 0 else ","
             lines.append(f"{indent}  {prefix}{field}")
@@ -3131,8 +3137,16 @@ class SQLRenderer:
                             projected_aliases.add(field_alias)
 
             elif isinstance(field, ValueField):
+                # Use pre-rendered field name if available (VLP relationship variables)
+                # For VLP relationship variables (e.g., 'e' in [e*1..3]), the field_name
+                # is set to _gsql2rsql_{var}_edges, which is the actual SQL column name
+                if field.field_name and field.field_name.startswith(self.COLUMN_PREFIX):
+                    sql_name = field.field_name
+                else:
+                    sql_name = field.field_alias
+
                 # Skip if already projected
-                if field.field_alias in projected_aliases:
+                if sql_name in projected_aliases:
                     continue
                 # Column pruning for value fields
                 # Check both _required_columns (for property refs like `p.name`)
@@ -3142,11 +3156,12 @@ class SQLRenderer:
                     or not self._required_columns
                     or field.field_alias in self._required_columns
                     or field.field_alias in self._required_value_fields
+                    or sql_name in self._required_columns
                 ):
                     # Determine which side of join has this column
-                    if field.field_alias in left_columns:
+                    if sql_name in left_columns:
                         actual_var = left_var
-                    elif field.field_alias in right_columns:
+                    elif sql_name in right_columns:
                         actual_var = right_var
                     else:
                         actual_var = self._determine_column_side(
@@ -3156,8 +3171,8 @@ class SQLRenderer:
                             left_var,
                             right_var,
                         )
-                    fields.append(f"{actual_var}.{field.field_alias} AS {field.field_alias}")
-                    projected_aliases.add(field.field_alias)
+                    fields.append(f"{actual_var}.{sql_name} AS {sql_name}")
+                    projected_aliases.add(sql_name)
 
         # IMPORTANT: Also propagate required columns from the left side that weren't
         # already projected. This handles cases where an entity (like 'c') is in the
@@ -3258,7 +3273,11 @@ class SQLRenderer:
                             self._get_field_name(field.field_alias, encap_field.field_alias)
                         )
             elif isinstance(field, ValueField):
-                columns.add(field.field_alias)
+                # Use pre-rendered field name if available (VLP relationship variables)
+                if field.field_name and field.field_name.startswith(self.COLUMN_PREFIX):
+                    columns.add(field.field_name)
+                else:
+                    columns.add(field.field_alias)
         return columns
 
     def _determine_column_side(
@@ -3613,10 +3632,25 @@ class SQLRenderer:
         lines.append(f"{indent}  ,{var_name}")
         lines.append(f"{indent}FROM (")
         lines.append(self._render_operator(op.in_operator, depth + 1))
-        lines.append(f"{indent}) AS _unwind_source,")
-        lines.append(
-            f"{indent}{explode_func}({list_sql}) AS _exploded({var_name})"
-        )
+        lines.append(f"{indent}) AS _unwind_source")
+
+        # Check if this is a VLP relationship variable that needs LATERAL VIEW syntax
+        # VLP relationship variables (like 'e' in [e*1..3]) are resolved to
+        # _gsql2rsql_{var}_edges columns which require LATERAL VIEW for proper scoping
+        is_vlp_explode = list_sql.startswith("_gsql2rsql_") and list_sql.endswith("_edges")
+
+        if is_vlp_explode:
+            # Use LATERAL VIEW syntax for VLP relationship variables
+            # This ensures proper column resolution from the _unwind_source subquery
+            lines.append(
+                f"{indent}LATERAL VIEW {explode_func}({list_sql}) _exploded AS {var_name}"
+            )
+        else:
+            # Use standard comma-join TVF syntax for regular UNWIND
+            lines[-1] += ","  # Add comma after _unwind_source
+            lines.append(
+                f"{indent}{explode_func}({list_sql}) AS _exploded({var_name})"
+            )
 
         return "\n".join(lines)
 

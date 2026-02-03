@@ -54,7 +54,7 @@ from gsql2rsql.planner.operators import (
     SelectionOperator,
     UnwindOperator,
 )
-from gsql2rsql.planner.schema import EntityField
+from gsql2rsql.planner.schema import EntityField, ValueField
 from gsql2rsql.planner.symbol_table import (
     SymbolEntry,
     SymbolInfo,
@@ -334,16 +334,40 @@ class ColumnResolver:
     def _build_symbols_for_unwind(self, op: UnwindOperator) -> None:
         """Build symbol for an UNWIND operator.
 
+        For VLP relationship variables, the unwound element has struct type
+        with properties like src, dst, weight, etc. This method extracts
+        those properties from the ValueField's structured_type so that
+        property access (e.g., r.src) can be validated.
+
         Args:
             op: The UnwindOperator
         """
+        from gsql2rsql.planner.data_types import StructType
+
+        # Find the ValueField for the unwound variable in output_schema
+        value_field: ValueField | None = None
+        properties: list[str] = []
+        data_type_name = "ANY"
+
+        if op.output_schema:
+            for fld in op.output_schema.fields:
+                if isinstance(fld, ValueField) and fld.field_alias == op.variable_name:
+                    value_field = fld
+                    # Extract properties from structured_type if it's a StructType
+                    if fld.structured_type and isinstance(fld.structured_type, StructType):
+                        properties = [sf.name for sf in fld.structured_type.fields]
+                        data_type_name = fld.structured_type.name or "STRUCT"
+                    break
+
         entry = SymbolEntry(
             name=op.variable_name,
             symbol_type=SymbolType.VALUE,
             definition_operator_id=op.operator_debug_id,
             definition_location=f"UNWIND ... AS {op.variable_name}",
             scope_level=self._symbol_table.current_level,
-            data_type_name="ANY",  # Could infer from list element type
+            data_type_name=data_type_name,
+            value_info=value_field,
+            properties=properties,
         )
 
         self._symbol_table.define_or_update(op.variable_name, entry)
@@ -834,9 +858,10 @@ class ColumnResolver:
                 # PATH variables use their own column naming (e.g., _gsql2rsql_path_id)
                 sql_name = compute_sql_column_name(variable, None)
             elif entry.is_vlp_relationship:
-                # VLP relationship variable (e.g., 'r' in [r*1..3])
-                # Maps to path_edges column from the recursive CTE
-                sql_name = "path_edges"
+                # VLP relationship variable (e.g., 'e' in [e*1..3])
+                # Maps to _gsql2rsql_{variable}_edges column from the recursive CTE
+                # This matches what RecursiveTraversalOperator declares in its output schema
+                sql_name = f"_gsql2rsql_{variable}_edges"
             else:
                 # This is a bare entity reference - mark as potential entity return
                 # (will be used in projection context to expand to all properties)
@@ -856,23 +881,42 @@ class ColumnResolver:
                     if node_def.node_id_property:
                         id_prop_name = node_def.node_id_property.property_name
                     sql_name = compute_sql_column_name(variable, id_prop_name)
+                elif entry.symbol_type == SymbolType.ENTITY and not entry.is_vlp_relationship:
+                    # Schema lookup failed but symbol is marked as ENTITY (not VLP relationship)
+                    # This can happen when nodes are projected through WITH clause after VLP
+                    # Use default node_id column name (commonly "node_id" for GraphContext)
+                    # See docs_help_dev/WITH_VLP_BUG_ANALYSIS.md for details
+                    sql_name = compute_sql_column_name(variable, "node_id")
                 else:
                     # Relationship: use 'src' as the primary identifier column
                     sql_name = compute_sql_column_name(variable, "src")  # _gsql2rsql_{var}_src
 
         else:
-            # Property access (e.g., "p.name")
-            ref_type = ColumnRefType.ENTITY_PROPERTY
+            # Property access (e.g., "p.name" or "r.src")
 
-            # Validate property exists on entity
-            if entry.symbol_type == SymbolType.ENTITY:
-                if entry.properties and property_name not in entry.properties:
-                    # Property doesn't exist - but only warn if we have property info
-                    # Some entities might not have full schema info
-                    if entry.properties:
-                        self._raise_invalid_property_error(expr, entry)
+            # Check if this is a struct field access (e.g., r.src after UNWIND e AS r)
+            if entry.symbol_type == SymbolType.VALUE and entry.properties:
+                # This is a VALUE symbol with known properties (unwound struct)
+                if property_name in entry.properties:
+                    # Valid struct field access - use variable.field syntax
+                    ref_type = ColumnRefType.STRUCT_FIELD
+                    sql_name = f"{variable}.{property_name}"
+                else:
+                    # Invalid property on struct
+                    self._raise_invalid_property_error(expr, entry)
+            else:
+                # Entity property access (e.g., p.name)
+                ref_type = ColumnRefType.ENTITY_PROPERTY
 
-            sql_name = compute_sql_column_name(variable, property_name)
+                # Validate property exists on entity
+                if entry.symbol_type == SymbolType.ENTITY:
+                    if entry.properties and property_name not in entry.properties:
+                        # Property doesn't exist - but only warn if we have property info
+                        # Some entities might not have full schema info
+                        if entry.properties:
+                            self._raise_invalid_property_error(expr, entry)
+
+                sql_name = compute_sql_column_name(variable, property_name)
 
         return ResolvedColumnRef(
             original_variable=variable,

@@ -26,6 +26,7 @@ class ColumnRefType(Enum):
     ENTITY_ID = auto()        # Reference to entity's ID column (e.g., p in RETURN p)
     ENTITY_PROPERTY = auto()  # Reference to entity property (e.g., p.name)
     VALUE_ALIAS = auto()      # Reference to a value alias (e.g., friends after WITH)
+    STRUCT_FIELD = auto()     # Reference to struct field (e.g., r.src after UNWIND e AS r)
     COMPUTED = auto()         # Computed expression result
     LITERAL = auto()          # Literal value (not a reference)
 
