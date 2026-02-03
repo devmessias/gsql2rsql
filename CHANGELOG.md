@@ -2,6 +2,43 @@
 
 
 
+## v0.9.1 (2026-02-03)
+
+### Ci
+
+* ci: remove redundant steps for generating golden files and running tests in release workflow ([`0f51f59`](https://github.com/devmessias/gsql2rsql/commit/0f51f59e2d29f7b0576df03f34060770a1ce3951))
+
+### Fix
+
+* fix: path edges vlp  with WITH prj ([`e1db371`](https://github.com/devmessias/gsql2rsql/commit/e1db37119458ebf78f7addefc9aabff70d61bdb1))
+
+* fix: IN expressions with unwid prj ([`cf6d38f`](https://github.com/devmessias/gsql2rsql/commit/cf6d38fb596766af1a2c0fe2c2489a5ec6487465))
+
+* fix(planner): resolve nodes correctly after WITH clause in VLP queries
+
+Two issues were causing nodes projected through WITH after VLP patterns
+to be incorrectly resolved:
+
+1. column_resolver.py: When schema lookup failed for nodes, the code
+   fell back to relationship handling (using `_src` suffix). Now uses
+   `entity_info.entity_type == EntityType.NODE` to correctly identify
+   nodes and generate `_node_id` suffix.
+
+2. operators.py: ProjectionOperator was not preserving `structured_type`
+   when projecting ValueField through WITH clause, causing UNWIND to
+   lose struct field info. Now preserves structured_type for VLP arrays.
+
+Fixes queries like:
+  MATCH (s)-[e:KNOWS*1..2]-&gt;(o)
+  WITH s, e, o
+  UNWIND e AS r
+  RETURN s.name, r.src, r.dst, o.name
+
+Co-Authored-By: Claude Opus 4.5 &lt;noreply@anthropic.com&gt; ([`f6e4959`](https://github.com/devmessias/gsql2rsql/commit/f6e495991648550a2482ece90715ea02ece342ec))
+
+* fix: VLP raw and VLP with unwind ([`5db1c5c`](https://github.com/devmessias/gsql2rsql/commit/5db1c5cbac9e4ee838f49289def4fb13e48535cf))
+
+
 ## v0.9.0 (2026-02-02)
 
 ### Feature
