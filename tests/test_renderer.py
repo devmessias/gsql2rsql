@@ -21,10 +21,14 @@ from gsql2rsql.planner.schema import (
     Schema,
     ValueField,
 )
-from gsql2rsql.renderer.sql_renderer import (
-    SQLRenderer,
+from gsql2rsql.renderer.dialect import (
     DatabricksSqlType,
     TYPE_TO_SQL_TYPE,
+)
+from gsql2rsql.renderer.expression_renderer import ExpressionRenderer
+from gsql2rsql.renderer.render_context import RenderContext
+from gsql2rsql.renderer.sql_renderer import (
+    SQLRenderer,
 )
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
@@ -68,49 +72,59 @@ class TestSQLRenderer:
         self.renderer = SQLRenderer(
             db_schema_provider=self.schema,
         )
+        # ExpressionRenderer for direct unit tests of expression rendering
+        ctx = RenderContext(
+            db_schema=self.schema,
+            resolution_result=None,
+            required_columns=set(),
+            required_value_fields=set(),
+            enable_column_pruning=True,
+            config={},
+        )
+        self.expr_renderer = ExpressionRenderer(ctx)
 
     def test_render_literal_value_string(self) -> None:
         """Test rendering string literal values (Databricks syntax)."""
         expr = QueryExpressionValue(value="hello", value_type=str)
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         # Databricks uses simple quotes, not N'' prefix
         assert result == "'hello'"
 
     def test_render_literal_value_escaped_string(self) -> None:
         """Test rendering strings with quotes."""
         expr = QueryExpressionValue(value="it's", value_type=str)
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         assert result == "'it''s'"
 
     def test_render_literal_value_integer(self) -> None:
         """Test rendering integer values."""
         expr = QueryExpressionValue(value=42, value_type=int)
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         assert result == "42"
 
     def test_render_literal_value_float(self) -> None:
         """Test rendering float values."""
         expr = QueryExpressionValue(value=3.14, value_type=float)
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         assert result == "3.14"
 
     def test_render_literal_value_boolean_true(self) -> None:
         """Test rendering boolean TRUE (Databricks syntax)."""
         expr = QueryExpressionValue(value=True, value_type=bool)
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         # Databricks uses TRUE/FALSE, not 1/0
         assert result == "TRUE"
 
     def test_render_literal_value_boolean_false(self) -> None:
         """Test rendering boolean FALSE (Databricks syntax)."""
         expr = QueryExpressionValue(value=False, value_type=bool)
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         assert result == "FALSE"
 
     def test_render_literal_value_null(self) -> None:
         """Test rendering NULL values."""
         expr = QueryExpressionValue(value=None, value_type=type(None))
-        result = self.renderer._render_value(expr)
+        result = self.expr_renderer._render_value(expr)
         assert result == "NULL"
 
     def test_render_property_expression(self) -> None:

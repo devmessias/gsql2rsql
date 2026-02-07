@@ -6,8 +6,14 @@ planner/resolver that might create orphaned fields or ambiguous references.
 
 import pytest
 
-from gsql2rsql.renderer.sql_renderer import SQLRenderer
-from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider
+from gsql2rsql.renderer.join_renderer import JoinRenderer
+from gsql2rsql.renderer.render_context import RenderContext
+
+
+def _make_join_renderer():
+    """Create a minimal JoinRenderer for unit testing _determine_column_side."""
+    ctx = RenderContext.__new__(RenderContext)
+    return JoinRenderer(ctx, None, None, None)
 
 
 class TestDefensiveJoinRendering:
@@ -15,9 +21,9 @@ class TestDefensiveJoinRendering:
 
     def test_determine_column_side_left_only(self):
         """Test that field in left side only returns left_var."""
-        renderer = SQLRenderer(db_schema_provider=SimpleSQLSchemaProvider())
+        jr = _make_join_renderer()
 
-        result = renderer._determine_column_side(
+        result = jr._determine_column_side(
             field_alias="p",
             is_from_left=True,
             is_from_right=False,
@@ -29,9 +35,9 @@ class TestDefensiveJoinRendering:
 
     def test_determine_column_side_right_only(self):
         """Test that field in right side only returns right_var."""
-        renderer = SQLRenderer(db_schema_provider=SimpleSQLSchemaProvider())
+        jr = _make_join_renderer()
 
-        result = renderer._determine_column_side(
+        result = jr._determine_column_side(
             field_alias="f",
             is_from_left=False,
             is_from_right=True,
@@ -48,9 +54,9 @@ class TestDefensiveJoinRendering:
         This can happen in rare cases with naming collisions after joins.
         The implementation prioritizes left for consistency with original logic.
         """
-        renderer = SQLRenderer(db_schema_provider=SimpleSQLSchemaProvider())
+        jr = _make_join_renderer()
 
-        result = renderer._determine_column_side(
+        result = jr._determine_column_side(
             field_alias="shared",
             is_from_left=True,
             is_from_right=True,
@@ -69,10 +75,10 @@ class TestDefensiveJoinRendering:
         that might create field references not properly included in schemas.
         Fail-fast with clear error instead of generating invalid SQL.
         """
-        renderer = SQLRenderer(db_schema_provider=SimpleSQLSchemaProvider())
+        jr = _make_join_renderer()
 
         with pytest.raises(RuntimeError) as exc_info:
-            renderer._determine_column_side(
+            jr._determine_column_side(
                 field_alias="orphan",
                 is_from_left=False,
                 is_from_right=False,
@@ -96,10 +102,10 @@ class TestDefensiveJoinRendering:
         3. Point to planner/resolver as the likely source
         4. Suggest the fix (include field in output schemas)
         """
-        renderer = SQLRenderer(db_schema_provider=SimpleSQLSchemaProvider())
+        jr = _make_join_renderer()
 
         with pytest.raises(RuntimeError) as exc_info:
-            renderer._determine_column_side(
+            jr._determine_column_side(
                 field_alias="missing_field",
                 is_from_left=False,
                 is_from_right=False,
