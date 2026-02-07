@@ -2,6 +2,27 @@
 
 
 
+## v0.9.4 (2026-02-07)
+
+### Fix
+
+* fix: fail fast ([`dc4e0d5`](https://github.com/devmessias/gsql2rsql/commit/dc4e0d5670173a1d1ea7ad7d6f17c62f328af1bb))
+
+* fix: list predicate and unwind + distinct generic structs ([`73340a6`](https://github.com/devmessias/gsql2rsql/commit/73340a6a3b419da7b1f8ef214284eeee6e55c3f2))
+
+### Refactor
+
+* refactor: operators, modular ([`edcc2eb`](https://github.com/devmessias/gsql2rsql/commit/edcc2eb7b34afd3d0ed045477f732ee10a96783a))
+
+* refactor: renderer ([`d2d2103`](https://github.com/devmessias/gsql2rsql/commit/d2d210320d9fce982caba0a712b96bb3372072d8))
+
+### Unknown
+
+* tests: new set of tests for list predicate and unwind combinations ([`abf3c50`](https://github.com/devmessias/gsql2rsql/commit/abf3c50c69835b67b4d5759483b2d332f4d3f5a3))
+
+* doc: license.md ([`47c6034`](https://github.com/devmessias/gsql2rsql/commit/47c60341753ed4db1f0378136f721196ffda1d8b))
+
+
 ## v0.9.3 (2026-02-03)
 
 ### Performance
