@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from gsql2rsql.common.exceptions import TranspilerSyntaxErrorException
+from gsql2rsql.common.exceptions import (
+    TranspilerNotSupportedException,
+    TranspilerSyntaxErrorException,
+)
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import (
     Entity,
@@ -227,6 +230,9 @@ class CypherVisitor:
                     parts.append(final_part)
                 current_reading_clauses = []
 
+            elif child_class == "OC_UpdatingClauseContext":
+                self._reject_updating_clauses([child])
+
             # Skip other children like whitespace (SP tokens)
 
         return parts
@@ -260,6 +266,10 @@ class CypherVisitor:
 
     def visit_oC_SinglePartQuery(self, ctx: Any) -> PartialQueryNode:
         """Visit a single part query context."""
+        # Reject write operations early — this transpiler only supports read queries
+        if ctx.oC_UpdatingClause():
+            self._reject_updating_clauses(ctx.oC_UpdatingClause())
+
         part = PartialQueryNode()
 
         # Visit reading clauses (MATCH and UNWIND)
@@ -290,6 +300,28 @@ class CypherVisitor:
             part.limit_clause = result["limit"]
         if "having" in result:
             part.having_expression = result["having"]
+
+    def _reject_updating_clauses(self, updating_clauses: list[Any]) -> None:
+        """Reject write operations — this transpiler only supports read queries."""
+        clause_names = []
+        for clause_ctx in updating_clauses:
+            for child in clause_ctx.children or []:
+                name = child.__class__.__name__
+                if "Create" in name:
+                    clause_names.append("CREATE")
+                elif "Merge" in name:
+                    clause_names.append("MERGE")
+                elif "Delete" in name:
+                    clause_names.append("DELETE")
+                elif "Set" in name:
+                    clause_names.append("SET")
+                elif "Remove" in name:
+                    clause_names.append("REMOVE")
+        clauses_str = ", ".join(clause_names) if clause_names else "write operations"
+        raise TranspilerNotSupportedException(
+            f"{clauses_str} not supported. "
+            f"This transpiler only handles read queries (MATCH ... RETURN)."
+        )
 
     # =========================================================================
     # Reading clause visitors

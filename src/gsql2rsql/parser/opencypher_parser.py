@@ -2,6 +2,7 @@
 
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import QueryNode, SingleQueryNode
+from gsql2rsql.parser.error_listener import SyntaxErrorCollector
 
 
 class OpenCypherParser:
@@ -49,15 +50,28 @@ class OpenCypherParser:
                 "in the grammar directory."
             ) from e
 
-        # Create lexer and parser
+        # Create lexer and parser with custom error collector
         input_stream = InputStream(query_string)
         lexer = CypherLexer(input_stream)
         token_stream = CommonTokenStream(lexer)
         parser = CypherParser(token_stream)
 
-        # Visit the parse tree
+        # Replace default stderr error listeners with our collector
+        error_collector = SyntaxErrorCollector()
+        lexer.removeErrorListeners()
+        lexer.addErrorListener(error_collector)
+        parser.removeErrorListeners()
+        parser.addErrorListener(error_collector)
+
+        # Parse — errors are collected, not printed
+        tree = parser.oC_Cypher()
+
+        # Fail fast with structured error if ANTLR found syntax problems
+        error_collector.raise_if_errors(query_string)
+
+        # Visit the parse tree to build our AST
         visitor = CypherVisitor(self._logger)
-        result = visitor.visit(parser.oC_Cypher())
+        result = visitor.visit(tree)
 
         if isinstance(result, QueryNode):
             return result
