@@ -22,6 +22,7 @@ from gsql2rsql.renderer.schema_provider import (
 from tests.utils.sql_assertions import (
     assert_has_select,
     assert_has_recursive_cte,
+    assert_has_distinct,
     assert_cycle_detection,
     SQLStructure,
 )
@@ -188,4 +189,4 @@ class TestMultiEdgeTypeSupport:
         sql = self._transpile(cypher)
 
         assert_has_recursive_cte(sql)
-        assert "DISTINCT" in sql.upper()
+        assert_has_distinct(sql)

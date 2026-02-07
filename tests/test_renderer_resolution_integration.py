@@ -539,7 +539,8 @@ class TestRendererEdgeCases:
         renderer = SQLRenderer(db_schema_provider=movie_schema_provider)
         sql = renderer.render_plan(plan)
 
-        assert "DISTINCT" in sql
+        # DISTINCT uses GROUP BY TO_JSON workaround for Spark MAP type compat
+        assert "GROUP BY" in sql and "FIRST(" in sql
 
     def test_limit_with_resolution(self, movie_schema_provider) -> None:
         """LIMIT should work with resolution."""

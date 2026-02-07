@@ -532,4 +532,5 @@ class TestUnwindBehaviorVariants:
 
         sql_upper = sql.upper()
         assert "EXPLODE" in sql_upper
-        assert "DISTINCT" in sql_upper, "Should have DISTINCT"
+        # DISTINCT on bare UNWIND vars uses GROUP BY TO_JSON workaround
+        assert "GROUP BY" in sql_upper, "Should have GROUP BY (DISTINCT workaround)"

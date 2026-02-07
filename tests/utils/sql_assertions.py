@@ -73,9 +73,13 @@ class SQLStructure:
             matches = re.findall(cte_pattern, sql, re.IGNORECASE)
             self.cte_names = matches
 
-        # Check for DISTINCT
+        # Check for DISTINCT (either SELECT DISTINCT or GROUP BY TO_JSON workaround)
         self.has_distinct = bool(
             re.search(r"\bSELECT\s+DISTINCT\b", sql, re.IGNORECASE)
+            or (
+                re.search(r"\bFIRST\(", sql, re.IGNORECASE)
+                and re.search(r"\bGROUP\s+BY\s+TO_JSON\(", sql, re.IGNORECASE)
+            )
         )
 
         # Check for WHERE

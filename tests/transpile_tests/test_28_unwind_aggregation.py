@@ -173,7 +173,8 @@ class TestUnwindAggregation:
 
         sql_upper = sql.upper()
         assert "EXPLODE" in sql_upper
-        assert "DISTINCT" in sql_upper
+        # DISTINCT on bare UNWIND vars uses GROUP BY TO_JSON workaround
+        assert "GROUP BY" in sql_upper
 
     def test_unwind_count_distinct(self) -> None:
         """Test UNWIND followed by COUNT DISTINCT."""

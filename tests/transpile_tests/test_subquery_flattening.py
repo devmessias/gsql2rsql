@@ -329,7 +329,12 @@ class TestFlatteningTradeoffs:
         """
         sql = self._transpile(query, optimize=True)
 
-        assert "DISTINCT" in sql.upper()
+        # DISTINCT workaround uses GROUP BY TO_JSON instead of SELECT DISTINCT
+        sql_upper = sql.upper()
+        has_distinct = "DISTINCT" in sql_upper or (
+            "FIRST(" in sql and "GROUP BY" in sql_upper and "TO_JSON" in sql_upper
+        )
+        assert has_distinct, "Expected DISTINCT or GROUP BY TO_JSON workaround"
 
     def test_limit_preserved(self):
         """LIMIT should be preserved in optimized SQL."""

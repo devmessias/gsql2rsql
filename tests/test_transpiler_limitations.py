@@ -550,7 +550,6 @@ class TestWithChainingTypePreservation:
         rows = result.collect()
         assert len(rows) >= 1
 
-    @pytest.mark.xfail(reason="WITH UNWIND combination with struct access not implemented")
     def test_with_unwind_combination(self, spark, graph_context):
         """WITH clause with UNWIND and struct property access."""
         query = """
@@ -748,7 +747,6 @@ class TestComplexRealWorldPatterns:
         except Exception as e:
             pytest.skip(f"Pattern not supported: {e}")
 
-    @pytest.mark.xfail(reason="Complex path analysis with UNWIND not implemented")
     def test_path_weight_analysis(self, spark, graph_context):
         """Analyze path weights with UNWIND and aggregation."""
         query = """

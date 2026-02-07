@@ -428,10 +428,13 @@ class TestEntityStructEdgeCases:
 
         print(f"\n=== SQL ===\n{sql}")
 
-        assert has_named_struct(sql, "a"), (
-            "RETURN DISTINCT a should generate NAMED_STRUCT(...) AS a"
+        # DISTINCT on structs uses GROUP BY TO_JSON workaround for Spark MAP type compat
+        assert "NAMED_STRUCT" in sql, (
+            "RETURN DISTINCT a should generate NAMED_STRUCT"
         )
-        assert "DISTINCT" in sql.upper(), "Should have DISTINCT keyword"
+        assert "GROUP BY" in sql.upper(), "Should have GROUP BY (DISTINCT workaround)"
+        assert "TO_JSON" in sql.upper(), "Should use TO_JSON for grouping"
+        assert "FIRST(" in sql, "Should wrap in FIRST() for GROUP BY"
 
     def test_return_entity_with_order_by(self, graph_context):
         """RETURN a ORDER BY a.name should generate STRUCT.

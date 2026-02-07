@@ -354,10 +354,14 @@ class TestOrEdgeWhereEdgeCases:
         assert not edge_filter_match, "Single edge type should not have OR"
 
     def test_or_edge_with_edge_variable(self, triple_store_graph):
-        """OR edge with relationship variable should preserve filters."""
+        """OR edge with relationship variable should preserve filters.
+
+        Note: type(r) is not yet supported by the transpiler (Function.INVALID).
+        This test focuses on OR edge filter, not the type() function.
+        """
         sql = triple_store_graph.transpile("""
             MATCH (p:Person)-[r:KNOWS|WORKS_AT]->(target)
-            RETURN p.name, type(r)
+            RETURN p.name, r.weight
         """)
 
         # Should have OR edge filter
