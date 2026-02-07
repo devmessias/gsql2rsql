@@ -2691,14 +2691,35 @@ class SQLRenderer:
                 self._render_datasource_filter(p, entity_alias)
                 for p in expr.parameters
             ]
-            # Use the standard function rendering logic
             func = expr.function
             if func == Function.NOT:
                 return f"NOT ({params[0]})" if params else "NOT (NULL)"
             elif func == Function.NEGATIVE:
                 return f"-({params[0]})" if params else "-(NULL)"
-            # Add more function handlers as needed
-            return f"{func.value}({', '.join(params)})"
+            elif func == Function.IS_NULL:
+                return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
+            elif func == Function.IS_NOT_NULL:
+                return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
+            elif func == Function.COALESCE:
+                if params:
+                    return f"COALESCE({', '.join(params)})"
+                return "NULL"
+            elif func == Function.STRING_STARTS_WITH:
+                if len(params) >= 2:
+                    return f"STARTSWITH({params[0]}, {params[1]})"
+                return "NULL"
+            elif func == Function.STRING_ENDS_WITH:
+                if len(params) >= 2:
+                    return f"ENDSWITH({params[0]}, {params[1]})"
+                return "NULL"
+            elif func == Function.STRING_CONTAINS:
+                if len(params) >= 2:
+                    return f"CONTAINS({params[0]}, {params[1]})"
+                return "NULL"
+            raise NotImplementedError(
+                f"_render_datasource_filter: unsupported function {func!r}. "
+                f"Add an explicit handler for this function."
+            )
 
         elif isinstance(expr, QueryExpressionList):
             # Render list literals for IN operator: [1, 2, 3] -> (1, 2, 3)
@@ -3665,13 +3686,21 @@ class SQLRenderer:
         if not op.in_operator:
             return ""
 
-        # Render SELECT clause
-        distinct = "DISTINCT " if op.is_distinct else ""
-        lines.append(f"{indent}SELECT {distinct}")
-
         # Render projection fields
         # Note: Check for aggregation first since we need it for alias logic
         has_aggregation = any(self._has_aggregation(expr) for _, expr in op.projections)
+
+        # Detect if we need DISTINCT → GROUP BY TO_JSON workaround.
+        # Spark cannot do SELECT DISTINCT on columns with MAP type (including
+        # STRUCTs containing MAP fields, or bare MAP columns from property access).
+        # Always use GROUP BY TO_JSON(NAMED_STRUCT('_', col)) instead of DISTINCT.
+        # The NAMED_STRUCT wrapper ensures TO_JSON works on all types (scalar, struct, map).
+        use_distinct_json = op.is_distinct and not has_aggregation
+        group_by_json_exprs: list[str] = []
+
+        # Render SELECT clause
+        distinct = "DISTINCT " if op.is_distinct and not use_distinct_json else ""
+        lines.append(f"{indent}SELECT {distinct}")
 
         # Get resolved projections for entity struct rendering
         resolved_projections_map: dict[str, "ResolvedProjection"] = {}
@@ -3725,6 +3754,12 @@ class SQLRenderer:
                 # Use user-provided alias (normal behavior)
                 output_alias = alias
 
+            # If using DISTINCT→GROUP BY TO_JSON workaround, wrap each column.
+            # Use NAMED_STRUCT wrapper so TO_JSON works on ALL types (including scalars).
+            if use_distinct_json:
+                group_by_json_exprs.append(f"TO_JSON(NAMED_STRUCT('_', {rendered}))")
+                rendered = f"FIRST({rendered})"
+
             lines.append(f"{indent}  {prefix}{rendered} AS {output_alias}")
 
         # Bug #1 Fix: When projecting entity variables through a WITH clause,
@@ -3777,6 +3812,12 @@ class SQLRenderer:
         if op.filter_expression:
             filter_sql = self._render_expression(op.filter_expression, op)
             lines.append(f"{indent}WHERE {filter_sql}")
+
+        # GROUP BY for DISTINCT workaround (replaces SELECT DISTINCT with GROUP BY TO_JSON)
+        # This handles Spark's inability to compare MAP types in DISTINCT operations
+        if use_distinct_json and group_by_json_exprs:
+            group_by = ", ".join(group_by_json_exprs)
+            lines.append(f"{indent}GROUP BY {group_by}")
 
         # Group by for aggregations
         if has_aggregation:
@@ -4223,10 +4264,21 @@ class SQLRenderer:
         return is_timestamp_property(left) or is_timestamp_property(right)
 
     def _render_function(
-        self, expr: QueryExpressionFunction, context_op: LogicalOperator
+        self,
+        expr: QueryExpressionFunction,
+        context_op: LogicalOperator,
+        pre_rendered_params: list[str] | None = None,
     ) -> str:
-        """Render a function call (Databricks SQL syntax)."""
-        params = [self._render_expression(p, context_op) for p in expr.parameters]
+        """Render a function call (Databricks SQL syntax).
+
+        Args:
+            pre_rendered_params: If provided, use these instead of rendering
+                expr.parameters via _render_expression. Used by list predicate
+                filter rendering to pass lambda-aware parameter renderings.
+        """
+        params = pre_rendered_params if pre_rendered_params is not None else [
+            self._render_expression(p, context_op) for p in expr.parameters
+        ]
 
         func = expr.function
         if func == Function.NOT:
@@ -4247,6 +4299,10 @@ class SQLRenderer:
             return f"CAST({params[0]} AS DOUBLE)" if params else "NULL"
         elif func == Function.TO_BOOLEAN:
             return f"CAST({params[0]} AS BOOLEAN)" if params else "NULL"
+        elif func == Function.TO_LONG:
+            return f"CAST({params[0]} AS BIGINT)" if params else "NULL"
+        elif func == Function.TO_DOUBLE:
+            return f"CAST({params[0]} AS DOUBLE)" if params else "NULL"
         elif func == Function.STRING_TO_UPPER:
             return f"UPPER({params[0]})" if params else "NULL"
         elif func == Function.STRING_TO_LOWER:
@@ -4465,9 +4521,10 @@ class SQLRenderer:
                 return f"DATE_TRUNC({params[0]}, {params[1]})"
             return "NULL"
         else:
-            # Unknown function - pass through with original name
-            params_str = ", ".join(params)
-            return f"{func.name}({params_str})"
+            raise NotImplementedError(
+                f"_render_function: unsupported function {func!r}. "
+                f"Add an explicit handler for this function."
+            )
 
     def _render_aggregation(
         self, expr: QueryExpressionAggregationFunction, context_op: LogicalOperator
@@ -4748,8 +4805,11 @@ class SQLRenderer:
                 return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
             elif func == Function.IS_NOT_NULL:
                 return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
-            # Add other functions as needed
-            return self._render_function(expr, context_op)
+            # For all other functions, reuse _render_function with the
+            # lambda-aware pre-rendered params so that loop variable property
+            # accesses (e.g., rel.status inside coalesce()) render correctly
+            # as struct field access instead of prefixed column names.
+            return self._render_function(expr, context_op, pre_rendered_params=params)
         else:
             # For other expression types, use default rendering
             return self._render_expression(expr, context_op)
@@ -5008,8 +5068,10 @@ class SQLRenderer:
             if len(params) >= 2:
                 return f"ROUND({params[0]}, {params[1]})"
             return f"ROUND({params[0]})" if params else "NULL"
-        # Default: return function call syntax
-        return f"{func.name}({', '.join(params)})"
+        raise NotImplementedError(
+            f"_render_function_with_params: unsupported function {func!r}. "
+            f"Add an explicit handler for this function."
+        )
 
     def _render_exists(
         self, expr: QueryExpressionExists, context_op: LogicalOperator
@@ -5643,10 +5705,31 @@ class SQLRenderer:
                 return "INTERVAL 0 DAY"
             elif func == Function.NOT:
                 return f"NOT ({params[0]})" if params else "NOT (NULL)"
+            elif func == Function.IS_NULL:
+                return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
+            elif func == Function.IS_NOT_NULL:
+                return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
+            elif func == Function.COALESCE:
+                if params:
+                    return f"COALESCE({', '.join(params)})"
+                return "NULL"
+            elif func == Function.STRING_STARTS_WITH:
+                if len(params) >= 2:
+                    return f"STARTSWITH({params[0]}, {params[1]})"
+                return "NULL"
+            elif func == Function.STRING_ENDS_WITH:
+                if len(params) >= 2:
+                    return f"ENDSWITH({params[0]}, {params[1]})"
+                return "NULL"
+            elif func == Function.STRING_CONTAINS:
+                if len(params) >= 2:
+                    return f"CONTAINS({params[0]}, {params[1]})"
+                return "NULL"
             else:
-                # Default function rendering
-                func_name = func.name if func else "UNKNOWN"
-                return f"{func_name}({', '.join(params)})"
+                raise NotImplementedError(
+                    f"_render_edge_filter_expression: unsupported function {func!r}. "
+                    f"Add an explicit handler for this function."
+                )
 
         elif isinstance(expr, QueryExpressionValue):
             # Render literal values

@@ -865,6 +865,27 @@ class CypherVisitor:
                             ),
                             data_type=bool,
                         )
+                elif "StringPredicateExpression" in child_name:
+                    # STARTS WITH, ENDS WITH, CONTAINS
+                    # Grammar: ( SP STARTS SP WITH | SP ENDS SP WITH | SP CONTAINS ) SP? oC_AddOrSubtractExpression
+                    right_expr = self.visit(child.oC_AddOrSubtractExpression())
+                    text = child.getText().upper()
+                    if "STARTSWITH" in text or "STARTS" in text:
+                        func = Function.STRING_STARTS_WITH
+                    elif "ENDSWITH" in text or "ENDS" in text:
+                        func = Function.STRING_ENDS_WITH
+                    else:
+                        func = Function.STRING_CONTAINS
+                    params: list[QueryExpression] = []
+                    if isinstance(result, QueryExpression):
+                        params.append(result)
+                    if isinstance(right_expr, QueryExpression):
+                        params.append(right_expr)
+                    result = QueryExpressionFunction(
+                        function=func,
+                        parameters=params,
+                        data_type=bool,
+                    )
                 elif "ListPredicateExpression" in child_name:
                     # IN operator: a.id IN $watchlist or a.id IN [1, 2, 3]
                     # The child contains: SP IN SP? oC_AddOrSubtractExpression

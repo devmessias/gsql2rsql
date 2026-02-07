@@ -1780,6 +1780,7 @@ class UnwindOperator(UnaryLogicalOperator):
             The element type (typically StructType) if the list expression is
             a VLP relationship variable with known array type, None otherwise.
         """
+        from gsql2rsql.parser.ast import QueryExpressionListComprehension
         from gsql2rsql.planner.data_types import ArrayType
 
         if not self.input_schema or not self.list_expression:
@@ -1832,6 +1833,20 @@ class UnwindOperator(UnaryLogicalOperator):
                                 and isinstance(fld.structured_type, ArrayType)
                             ):
                                 return fld.structured_type.element_type
+
+        # Handle case where list_expression is a list comprehension
+        # e.g., UNWIND [r IN relationships(p) WHERE r.prop <> 'x'] AS r
+        # A filter-only comprehension preserves the element type of the source list.
+        # A comprehension with a map expression changes the type (return None).
+        elif isinstance(self.list_expression, QueryExpressionListComprehension):
+            if self.list_expression.map_expression is None:
+                # Filter-only: element type is same as source list's element type.
+                # Recursively infer from the inner list_expression.
+                inner = UnwindOperator.__new__(UnwindOperator)
+                inner.variable_name = self.variable_name
+                inner.list_expression = self.list_expression.list_expression
+                inner.input_schema = self.input_schema
+                return inner._infer_element_type()
 
         return None
 
