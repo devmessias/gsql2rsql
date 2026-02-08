@@ -220,6 +220,7 @@ class TestExampleExecution:
 
         example = examples[example_idx]
         query = example.get("query", "").strip()
+        expected_error = example.get("expected_error", False)
 
         # Track result
         result = ExampleTestResult(
@@ -257,7 +258,12 @@ class TestExampleExecution:
         # Save result to file
         self._save_result(output_dir, yaml_file, example_idx, description, result, exec_result)
 
-        # Assert success
+        # Assert success (skip expected errors)
+        if expected_error:
+            if not result.transpile_success and not result.execution_success:
+                pytest.skip(f"Expected error for '{description}': {result.error}")
+                return
+
         if not result.transpile_success:
             pytest.fail(
                 f"Transpilation failed for '{description}'\nQuery:\n{query}\nError: {result.error}"

@@ -46,7 +46,9 @@ from gsql2rsql.planner.operators import (
 from gsql2rsql.planner.schema import EntityField, EntityType
 from gsql2rsql.renderer.dialect import (
     AGGREGATION_PATTERNS,
+    FUNCTION_TEMPLATES,
     OPERATOR_PATTERNS,
+    render_from_template,
 )
 
 from typing import TYPE_CHECKING
@@ -410,6 +412,10 @@ class ExpressionRenderer:
     ) -> str:
         """Render a function call (Databricks SQL syntax).
 
+        Simple functions (55 of 67) are dispatched via the declarative
+        FUNCTION_TEMPLATES registry in dialect.py.  Complex functions that
+        need AST inspection (DATE, DATETIME, DURATION, etc.) remain here.
+
         Args:
             pre_rendered_params: If provided, use these instead of rendering
                 expr.parameters via _render_expression. Used by list predicate
@@ -420,180 +426,42 @@ class ExpressionRenderer:
         ]
 
         func = expr.function
-        if func == Function.NOT:
-            return f"NOT ({params[0]})" if params else "NOT (NULL)"
-        elif func == Function.NEGATIVE:
-            return f"-({params[0]})" if params else "-NULL"
-        elif func == Function.POSITIVE:
-            return f"+({params[0]})" if params else "+NULL"
-        elif func == Function.IS_NULL:
-            return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
-        elif func == Function.IS_NOT_NULL:
-            return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
-        elif func == Function.TO_STRING:
-            return f"CAST({params[0]} AS STRING)" if params else "NULL"
-        elif func == Function.TO_INTEGER:
-            return f"CAST({params[0]} AS BIGINT)" if params else "NULL"
-        elif func == Function.TO_FLOAT:
-            return f"CAST({params[0]} AS DOUBLE)" if params else "NULL"
-        elif func == Function.TO_BOOLEAN:
-            return f"CAST({params[0]} AS BOOLEAN)" if params else "NULL"
-        elif func == Function.TO_LONG:
-            return f"CAST({params[0]} AS BIGINT)" if params else "NULL"
-        elif func == Function.TO_DOUBLE:
-            return f"CAST({params[0]} AS DOUBLE)" if params else "NULL"
-        elif func == Function.STRING_TO_UPPER:
-            return f"UPPER({params[0]})" if params else "NULL"
-        elif func == Function.STRING_TO_LOWER:
-            return f"LOWER({params[0]})" if params else "NULL"
-        elif func == Function.STRING_TRIM:
-            return f"TRIM({params[0]})" if params else "NULL"
-        elif func == Function.STRING_LTRIM:
-            return f"LTRIM({params[0]})" if params else "NULL"
-        elif func == Function.STRING_RTRIM:
-            return f"RTRIM({params[0]})" if params else "NULL"
-        elif func == Function.STRING_SIZE:
-            return f"LENGTH({params[0]})" if params else "NULL"
-        elif func == Function.STRING_LEFT:
-            return f"LEFT({params[0]}, {params[1]})" if len(params) >= 2 else "NULL"
-        elif func == Function.STRING_RIGHT:
-            return f"RIGHT({params[0]}, {params[1]})" if len(params) >= 2 else "NULL"
-        elif func == Function.STRING_STARTS_WITH:
-            if len(params) >= 2:
-                return f"STARTSWITH({params[0]}, {params[1]})"
-            return "NULL"
-        elif func == Function.STRING_ENDS_WITH:
-            if len(params) >= 2:
-                return f"ENDSWITH({params[0]}, {params[1]})"
-            return "NULL"
-        elif func == Function.STRING_CONTAINS:
-            if len(params) >= 2:
-                return f"CONTAINS({params[0]}, {params[1]})"
-            return "NULL"
-        elif func == Function.COALESCE:
-            if params:
-                return f"COALESCE({', '.join(params)})"
-            return "NULL"
-        elif func == Function.RANGE:
-            # Cypher: RANGE(start, end[, step]) -> Databricks: SEQUENCE(start, end[, step])
-            # Note: Cypher RANGE is inclusive, Databricks SEQUENCE is inclusive
-            if len(params) >= 2:
-                return f"SEQUENCE({', '.join(params)})"
-            return "ARRAY()"
-        elif func == Function.SIZE:
-            # SIZE works for both strings (LENGTH) and arrays (SIZE) in Databricks
-            return f"SIZE({params[0]})" if params else "0"
-        elif func == Function.LENGTH:
-            # LENGTH(path) returns number of relationships (edges) in the path
-            # In our CTE, path is an array of node IDs, so:
-            #   - SIZE(path) = number of nodes
-            #   - SIZE(path) - 1 = number of edges (hops)
-            # Example: path A→B→C has nodes [A,B,C], SIZE=3, edges=2
-            return f"(SIZE({params[0]}) - 1)" if params else "0"
-        elif func == Function.NODES:
-            # nodes(path) -> path (array of node IDs from recursive CTE)
-            # The parameter should be a path variable reference
-            # Use the rendered parameter to get the actual column name
-            if params:
-                # The parameter is the path variable's SQL column name
-                # For example, if path renders to "_gsql2rsql_path_id", use that
-                # If it renders to "path", use that
-                return params[0]
-            return "ARRAY()"
+
+        # --- Data-driven dispatch for simple functions ---
+        tmpl = FUNCTION_TEMPLATES.get(func)
+        if tmpl is not None:
+            return render_from_template(tmpl, params)
+
+        # --- Complex handlers requiring AST inspection ---
+        if func == Function.NODES:
+            # nodes(path) → pass-through path column
+            return params[0] if params else "ARRAY()"
         elif func == Function.RELATIONSHIPS:
-            # relationships(path) -> path_edges (array of edge structs from CTE)
-            # The parameter should be a path variable reference
-            # Derive the edges column name from the path column name
+            # relationships(path) → derive edges column from path column
             if params:
-                # The parameter is the path variable's SQL column name
-                # Replace any "_id" or "_path" suffix with "_edges" to get the edges column
                 path_col = params[0]
-                # Handle different naming conventions:
-                # - "path" -> "path_edges"
-                # - "_gsql2rsql_path_id" -> "_gsql2rsql_path_edges"
-                # - "_gsql2rsql_path" -> "_gsql2rsql_path_edges"
                 if path_col.endswith("_id"):
-                    # Replace "_id" with "_edges"
                     return path_col[:-3] + "_edges"
                 elif "_path" in path_col and not path_col.endswith("_edges"):
-                    # Add "_edges" suffix
                     return path_col + "_edges"
                 else:
-                    # Fallback: append "_edges"
                     return path_col + "_edges"
             return "ARRAY()"
-        # Math functions - direct mapping to Databricks SQL
-        elif func == Function.ABS:
-            return f"ABS({params[0]})" if params else "NULL"
-        elif func == Function.CEIL:
-            return f"CEIL({params[0]})" if params else "NULL"
-        elif func == Function.FLOOR:
-            return f"FLOOR({params[0]})" if params else "NULL"
-        elif func == Function.ROUND:
-            if len(params) >= 2:
-                return f"ROUND({params[0]}, {params[1]})"
-            return f"ROUND({params[0]})" if params else "NULL"
-        elif func == Function.SQRT:
-            return f"SQRT({params[0]})" if params else "NULL"
-        elif func == Function.SIGN:
-            return f"SIGN({params[0]})" if params else "NULL"
-        elif func == Function.LOG:
-            # Cypher log() is natural log -> Databricks LN()
-            return f"LN({params[0]})" if params else "NULL"
-        elif func == Function.LOG10:
-            return f"LOG10({params[0]})" if params else "NULL"
-        elif func == Function.EXP:
-            return f"EXP({params[0]})" if params else "NULL"
-        elif func == Function.SIN:
-            return f"SIN({params[0]})" if params else "NULL"
-        elif func == Function.COS:
-            return f"COS({params[0]})" if params else "NULL"
-        elif func == Function.TAN:
-            return f"TAN({params[0]})" if params else "NULL"
-        elif func == Function.ASIN:
-            return f"ASIN({params[0]})" if params else "NULL"
-        elif func == Function.ACOS:
-            return f"ACOS({params[0]})" if params else "NULL"
-        elif func == Function.ATAN:
-            return f"ATAN({params[0]})" if params else "NULL"
-        elif func == Function.ATAN2:
-            if len(params) >= 2:
-                return f"ATAN2({params[0]}, {params[1]})"
-            return "NULL"
-        elif func == Function.DEGREES:
-            return f"DEGREES({params[0]})" if params else "NULL"
-        elif func == Function.RADIANS:
-            return f"RADIANS({params[0]})" if params else "NULL"
-        elif func == Function.RAND:
-            return "RAND()"
-        elif func == Function.PI:
-            return "PI()"
-        elif func == Function.E:
-            return "E()"
-        # Date/Time functions
         elif func == Function.DATE:
-            # date() -> CURRENT_DATE()
-            # date({year: y, month: m, day: d}) -> MAKE_DATE(y, m, d)
             if not params:
                 return "CURRENT_DATE()"
-            # If first param is a map literal, we need to handle it specially
             first_param = expr.parameters[0] if expr.parameters else None
             if isinstance(first_param, QueryExpressionMapLiteral):
                 return self._render_date_from_map(first_param, context_op)
-            # date(string) - parse a date string
             return f"TO_DATE({params[0]})"
         elif func == Function.DATETIME:
-            # datetime() -> CURRENT_TIMESTAMP()
-            # datetime({...}) -> construct from map
             if not params:
                 return "CURRENT_TIMESTAMP()"
             first_param = expr.parameters[0] if expr.parameters else None
             if isinstance(first_param, QueryExpressionMapLiteral):
                 return self._render_datetime_from_map(first_param, context_op)
-            # datetime(string) - parse a timestamp string
             return f"TO_TIMESTAMP({params[0]})"
         elif func == Function.LOCALDATETIME:
-            # localdatetime() -> CURRENT_TIMESTAMP()
             if not params:
                 return "CURRENT_TIMESTAMP()"
             first_param = expr.parameters[0] if expr.parameters else None
@@ -601,7 +469,6 @@ class ExpressionRenderer:
                 return self._render_datetime_from_map(first_param, context_op)
             return f"TO_TIMESTAMP({params[0]})"
         elif func == Function.TIME:
-            # time() -> DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')
             if not params:
                 return "DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')"
             first_param = expr.parameters[0] if expr.parameters else None
@@ -609,13 +476,10 @@ class ExpressionRenderer:
                 return self._render_time_from_map(first_param, context_op)
             return f"DATE_FORMAT(TO_TIMESTAMP({params[0]}), 'HH:mm:ss')"
         elif func == Function.LOCALTIME:
-            # localtime() -> DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')
             if not params:
                 return "DATE_FORMAT(CURRENT_TIMESTAMP(), 'HH:mm:ss')"
             return f"DATE_FORMAT(TO_TIMESTAMP({params[0]}), 'HH:mm:ss')"
         elif func == Function.DURATION:
-            # duration({days: d, hours: h, ...}) -> INTERVAL 'd' DAY + INTERVAL 'h' HOUR + ...
-            # duration('P7D') -> INTERVAL 7 DAY (ISO 8601 format)
             first_param = expr.parameters[0] if expr.parameters else None
             if isinstance(first_param, QueryExpressionMapLiteral):
                 return self._render_duration_from_map(first_param, context_op)
@@ -623,46 +487,15 @@ class ExpressionRenderer:
                 first_param.value, str
             ):
                 return self._parse_iso8601_duration(first_param.value)
-            # Fallback for other expression types (render and hope it's a duration string)
             if params:
-                # Try to extract string from rendered param (remove quotes if present)
                 rendered = params[0]
                 if rendered.startswith("'") and rendered.endswith("'"):
                     return self._parse_iso8601_duration(rendered[1:-1])
             return "INTERVAL '0' DAY"
-        elif func == Function.DURATION_BETWEEN:
-            # duration.between(d1, d2) -> DATEDIFF(d2, d1)
-            if len(params) >= 2:
-                return f"DATEDIFF({params[1]}, {params[0]})"
-            return "0"
-        # Date component extraction
-        elif func == Function.DATE_YEAR:
-            return f"YEAR({params[0]})" if params else "NULL"
-        elif func == Function.DATE_MONTH:
-            return f"MONTH({params[0]})" if params else "NULL"
-        elif func == Function.DATE_DAY:
-            return f"DAY({params[0]})" if params else "NULL"
-        elif func == Function.DATE_HOUR:
-            return f"HOUR({params[0]})" if params else "NULL"
-        elif func == Function.DATE_MINUTE:
-            return f"MINUTE({params[0]})" if params else "NULL"
-        elif func == Function.DATE_SECOND:
-            return f"SECOND({params[0]})" if params else "NULL"
-        elif func == Function.DATE_WEEK:
-            return f"WEEKOFYEAR({params[0]})" if params else "NULL"
-        elif func == Function.DATE_DAYOFWEEK:
-            return f"DAYOFWEEK({params[0]})" if params else "NULL"
-        elif func == Function.DATE_QUARTER:
-            return f"QUARTER({params[0]})" if params else "NULL"
-        elif func == Function.DATE_TRUNCATE:
-            # date.truncate('unit', d) -> DATE_TRUNC(unit, d)
-            if len(params) >= 2:
-                return f"DATE_TRUNC({params[0]}, {params[1]})"
-            return "NULL"
         else:
             raise NotImplementedError(
                 f"_render_function: unsupported function {func!r}. "
-                f"Add an explicit handler for this function."
+                f"Add to FUNCTION_TEMPLATES in dialect.py or add an explicit handler."
             )
 
     def _render_aggregation(
@@ -1178,36 +1011,18 @@ class ExpressionRenderer:
             return self._render_expression(expr, context_op)
 
     def _render_function_with_params(self, func: Function, params: list[str]) -> str:
-        """Render a function with pre-rendered parameters."""
-        if func == Function.NOT:
-            return f"NOT ({params[0]})" if params else "NOT (NULL)"
-        elif func == Function.NEGATIVE:
-            return f"-({params[0]})" if params else "-NULL"
-        elif func == Function.POSITIVE:
-            return f"+({params[0]})" if params else "+NULL"
-        elif func == Function.IS_NULL:
-            return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
-        elif func == Function.IS_NOT_NULL:
-            return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
-        elif func == Function.COALESCE:
-            if params:
-                return f"COALESCE({', '.join(params)})"
-            return "NULL"
-        elif func == Function.ABS:
-            return f"ABS({params[0]})" if params else "NULL"
-        elif func == Function.SQRT:
-            return f"SQRT({params[0]})" if params else "NULL"
-        elif func == Function.CEIL:
-            return f"CEIL({params[0]})" if params else "NULL"
-        elif func == Function.FLOOR:
-            return f"FLOOR({params[0]})" if params else "NULL"
-        elif func == Function.ROUND:
-            if len(params) >= 2:
-                return f"ROUND({params[0]}, {params[1]})"
-            return f"ROUND({params[0]})" if params else "NULL"
+        """Render a function with pre-rendered parameters.
+
+        Delegates to the FUNCTION_TEMPLATES registry for simple functions.
+        Falls back to _render_function (which handles complex handlers) for
+        functions not in the registry.
+        """
+        tmpl = FUNCTION_TEMPLATES.get(func)
+        if tmpl is not None:
+            return render_from_template(tmpl, params)
         raise NotImplementedError(
             f"_render_function_with_params: unsupported function {func!r}. "
-            f"Add an explicit handler for this function."
+            f"Add to FUNCTION_TEMPLATES in dialect.py or add an explicit handler."
         )
 
     def _render_exists(
@@ -1818,7 +1633,8 @@ class ExpressionRenderer:
             params = [self._render_edge_filter_expression(p) for p in expr.parameters]
             func = expr.function
 
-            # Handle common functions
+            # CTE-specific overrides: these functions have different semantics
+            # inside the recursive CTE (direct column refs, simpler DATE handling).
             if func == Function.DATETIME:
                 return "CURRENT_TIMESTAMP()"
             elif func == Function.DATE:
@@ -1826,38 +1642,20 @@ class ExpressionRenderer:
                     return f"DATE({params[0]})"
                 return "CURRENT_DATE()"
             elif func == Function.DURATION:
-                # Convert ISO 8601 duration to INTERVAL
                 if params:
                     duration_str = params[0].strip("'\"")
                     return self._convert_duration_to_interval(duration_str)
                 return "INTERVAL 0 DAY"
-            elif func == Function.NOT:
-                return f"NOT ({params[0]})" if params else "NOT (NULL)"
-            elif func == Function.IS_NULL:
-                return f"({params[0]}) IS NULL" if params else "NULL IS NULL"
-            elif func == Function.IS_NOT_NULL:
-                return f"({params[0]}) IS NOT NULL" if params else "NULL IS NOT NULL"
-            elif func == Function.COALESCE:
-                if params:
-                    return f"COALESCE({', '.join(params)})"
-                return "NULL"
-            elif func == Function.STRING_STARTS_WITH:
-                if len(params) >= 2:
-                    return f"STARTSWITH({params[0]}, {params[1]})"
-                return "NULL"
-            elif func == Function.STRING_ENDS_WITH:
-                if len(params) >= 2:
-                    return f"ENDSWITH({params[0]}, {params[1]})"
-                return "NULL"
-            elif func == Function.STRING_CONTAINS:
-                if len(params) >= 2:
-                    return f"CONTAINS({params[0]}, {params[1]})"
-                return "NULL"
-            else:
-                raise NotImplementedError(
-                    f"_render_edge_filter_expression: unsupported function {func!r}. "
-                    f"Add an explicit handler for this function."
-                )
+
+            # Data-driven dispatch for simple functions
+            tmpl = FUNCTION_TEMPLATES.get(func)
+            if tmpl is not None:
+                return render_from_template(tmpl, params)
+
+            raise NotImplementedError(
+                f"_render_edge_filter_expression: unsupported function {func!r}. "
+                f"Add to FUNCTION_TEMPLATES in dialect.py or add an explicit handler."
+            )
 
         elif isinstance(expr, QueryExpressionValue):
             # Render literal values
