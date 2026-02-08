@@ -8,12 +8,17 @@ instead of a back-reference to ``SQLRenderer``, which prevents circular imports.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
 from gsql2rsql.planner.column_ref import ResolvedColumnRef
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.operators import LogicalOperator
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema
 from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider, SQLTableDescriptor
+
+if TYPE_CHECKING:
+    from gsql2rsql.renderer.sql_enrichment import EnrichedPlanData
 
 
 class RenderContext:
@@ -34,6 +39,7 @@ class RenderContext:
         required_value_fields: set[str],
         enable_column_pruning: bool,
         config: dict[str, object],
+        enriched: EnrichedPlanData | None = None,
     ) -> None:
         self.db_schema = db_schema
         self.resolution_result = resolution_result
@@ -41,6 +47,7 @@ class RenderContext:
         self.required_value_fields = required_value_fields
         self.enable_column_pruning = enable_column_pruning
         self.config = config
+        self.enriched = enriched
         self._cte_counter = 0
         self._join_alias_counter = 0
 

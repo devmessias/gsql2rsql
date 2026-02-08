@@ -52,6 +52,7 @@ from gsql2rsql.renderer.schema_provider import (
     ISQLDBSchemaProvider,
     SQLTableDescriptor,
 )
+from gsql2rsql.renderer.sql_enrichment import EnrichedPlanData, SQLEnrichmentPass
 
 
 class SQLRenderer:
@@ -146,7 +147,10 @@ class SQLRenderer:
         self._join_alias_counter += 1
         return (f"_left_{alias_id}", f"_right_{alias_id}")
 
-    def _create_context(self) -> RenderContext:
+    def _create_context(
+        self,
+        enriched: EnrichedPlanData | None = None,
+    ) -> RenderContext:
         """Create a RenderContext from the current renderer state.
 
         The context shares mutable references to required_columns and
@@ -161,6 +165,7 @@ class SQLRenderer:
             required_value_fields=self._required_value_fields,
             enable_column_pruning=self._enable_column_pruning,
             config=self._config,
+            enriched=enriched,
         )
         ctx.cte_counter = self._cte_counter
         ctx.join_alias_counter = self._join_alias_counter
@@ -207,6 +212,12 @@ class SQLRenderer:
         # Store resolution result - this is now guaranteed to be non-None
         self._resolution_result = plan.resolution_result
 
+        # SQL Enrichment: resolve SQL-specific metadata in a single pass
+        # before any rendering begins.  Currently a no-op skeleton — each
+        # _enrich_* method will be implemented as we migrate renderer logic.
+        enrichment = SQLEnrichmentPass(self._db_schema)
+        enriched = enrichment.enrich(plan, self._resolution_result)
+
         # Column pruning: collect required columns before rendering
         self._required_columns = set()
         self._required_value_fields = set()
@@ -216,7 +227,7 @@ class SQLRenderer:
 
         # Create render context — shared state object for sub-renderers.
         # The context shares mutable references to required_columns/required_value_fields.
-        self._ctx = self._create_context()
+        self._ctx = self._create_context(enriched=enriched)
         self._expr = ExpressionRenderer(self._ctx)
         self._cte = RecursiveCTERenderer(self._ctx, self._expr, self._render_operator)
         self._join = JoinRenderer(
@@ -683,33 +694,6 @@ class SQLRenderer:
         """Get indentation string for a given depth."""
         return "  " * depth
 
-    def _get_table_descriptor_with_wildcard(
-        self, entity_name: str
-    ) -> SQLTableDescriptor | None:
-        """Get table descriptor, falling back to wildcard for wildcard nodes/edges.
-
-        This method supports no-label nodes and untyped edges by returning the
-        wildcard table descriptor when entity_name is empty or is a wildcard type.
-
-        Args:
-            entity_name: The entity name (node type or edge id).
-                Empty string or WILDCARD_NODE_TYPE means no-label node.
-                WILDCARD_EDGE_TYPE means untyped edge.
-
-        Returns:
-            SQLTableDescriptor if found, None otherwise.
-        """
-        from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
-
-        if not entity_name or entity_name == WILDCARD_NODE_TYPE:
-            # No label or wildcard node type - use wildcard node table descriptor
-            return self._db_schema.get_wildcard_table_descriptor()
-        # Check for wildcard edge (edge ID format: source@verb@sink)
-        if WILDCARD_EDGE_TYPE in entity_name:
-            # Wildcard edge type - use wildcard edge table descriptor
-            return self._db_schema.get_wildcard_edge_table_descriptor()
-        return self._db_schema.get_sql_table_descriptors(entity_name)
-
     def _render_operator(self, op: LogicalOperator, depth: int) -> str:
         """Render a logical operator to SQL."""
         if isinstance(op, DataSourceOperator):
@@ -745,14 +729,17 @@ class SQLRenderer:
         if not isinstance(entity_field, EntityField):
             return ""
 
-        # Get SQL table descriptor (supports no-label nodes via wildcard)
-        table_desc = self._get_table_descriptor_with_wildcard(
-            entity_field.bound_entity_name
+        # Read SQL table descriptor from enriched data (pre-resolved by SQLEnrichmentPass)
+        enriched_ds = (
+            self._ctx.enriched.data_sources.get(op.operator_debug_id)
+            if self._ctx.enriched
+            else None
         )
-        if not table_desc:
+        if not enriched_ds:
             raise TranspilerInternalErrorException(
-                f"No table descriptor for {entity_field.bound_entity_name}"
+                f"No enriched data for DataSource {entity_field.bound_entity_name}"
             )
+        table_desc = enriched_ds.table_descriptor
 
         lines.append(f"{indent}SELECT")
 
@@ -834,37 +821,9 @@ class SQLRenderer:
         # Collect all filters to apply
         filters: list[str] = []
 
-        # Add implicit filter(s) for edge type
-        # Handle OR syntax ([:KNOWS|WORKS_AT]) by combining filters with OR
-        if len(entity_field.bound_edge_types) > 1:
-            # Multiple edge types - collect filters from each type's descriptor
-            edge_filters: list[str] = []
-            # Get source type from bound_entity_name (format: "Source@TYPE@Target")
-            parts = entity_field.bound_entity_name.split("@")
-            source_type = parts[0] if len(parts) >= 1 else None
-
-            for edge_type in entity_field.bound_edge_types:
-                # Use find_edges_by_verb to find the correct edge schema for each type
-                # This handles cases where edge types have different target node types
-                # (e.g., KNOWS→Person, LIVES_IN→City, WORKS_AT→Company)
-                edges = self._db_schema.find_edges_by_verb(
-                    edge_type,
-                    from_node_name=source_type,
-                    to_node_name=None,  # Allow any target
-                )
-                if edges:
-                    edge_schema = edges[0]
-                    edge_id = edge_schema.id
-                    type_desc = self._db_schema.get_sql_table_descriptors(edge_id)
-                    if type_desc and type_desc.filter:
-                        edge_filters.append(type_desc.filter)
-            if edge_filters:
-                # Combine with OR: (filter1) OR (filter2)
-                combined_edge_filter = " OR ".join(f"({f})" for f in edge_filters)
-                filters.append(combined_edge_filter)
-        elif table_desc.filter:
-            # Single edge type - use its filter directly
-            filters.append(table_desc.filter)
+        # Type filter from enrichment (edge type filters, single or multi-edge OR)
+        if enriched_ds.type_filter_clause:
+            filters.append(enriched_ds.type_filter_clause)
 
         # Add pushed-down filter from optimizer (e.g., p.name = 'Alice')
         if op.filter_expression:
