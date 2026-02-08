@@ -84,6 +84,7 @@ class JoinOperator(BinaryLogicalOperator):
 
     join_type: JoinType = JoinType.INNER
     join_pairs: list[JoinKeyPair] = field(default_factory=list)
+    recursive_source_alias: str | None = None
 
     def propagate_data_types_for_in_schema(self) -> None:
         """Propagate data types from upstream operators to input schema."""

@@ -46,6 +46,14 @@ class JoinRenderer:
         self._render_operator = render_operator_fn
         self._render_aggregation_boundary_reference = render_agg_boundary_ref_fn
 
+    def _get_enriched_recursive(self, op: RecursiveTraversalOperator):
+        """Get enriched data for a RecursiveTraversalOperator."""
+        if self._ctx.enriched:
+            return self._ctx.enriched.recursive_ops.get(
+                op.operator_debug_id
+            )
+        return None
+
     def _render_recursive_join(
         self,
         join_op: JoinOperator,
@@ -81,59 +89,54 @@ class JoinRenderer:
         cte_name = getattr(recursive_op, "cte_name", "paths")
         min_depth = recursive_op.min_hops if recursive_op.min_hops is not None else 1
 
-        # Get target node's table info (supports no-label via wildcard)
+        # Read enriched recursive op data (pre-resolved by SQLEnrichmentPass)
+        enriched_rec = (
+            self._ctx.enriched.recursive_ops.get(recursive_op.operator_debug_id)
+            if self._ctx.enriched
+            else None
+        )
+        if not enriched_rec:
+            raise TranspilerInternalErrorException(
+                "No enriched data for RecursiveTraversalOperator"
+            )
+
         target_entity = target_op.entity
         if target_entity is None:
             raise TranspilerInternalErrorException(
                 "Target operator has no entity defined"
             )
-        target_entity_name = target_entity.entity_name or ""
-        target_table = self._ctx.get_table_descriptor_with_wildcard(target_entity_name)
-        if not target_table:
+
+        target_node = enriched_rec.target_node
+        source_node = enriched_rec.source_node
+
+        if not target_node:
             raise TranspilerInternalErrorException(
-                f"No table descriptor for {target_entity_name}"
+                f"No enriched node info for target {target_entity.entity_name}"
             )
 
-        # Get target node's ID column and schema (supports wildcard for unlabeled nodes)
-        target_node_schema = self._ctx.db_schema.get_node_definition(target_entity_name)
-        if not target_node_schema and not target_entity_name:
-            # Try wildcard for unlabeled nodes
-            target_node_schema = self._ctx.db_schema.get_wildcard_node_definition()
-        if target_node_schema and target_node_schema.node_id_property:
-            target_id_col = target_node_schema.node_id_property.property_name
-        else:
-            target_id_col = "id"
+        target_table = target_node.table_descriptor
+        target_id_col = target_node.id_column
 
         # Get alias for target node (sink) and source node
         target_alias = target_entity.alias or "n"
         source_alias = recursive_op.source_alias or "src"
 
-        # Get source node's table info (supports no-label via wildcard)
-        source_node_type = recursive_op.source_node_type
-        source_table = self._ctx.get_table_descriptor_with_wildcard(source_node_type)
-        if not source_table:
-            # Fallback to target table if source not found
-            source_table = target_table
-
-        # Get source node's ID column and schema (supports wildcard for unlabeled nodes)
-        source_node_schema = self._ctx.db_schema.get_node_definition(source_node_type)
-        if not source_node_schema and not source_node_type:
-            # Try wildcard for unlabeled nodes
-            source_node_schema = self._ctx.db_schema.get_wildcard_node_definition()
-        if source_node_schema and source_node_schema.node_id_property:
-            source_id_col = source_node_schema.node_id_property.property_name
+        # Source node table (fallback to target if not available)
+        if source_node:
+            source_table = source_node.table_descriptor
+            source_id_col = source_node.id_column
         else:
-            source_id_col = "id"
+            source_table = target_table
+            source_id_col = target_id_col
 
         lines: list[str] = []
         lines.append(f"{indent}SELECT")
 
         # Project fields from TARGET node (sink)
         field_lines: list[str] = []
-        if target_node_schema:
+        if target_node.property_names:
             field_lines.append(f"sink.{target_id_col} AS {self._ctx.COLUMN_PREFIX}{target_alias}_{target_id_col}")
-            for prop in target_node_schema.properties:
-                prop_name = prop.property_name
+            for prop_name in target_node.property_names:
                 if prop_name != target_id_col:
                     field_lines.append(f"sink.{prop_name} AS {self._ctx.COLUMN_PREFIX}{target_alias}_{prop_name}")
         else:
@@ -143,10 +146,9 @@ class JoinRenderer:
         # Skip if source_alias == target_alias (circular path like (a)-[*]->(a))
         # In that case, sink and source are the same entity, so we don't want duplicate columns
         if source_alias != target_alias:
-            if source_node_schema:
+            if source_node and source_node.property_names:
                 field_lines.append(f"source.{source_id_col} AS {self._ctx.COLUMN_PREFIX}{source_alias}_{source_id_col}")
-                for prop in source_node_schema.properties:
-                    prop_name = prop.property_name
+                for prop_name in source_node.property_names:
                     if prop_name != source_id_col:
                         field_lines.append(f"source.{prop_name} AS {self._ctx.COLUMN_PREFIX}{source_alias}_{prop_name}")
             else:
@@ -206,15 +208,11 @@ class JoinRenderer:
 
         # SINK NODE FILTER PUSHDOWN: Apply filter on target node here
         # This filters rows DURING the join rather than AFTER all joins complete
-        if recursive_op.sink_node_filter:
-            from gsql2rsql.planner.path_analyzer import rewrite_predicate_for_edge_alias
-            # Rewrite filter: b.risk_score -> sink.risk_score
-            rewritten_filter = rewrite_predicate_for_edge_alias(
-                recursive_op.sink_node_filter,
-                recursive_op.target_alias,  # e.g., "b"
-                edge_alias="sink",  # Rewrite to "sink"
+        enriched_rec = self._get_enriched_recursive(recursive_op)
+        if enriched_rec and enriched_rec.sink_filter_as_sink:
+            sink_filter_sql = self._expr._render_edge_filter_expression(
+                enriched_rec.sink_filter_as_sink
             )
-            sink_filter_sql = self._expr._render_edge_filter_expression(rewritten_filter)
             where_parts.append(sink_filter_sql)
 
         lines.append(f"{indent}WHERE {' AND '.join(where_parts)}")
@@ -534,14 +532,16 @@ class JoinRenderer:
         if not isinstance(entity_field, EntityField):
             return self._render_operator(edge_op, depth)
 
-        # Get table descriptor
-        table_desc = self._ctx.db_schema.get_sql_table_descriptors(
-            entity_field.bound_entity_name
+        # Read SQL table descriptor from enriched data (pre-resolved by SQLEnrichmentPass)
+        enriched_ds = (
+            self._ctx.enriched.data_sources.get(edge_op.operator_debug_id)
+            if self._ctx.enriched
+            else None
         )
-        if not table_desc:
+        if not enriched_ds:
             return self._render_operator(edge_op, depth)
 
-        table_name = table_desc.full_table_name
+        table_name = enriched_ds.table_descriptor.full_table_name
         alias = entity_field.field_alias
 
         # Get source/sink columns
@@ -563,10 +563,10 @@ class JoinRenderer:
             if f.field_alias not in skip_fields
         ]
 
-        # Build WHERE clause from table filter (e.g., relationship_type = 'DEFRAUDED')
+        # Build WHERE clause from type filter (pre-resolved by enrichment)
         where_clause = ""
-        if table_desc.filter:
-            where_clause = f"\n{indent}WHERE {table_desc.filter}"
+        if enriched_ds.type_filter_clause:
+            where_clause = f"\n{indent}WHERE {enriched_ds.type_filter_clause}"
 
         # ========== FORWARD DIRECTION: source -> sink ==========
         # For edge (Alice)-[:KNOWS]->(Bob), this branch represents:
@@ -807,20 +807,8 @@ class JoinRenderer:
             if isinstance(left_op, RecursiveTraversalOperator):
                 if left_op.source_alias:
                     left_entity_aliases.add(left_op.source_alias)
-            else:
-                # Check if the left operand chain contains a recursive traversal
-                def find_recursive_source(check_op: LogicalOperator) -> str | None:
-                    if isinstance(check_op, RecursiveTraversalOperator):
-                        return check_op.source_alias
-                    # Use polymorphic get_input_operator() for all operator types
-                    input_op = check_op.get_input_operator()
-                    if input_op:
-                        return find_recursive_source(input_op)
-                    return None
-
-                recursive_source = find_recursive_source(left_op)
-                if recursive_source:
-                    left_entity_aliases.add(recursive_source)
+            elif op.recursive_source_alias:
+                left_entity_aliases.add(op.recursive_source_alias)
 
             for required_col in self._ctx.required_columns:
                 if required_col in projected_aliases:

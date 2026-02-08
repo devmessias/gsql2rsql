@@ -13,7 +13,6 @@ import re
 from gsql2rsql.common.exceptions import (
     TranspilerInternalErrorException,
 )
-from gsql2rsql.common.schema import EdgeSchema
 from gsql2rsql.parser.ast import (
     NodeEntity,
     QueryExpression,
@@ -1039,22 +1038,20 @@ class ExpressionRenderer:
           JOIN graph.Movie m ON r.target_id = m.id
           WHERE r.source_id = outer_query.p_id
         )
+
+        All SQL metadata (table names, column names) is read from
+        ``EnrichedExistsExpr`` produced by the enrichment pass, keyed by
+        ``id(expr)``.
         """
         prefix = "NOT " if expr.is_negated else ""
 
-        # If it's a full subquery EXISTS, we would need to render the full query
-        # For now, focus on pattern-based EXISTS
         if expr.subquery:
-            # Full subquery EXISTS - not yet fully implemented
             return f"{prefix}EXISTS (SELECT 1)"
 
         if not expr.pattern_entities:
             return f"{prefix}EXISTS (SELECT 1)"
 
-        # Parse the pattern entities to extract:
-        # - source node (correlated to outer query)
-        # - relationship
-        # - target node
+        # Parse pattern entities for source/relationship/target
         source_node: NodeEntity | None = None
         relationship: RelationshipEntity | None = None
         target_node: NodeEntity | None = None
@@ -1069,60 +1066,21 @@ class ExpressionRenderer:
                 relationship = entity
 
         if not relationship or not source_node:
-            # Can't render without relationship and source
             return f"{prefix}EXISTS (SELECT 1)"
 
-        # Get relationship table info
-        rel_name = relationship.entity_name
-        source_entity_name = source_node.entity_name or ""
-        target_entity_name = target_node.entity_name if target_node else ""
-
-        # Try to find the edge schema
-        edge_schema: EdgeSchema | None = None
-        rel_table_desc: SQLTableDescriptor | None = None
-
-        # If we have both source and target entity names, use the direct lookup
-        if source_entity_name and target_entity_name:
-            # Compute edge_id for lookup
-            # Use pre-resolved direction context from planner (SoC compliant)
-            # correlation_uses_source=False indicates BACKWARD direction
-            if not expr.correlation_uses_source:
-                edge_id = EdgeSchema.get_edge_id(
-                    rel_name, target_entity_name, source_entity_name
-                )
-            else:
-                edge_id = EdgeSchema.get_edge_id(
-                    rel_name, source_entity_name, target_entity_name
-                )
-            rel_table_desc = self._ctx.db_schema.get_sql_table_descriptors(edge_id)
-            if not expr.correlation_uses_source:
-                edge_schema = self._ctx.db_schema.get_edge_definition(
-                    rel_name, target_entity_name, source_entity_name
-                )
-            else:
-                edge_schema = self._ctx.db_schema.get_edge_definition(
-                    rel_name, source_entity_name, target_entity_name
-                )
-        else:
-            # Source entity unknown - use fallback lookup by verb
-            # This handles EXISTS patterns where source is a variable reference
-            result = self._ctx.db_schema.find_edge_by_verb(rel_name, target_entity_name)
-            if result:
-                edge_schema, rel_table_desc = result
-                # Update source_entity_name from schema for later use
-                source_entity_name = edge_schema.source_node_id
-
-        if not rel_table_desc:
+        # Read pre-resolved SQL metadata from enrichment
+        enriched = (
+            self._ctx.enriched.exists_exprs.get(id(expr))
+            if self._ctx.enriched
+            else None
+        )
+        if not enriched:
+            rel_name = relationship.entity_name
             return f"{prefix}EXISTS (SELECT 1 /* unknown relationship: {rel_name} */)"
 
-        rel_table = rel_table_desc.full_table_name
-        source_id_col = "source_id"
-        target_id_col = "target_id"
-        if edge_schema:
-            if edge_schema.source_id_property:
-                source_id_col = edge_schema.source_id_property.property_name
-            if edge_schema.sink_id_property:
-                target_id_col = edge_schema.sink_id_property.property_name
+        rel_table = enriched.rel_table_name
+        source_id_col = enriched.source_id_col
+        target_id_col = enriched.target_id_col
 
         # Build subquery parts
         lines = []
@@ -1130,47 +1088,22 @@ class ExpressionRenderer:
         lines.append(f"FROM {rel_table} _exists_rel")
 
         # If target node exists and has a type, join to target table
-        if target_node and target_node.entity_name:
-            target_table_desc = self._ctx.db_schema.get_sql_table_descriptors(
-                target_node.entity_name
+        if target_node and target_node.entity_name and enriched.target_table_name:
+            target_node_id_col = enriched.target_node_id_col
+            if expr.target_join_uses_sink:
+                edge_join_col = target_id_col
+            else:
+                edge_join_col = source_id_col
+            lines.append(
+                f"JOIN {enriched.target_table_name} _exists_target "
+                f"ON _exists_rel.{edge_join_col} = _exists_target.{target_node_id_col}"
             )
-            if target_table_desc:
-                target_table = target_table_desc.full_table_name
-                # Get target node's ID column
-                target_node_schema = self._ctx.db_schema.get_node_definition(
-                    target_node.entity_name
-                )
-                target_node_id_col = "id"
-                if target_node_schema and target_node_schema.node_id_property:
-                    target_node_id_col = target_node_schema.node_id_property.property_name
-
-                # Join direction uses pre-resolved context from planner (SoC compliant)
-                # target_join_uses_sink=True means join target on sink column
-                if expr.target_join_uses_sink:
-                    edge_join_col = target_id_col  # sink column
-                else:
-                    edge_join_col = source_id_col  # source column (BACKWARD)
-                lines.append(
-                    f"JOIN {target_table} _exists_target "
-                    f"ON _exists_rel.{edge_join_col} = _exists_target.{target_node_id_col}"
-                )
 
         # Correlate with outer query using source node's ID
-        # The source node's ID field should be in the outer context
         source_alias = source_node.alias or "_src"
-        # Get the source node's ID column from schema
-        source_node_schema = self._ctx.db_schema.get_node_definition(
-            source_node.entity_name
-        ) if source_node.entity_name else None
-        source_node_id_col = "id"
-        if source_node_schema and source_node_schema.node_id_property:
-            source_node_id_col = source_node_schema.node_id_property.property_name
-
+        source_node_id_col = enriched.source_node_id_col
         outer_field = f"{self._ctx.COLUMN_PREFIX}{source_alias}_{source_node_id_col}"
 
-        # WHERE clause: correlate with outer query
-        # Use pre-resolved context from planner (SoC compliant)
-        # correlation_uses_source=True means use source column for correlation
         if expr.correlation_uses_source:
             correlation = f"_exists_rel.{source_id_col} = {outer_field}"
         else:
@@ -1178,11 +1111,7 @@ class ExpressionRenderer:
 
         where_parts = [correlation]
 
-        # Add any additional WHERE from the EXISTS pattern
         if expr.where_expression:
-            # Render the where expression in context of the exists subquery
-            # This is tricky - we need to map variables properly
-            # For now, just render it directly
             where_rendered = self._render_expression(expr.where_expression, context_op)
             where_parts.append(where_rendered)
 
@@ -1242,6 +1171,66 @@ class ExpressionRenderer:
             return False
         return False
 
+    def _collect_entity_props_from_schema(
+        self,
+        entity_var: str,
+        context_op: "LogicalOperator",
+    ) -> tuple[EntityField | None, list[tuple[str, str]]]:
+        """Collect (prop_name, sql_col) pairs from an entity's schema.
+
+        Shared core of _render_entity_as_struct and _render_entity_in_collect_as_struct.
+
+        Returns:
+            (entity_field_or_None, props_list)
+        """
+        prefix = f"{self._ctx.COLUMN_PREFIX}{entity_var}_"
+        props: list[tuple[str, str]] = []
+
+        entity_field: EntityField | None = None
+        if hasattr(context_op, 'input_schema') and context_op.input_schema:
+            for field in context_op.input_schema:
+                if isinstance(field, EntityField) and field.field_alias == entity_var:
+                    entity_field = field
+                    break
+
+        if not entity_field:
+            return None, props
+
+        if entity_field.entity_type == EntityType.NODE:
+            if entity_field.node_join_field:
+                pn = entity_field.node_join_field.field_name
+                props.append((pn, f"{prefix}{pn}"))
+            for pf in entity_field.encapsulated_fields:
+                pn = pf.field_name
+                props.append((pn, f"{prefix}{pn}"))
+        else:
+            if entity_field.rel_source_join_field:
+                props.append(("src", f"{prefix}src"))
+            if entity_field.rel_sink_join_field:
+                props.append(("dst", f"{prefix}dst"))
+            for pf in entity_field.encapsulated_fields:
+                pn = pf.field_name
+                props.append((pn, f"{prefix}{pn}"))
+
+        return entity_field, props
+
+    @staticmethod
+    def _build_named_struct(
+        props: list[tuple[str, str]], fallback_id_col: str
+    ) -> str:
+        """Deduplicate, sort, and format as NAMED_STRUCT."""
+        seen: set[str] = set()
+        sorted_props = []
+        for prop_name, sql_col in sorted(props, key=lambda x: x[0]):
+            if prop_name not in seen:
+                seen.add(prop_name)
+                sorted_props.append((prop_name, sql_col))
+
+        if sorted_props:
+            parts = [f"'{pn}', {sc}" for pn, sc in sorted_props]
+            return f"NAMED_STRUCT({', '.join(parts)})"
+        return f"NAMED_STRUCT('id', {fallback_id_col})"
+
     def _render_entity_as_struct(
         self,
         resolved_proj: "ResolvedProjection",
@@ -1250,163 +1239,46 @@ class ExpressionRenderer:
     ) -> str | None:
         """Render an entity reference as NAMED_STRUCT with all properties.
 
-        When RETURN a (node) or RETURN r (edge) is used, this generates:
-        NAMED_STRUCT('prop1', col1, 'prop2', col2, ...)
-
-        Uses the schema information from the operator's input_schema to get
-        all properties for the entity, ensuring we include ALL properties
-        (not just those explicitly used in the query).
-
-        Args:
-            resolved_proj: The resolved projection containing column refs
-            entity_var: The entity variable name (e.g., "a", "r")
-            context_op: The operator for accessing input schema
-
-        Returns:
-            SQL NAMED_STRUCT expression, or None if the variable is not an entity
-            (e.g., for UNWIND variables which are values, not entities)
+        Returns None if the variable is not an entity (e.g., UNWIND variable).
         """
-
-        prefix = f"{self._ctx.COLUMN_PREFIX}{entity_var}_"
-        entity_props: list[tuple[str, str]] = []  # (prop_name, sql_col)
-
-        # Try to get entity field from the operator's input schema
-        # This is the authoritative way to determine if something is an entity
-        entity_field: EntityField | None = None
-        if hasattr(context_op, 'input_schema') and context_op.input_schema:
-            for field in context_op.input_schema:
-                if isinstance(field, EntityField) and field.field_alias == entity_var:
-                    entity_field = field
-                    break
-
-        # If no EntityField found, this is NOT an entity (e.g., UNWIND variable)
-        # Return None to signal the caller should use normal rendering
+        entity_field, props = self._collect_entity_props_from_schema(
+            entity_var, context_op
+        )
         if not entity_field:
             return None
 
-        # Use schema information - this is the authoritative source
-        if entity_field.entity_type == EntityType.NODE:
-            # Node: add node_id and all encapsulated properties
-            if entity_field.node_join_field:
-                prop_name = entity_field.node_join_field.field_name
-                # field_name is like "node_id" - use it directly
-                entity_props.append((prop_name, f"{prefix}{prop_name}"))
-            for prop_field in entity_field.encapsulated_fields:
-                prop_name = prop_field.field_name
-                entity_props.append((prop_name, f"{prefix}{prop_name}"))
-        else:
-            # Edge/Relationship: add src, dst, and all encapsulated properties
-            if entity_field.rel_source_join_field:
-                entity_props.append(("src", f"{prefix}src"))
-            if entity_field.rel_sink_join_field:
-                entity_props.append(("dst", f"{prefix}dst"))
-            for prop_field in entity_field.encapsulated_fields:
-                prop_name = prop_field.field_name
-                entity_props.append((prop_name, f"{prefix}{prop_name}"))
-
-        # Sort by property name and deduplicate
-        seen = set()
-        sorted_props = []
-        for prop_name, sql_col in sorted(entity_props, key=lambda x: x[0]):
-            if prop_name not in seen:
-                seen.add(prop_name)
-                sorted_props.append((prop_name, sql_col))
-
-        # Build NAMED_STRUCT parts
-        struct_parts = [f"'{prop_name}', {sql_col}" for prop_name, sql_col in sorted_props]
-
-        if struct_parts:
-            return f"NAMED_STRUCT({', '.join(struct_parts)})"
-        else:
-            # Fallback: if no properties found, just use the ID
-            id_col = resolved_proj.entity_id_column or f"{prefix}id"
-            return f"NAMED_STRUCT('id', {id_col})"
+        prefix = f"{self._ctx.COLUMN_PREFIX}{entity_var}_"
+        fallback = resolved_proj.entity_id_column or f"{prefix}id"
+        return self._build_named_struct(props, fallback)
 
     def _render_entity_in_collect_as_struct(
         self,
         entity_var: str,
         context_op: "LogicalOperator",
     ) -> str:
-        """Render an entity inside collect() as NAMED_STRUCT.
-
-        For collect(a) or collect(r), generates NAMED_STRUCT with all properties.
-
-        Uses the schema information from the operator's input_schema to get
-        all properties for the entity, ensuring we include ALL properties
-        (not just those explicitly used in the query).
-
-        Args:
-            entity_var: The entity variable name
-            context_op: The operator context for looking up resolved refs
-
-        Returns:
-            SQL NAMED_STRUCT expression
-        """
-
+        """Render an entity inside collect() as NAMED_STRUCT."""
         prefix = f"{self._ctx.COLUMN_PREFIX}{entity_var}_"
-        entity_props: list[tuple[str, str]] = []  # (prop_name, sql_col)
-
-        # Try to get entity field from the operator's input schema
-        entity_field: EntityField | None = None
-        if hasattr(context_op, 'input_schema') and context_op.input_schema:
-            for field in context_op.input_schema:
-                if isinstance(field, EntityField) and field.field_alias == entity_var:
-                    entity_field = field
-                    break
-
-        if entity_field:
-            # Use schema information - this is the authoritative source
-            if entity_field.entity_type == EntityType.NODE:
-                # Node: add node_id and all encapsulated properties
-                if entity_field.node_join_field:
-                    prop_name = entity_field.node_join_field.field_name
-                    entity_props.append((prop_name, f"{prefix}{prop_name}"))
-                for prop_field in entity_field.encapsulated_fields:
-                    prop_name = prop_field.field_name
-                    entity_props.append((prop_name, f"{prefix}{prop_name}"))
-            else:
-                # Edge/Relationship: add src, dst, and all encapsulated properties
-                if entity_field.rel_source_join_field:
-                    entity_props.append(("src", f"{prefix}src"))
-                if entity_field.rel_sink_join_field:
-                    entity_props.append(("dst", f"{prefix}dst"))
-                for prop_field in entity_field.encapsulated_fields:
-                    prop_name = prop_field.field_name
-                    entity_props.append((prop_name, f"{prefix}{prop_name}"))
+        _, props = self._collect_entity_props_from_schema(
+            entity_var, context_op
+        )
 
         # Fallback 1: Try required columns
-        if not entity_props and self._ctx.required_columns:
+        if not props and self._ctx.required_columns:
             for col in sorted(self._ctx.required_columns):
                 if col.startswith(prefix):
-                    prop_name = col[len(prefix):]
-                    entity_props.append((prop_name, col))
+                    props.append((col[len(prefix):], col))
 
         # Fallback 2: Try resolved expressions
-        if not entity_props:
+        if not props:
             op_id = context_op.operator_debug_id
             if op_id in self._ctx.resolution_result.resolved_projections:
-                for resolved_proj in self._ctx.resolution_result.resolved_projections[op_id]:
-                    for key, ref in resolved_proj.expression.column_refs.items():
+                for rp in self._ctx.resolution_result.resolved_projections[op_id]:
+                    for _key, ref in rp.expression.column_refs.items():
                         if ref.original_variable == entity_var:
-                            prop_name = ref.original_property if ref.original_property else "id"
-                            entity_props.append((prop_name, ref.sql_column_name))
+                            pn = ref.original_property if ref.original_property else "id"
+                            props.append((pn, ref.sql_column_name))
 
-        # Sort by property name and deduplicate
-        seen = set()
-        sorted_props = []
-        for prop_name, sql_col in sorted(entity_props, key=lambda x: x[0]):
-            if prop_name not in seen:
-                seen.add(prop_name)
-                sorted_props.append((prop_name, sql_col))
-
-        # Build NAMED_STRUCT parts
-        struct_parts = [f"'{prop_name}', {sql_col}" for prop_name, sql_col in sorted_props]
-
-        if struct_parts:
-            return f"NAMED_STRUCT({', '.join(struct_parts)})"
-        else:
-            id_col = f"{self._ctx.COLUMN_PREFIX}{entity_var}_id"
-            return f"NAMED_STRUCT('id', {id_col})"
+        return self._build_named_struct(props, f"{prefix}id")
 
     def _get_entity_properties_for_aggregation(
         self, op: ProjectionOperator
@@ -1488,98 +1360,14 @@ class ExpressionRenderer:
                     if entity_id_col is not None and required_col == entity_id_col:
                         break
 
-                    # ============================================================================
-                    # TODO (NON-CRITICAL): DEFENSIVE WORKAROUND FOR COLUMN RESOLVER BUG
-                    # ============================================================================
-                    # This is a SYMPTOM FIX, not a root cause fix. This defensive check prevents
-                    # SQL generation errors but doesn't address the underlying issue.
-                    #
-                    # WHY WORKAROUND INSTEAD OF ROOT CAUSE FIX:
-                    # -----------------------------------------
-                    # 1. Root cause is in column_resolver.py (Phase 4), requires deep refactoring
-                    # 2. Bug is rare: only when variable name == role name (e.g., "sink" as sink node)
-                    # 3. Risk/benefit: High complexity fix for edge case vs. simple defensive check
-                    # 4. This workaround has been battle-tested: 17/17 PySpark + 662/662 tests pass
-                    #
-                    # BUG PATTERN DETECTED:
-                    # ---------------------
-                    # Malformed column: _gsql2rsql_{var}_{var}_{prop}
-                    # Example: _gsql2rsql_sink_sink_id (should be _gsql2rsql_sink_id)
-                    #
-                    # ROOT CAUSE (in column_resolver.py):
-                    # ------------------------------------
-                    # When expanding entity properties for bare entity returns (e.g., RETURN sink),
-                    # the resolver calls compute_sql_column_name(entity_var, prop_name) for each
-                    # property from the schema. If the schema property is already prefixed with
-                    # the role name (e.g., "sink_id" for Account sink node), the column name
-                    # gets double-prefixed: compute_sql_column_name("sink", "sink_id") produces
-                    # "_gsql2rsql_sink_sink_id" instead of "_gsql2rsql_sink_id".
-                    #
-                    # The issue is that NodeSchema.properties includes ALL properties from the
-                    # YAML schema, but for entities in relationships, some property names already
-                    # incorporate role information (source_id, sink_id, etc.).
-                    #
-                    # HOW TO FIX THE ROOT CAUSE (if someone wants to tackle this):
-                    # -------------------------------------------------------------
-                    # Option A (Simple): In column_resolver.py around line 464-483
-                    #   When expanding entity properties for RETURN clauses, filter out properties
-                    #   that would create duplicate names:
-                    #
-                    #   for prop in node_def.properties:
-                    #       prop_name = prop.property_name
-                    #       # Skip if property name already starts with entity variable name
-                    #       if prop_name.startswith(f"{entity_var}_"):
-                    #           continue  # This would create _gsql2rsql_{var}_{var}_{prop}
-                    #       sql_col_name = compute_sql_column_name(entity_var, prop_name)
-                    #       ...
-                    #
-                    # Option B (Better but more complex): Fix schema loading in pyspark_executor.py
-                    #   The issue is that edge ID properties (source_account_id, target_account_id)
-                    #   should not be included in the node's properties list, as they are relationship
-                    #   metadata, not node properties. Modify load_schema_from_yaml() to:
-                    #   1. Track which properties are edge join keys
-                    #   2. Don't add them to NodeSchema.properties
-                    #   3. Only make them available in EdgeSchema context
-                    #
-                    # Option C (Most thorough): Refactor symbol table to track property provenance
-                    #   Add metadata to SymbolEntry.properties to indicate which properties are:
-                    #   - Intrinsic node properties (name, status, etc.)
-                    #   - Relationship join keys (source_id, sink_id)
-                    #   - Computed/derived properties
-                    #   This would allow the resolver to make intelligent decisions about naming.
-                    #
-                    # TRADE-OFFS:
-                    # -----------
-                    # Current workaround (defensive check):
-                    #   ✅ Simple (5 lines), safe, well-tested
-                    #   ✅ Zero risk to existing working queries
-                    #   ✅ Self-documenting code (this comment explains everything)
-                    #   ❌ Doesn't prevent bug from happening, just mitigates it
-                    #   ❌ Would need update if column naming convention changes
-                    #
-                    # Option A (filter in resolver):
-                    #   ✅ Prevents bug at source (Phase 4)
-                    #   ✅ Still relatively simple (~10 lines)
-                    #   ⚠️  Might hide legitimate properties that happen to match pattern
-                    #   ⚠️  Requires careful testing of edge cases
-                    #
-                    # Option B (fix schema loading):
-                    #   ✅ Architecturally correct (properties go in right place)
-                    #   ✅ Prevents entire class of bugs
-                    #   ❌ Requires changes to schema model
-                    #   ❌ Risk of breaking existing schema-dependent code
-                    #
-                    # Option C (symbol table refactor):
-                    #   ✅ Most robust, enables future optimizations
-                    #   ❌ High complexity, touches core abstractions
-                    #   ❌ Requires extensive testing and validation
-                    #
-                    # DECISION: Use workaround until someone has bandwidth for Option B
-                    # ============================================================================
-                    suffix = required_col[len(prefix):]  # e.g., "sink_id" from "_gsql2rsql_sink_sink_id"
+                    # Defensive workaround: skip double-prefixed columns.
+                    # Root cause is in column_resolver — when var name matches
+                    # a schema role name (e.g., "sink"), property "sink_id"
+                    # produces _gsql2rsql_sink_sink_id instead of _sink_id.
+                    # Fix: filter in column_resolver when expanding entity
+                    # properties for bare RETURN clauses.
+                    suffix = required_col[len(prefix):]
                     if suffix.startswith(f"{entity_var}_"):
-                        # Column name has duplicated variable: _gsql2rsql_{var}_{var}_{prop}
-                        # Skip this malformed column reference
                         break
 
                     # This is a property of an entity variable we're projecting

@@ -48,10 +48,7 @@ from gsql2rsql.renderer.expression_renderer import ExpressionRenderer
 from gsql2rsql.renderer.join_renderer import JoinRenderer
 from gsql2rsql.renderer.recursive_cte_renderer import RecursiveCTERenderer
 from gsql2rsql.renderer.render_context import RenderContext
-from gsql2rsql.renderer.schema_provider import (
-    ISQLDBSchemaProvider,
-    SQLTableDescriptor,
-)
+from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider
 from gsql2rsql.renderer.sql_enrichment import EnrichedPlanData, SQLEnrichmentPass
 
 

@@ -10,12 +10,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
 from gsql2rsql.planner.column_ref import ResolvedColumnRef
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.operators import LogicalOperator
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema
-from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider, SQLTableDescriptor
+from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider
 
 if TYPE_CHECKING:
     from gsql2rsql.renderer.sql_enrichment import EnrichedPlanData
@@ -138,16 +137,6 @@ class RenderContext:
                     return ref
 
         return None
-
-    def get_table_descriptor_with_wildcard(
-        self, entity_name: str
-    ) -> SQLTableDescriptor | None:
-        """Get table descriptor, falling back to wildcard for no-label nodes/edges."""
-        if not entity_name or entity_name == WILDCARD_NODE_TYPE:
-            return self.db_schema.get_wildcard_table_descriptor()
-        if WILDCARD_EDGE_TYPE in entity_name:
-            return self.db_schema.get_wildcard_edge_table_descriptor()
-        return self.db_schema.get_sql_table_descriptors(entity_name)
 
     def get_entity_id_column_from_schema(
         self, schema: Schema, entity_alias: str

@@ -615,13 +615,13 @@ class TestMultipleMatchWithUnwind:
         WHERE s.name = "Alice"
         MATCH (s)-[e:KNOWS*1..2]->(o)
         UNWIND e AS r
-        RETURN s.name AS start, r.src, r.dst, o.name AS end
+        RETURN s.name AS start_name, r.src, r.dst, o.name AS end_name
         """
         sql = graph_context.transpile(query)
         result = spark.sql(sql)
         rows = result.collect()
         assert len(rows) >= 2
-        assert all(row["start"] == "Alice" for row in rows)
+        assert all(row["start_name"] == "Alice" for row in rows)
 
     def test_match_with_property_filter_then_unwind(self, spark, graph_context):
         """MATCH with inline property filter, then UNWIND."""

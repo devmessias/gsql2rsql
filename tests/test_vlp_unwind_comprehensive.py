@@ -812,7 +812,7 @@ class TestWithVLPUnwindRegression:
         MATCH (s {name: "Alice"})-[e:KNOWS*1..2]->(o)
         WITH s, o, e
         UNWIND e AS r
-        RETURN s.name AS start, o.name AS end, r.weight AS weight
+        RETURN s.name AS start_name, o.name AS end_name, r.weight AS weight
         """
         sql = graph_context.transpile(query)
         result = spark.sql(sql)
@@ -820,8 +820,8 @@ class TestWithVLPUnwindRegression:
 
         # Should successfully access s.name and o.name after WITH
         for row in rows:
-            assert row["start"] == "Alice"
-            assert row["end"] is not None
+            assert row["start_name"] == "Alice"
+            assert row["end_name"] is not None
             assert row["weight"] is not None
 
     def test_collect_then_unwind(self, spark, graph_context):
@@ -857,7 +857,7 @@ class TestWithVLPUnwindRegression:
         WITH s, o, e, SIZE(e) AS hops
         WHERE hops = 2
         UNWIND e AS r
-        RETURN s.name AS start, o.name AS end, r.src AS edge_src, r.dst AS edge_dst
+        RETURN s.name AS start_name, o.name AS end_name, r.src AS edge_src, r.dst AS edge_dst
         """
         sql = graph_context.transpile(query)
         result = spark.sql(sql)
@@ -865,8 +865,8 @@ class TestWithVLPUnwindRegression:
 
         # Should return edges for 2-hop paths only
         for row in rows:
-            assert row["start"] == "Alice"
-            assert row["end"] is not None
+            assert row["start_name"] == "Alice"
+            assert row["end_name"] is not None
             assert row["edge_src"] is not None
             assert row["edge_dst"] is not None
 
@@ -1426,9 +1426,9 @@ class TestRelationshipsWithWhereIn:
         MATCH p = (root)-[*1..2]->(target)
         WHERE target.name IN ["Eve", "Carol", "Dave"]
         UNWIND relationships(p) AS r
-        RETURN DISTINCT root.name AS start, target.name AS end,
+        RETURN DISTINCT root.name AS start_name, target.name AS end_name,
                r.src AS edge_src, r.dst AS edge_dst
-        ORDER BY start, end
+        ORDER BY start_name, end_name
         """
         sql = graph_context.transpile(query)
         print(f"\n=== SQL for multiple WHERE IN + relationships ===\n{sql}\n")
@@ -1437,10 +1437,10 @@ class TestRelationshipsWithWhereIn:
 
         # Verify source/target constraints
         for row in rows:
-            assert row["start"] in ["Alice", "Bob", "Carol"], \
-                f"Start {row['start']} not in allowed list"
-            assert row["end"] in ["Eve", "Carol", "Dave"], \
-                f"End {row['end']} not in allowed list"
+            assert row["start_name"] in ["Alice", "Bob", "Carol"], \
+                f"Start {row['start_name']} not in allowed list"
+            assert row["end_name"] in ["Eve", "Carol", "Dave"], \
+                f"End {row['end_name']} not in allowed list"
 
     def test_where_in_with_integer_list(self, spark, graph_context):
         """Test WHERE IN with integer list on edge properties.
@@ -1574,9 +1574,9 @@ class TestComplexVLPCombinations:
         MATCH p = (root)-[*1..2]->(target)
         WHERE target.department = "Sales" OR target.salary > 70000
         UNWIND relationships(p) AS r
-        RETURN DISTINCT root.name AS start, target.name AS end,
+        RETURN DISTINCT root.name AS start_name, target.name AS end_name,
                r.src, r.dst
-        ORDER BY start, end
+        ORDER BY start_name, end_name
         """
         sql = graph_context.transpile(query)
         print(f"\n=== SQL for complex WHERE AND/OR ===\n{sql}\n")
@@ -1584,7 +1584,7 @@ class TestComplexVLPCombinations:
         rows = result.collect()
 
         # Verify root constraint
-        starts = {row["start"] for row in rows}
+        starts = {row["start_name"] for row in rows}
         assert starts <= {"Alice", "Bob"}, f"Unexpected starts: {starts}"
 
     def test_vlp_unwind_aggregation_order_by(self, spark, graph_context):
@@ -1717,9 +1717,9 @@ class TestComplexVLPCombinations:
         MATCH p = (root)-[e*1..3]->(target)
         WHERE SIZE(e) >= 2
         UNWIND relationships(p) AS r
-        RETURN DISTINCT root.name AS start, target.name AS end,
+        RETURN DISTINCT root.name AS start_name, target.name AS end_name,
                SIZE(e) AS hops, r.src, r.dst
-        ORDER BY hops DESC, start
+        ORDER BY hops DESC, start_name
         """
         sql = graph_context.transpile(query)
         print(f"\n=== SQL for SIZE + WHERE IN + ORDER BY ===\n{sql}\n")

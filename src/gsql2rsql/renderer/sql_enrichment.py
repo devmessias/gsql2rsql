@@ -31,7 +31,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
+from gsql2rsql.common.schema import (
+    WILDCARD_EDGE_TYPE,
+    WILDCARD_NODE_TYPE,
+    EdgeSchema,
+)
+from gsql2rsql.parser.ast import (
+    NodeEntity,
+    QueryExpression,
+    QueryExpressionExists,
+    RelationshipEntity,
+)
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
@@ -39,7 +49,12 @@ from gsql2rsql.planner.operators import (
     JoinKeyPairType,
     JoinOperator,
     LogicalOperator,
+    ProjectionOperator,
     RecursiveTraversalOperator,
+    SelectionOperator,
+)
+from gsql2rsql.planner.path_analyzer import (
+    rewrite_predicate_for_edge_alias,
 )
 from gsql2rsql.planner.schema import EntityField, EntityType
 from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider, SQLTableDescriptor
@@ -80,11 +95,74 @@ class EnrichedJoinPair:
 
 
 @dataclass(frozen=True)
+class EnrichedNodeInfo:
+    """SQL-resolved metadata for a node type (table + ID column + properties)."""
+
+    table_descriptor: SQLTableDescriptor
+    id_column: str
+    property_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnrichedRecursiveEdge:
+    """SQL-resolved metadata for one edge type in a RecursiveTraversalOperator."""
+
+    edge_type: str
+    table_descriptor: SQLTableDescriptor
+    filter_clause: str | None = None
+
+
+@dataclass(frozen=True)
+class EnrichedRecursiveOp:
+    """SQL-resolved metadata for a RecursiveTraversalOperator.
+
+    Pre-resolves edge tables, column names, filters, and the single-table
+    optimisation flag.  Also resolves source and target node info.
+    """
+
+    edge_tables: tuple[EnrichedRecursiveEdge, ...]
+    source_id_col: str
+    target_id_col: str
+    edge_property_names: tuple[str, ...]
+    single_table: bool
+    single_table_name: str | None
+    single_table_filter: str | None
+    source_node: EnrichedNodeInfo | None = None
+    target_node: EnrichedNodeInfo | None = None
+    # Pre-rewritten filter ASTs (produced by rewrite_predicate_for_edge_alias)
+    edge_filter_as_e: QueryExpression | None = None
+    start_filter_as_src: QueryExpression | None = None
+    start_filter_as_n: QueryExpression | None = None
+    sink_filter_as_tgt: QueryExpression | None = None
+    sink_filter_as_sink: QueryExpression | None = None
+
+
+@dataclass(frozen=True)
+class EnrichedExistsExpr:
+    """SQL-resolved metadata for a QueryExpressionExists.
+
+    Pre-resolves all db_schema lookups needed by expression_renderer._render_exists():
+    edge table, edge columns, target node table/ID, source node ID column.
+
+    Keyed by ``id(expr)`` in ``EnrichedPlanData.exists_exprs``.
+    """
+
+    rel_table_name: str
+    source_id_col: str
+    target_id_col: str
+    # Updated source entity name (may differ from AST when resolved via fallback)
+    source_entity_name: str
+    target_table_name: str | None = None
+    target_node_id_col: str = "id"
+    source_node_id_col: str = "id"
+
+
+@dataclass(frozen=True)
 class EnrichedPlanData:
     """Immutable SQL-resolved metadata for the entire plan.
 
     Produced by ``SQLEnrichmentPass``, consumed by the renderer.
-    Keyed by ``operator_debug_id``.
+    Keyed by ``operator_debug_id`` (operators) or ``id(expr)`` (expressions).
 
     During incremental migration, a dict being empty for a given operator type
     means the renderer should fall back to its existing ``db_schema`` code path.
@@ -93,6 +171,8 @@ class EnrichedPlanData:
     data_sources: dict[int, EnrichedDataSource] = field(default_factory=dict)
     join_pairs: dict[int, list[EnrichedJoinPair]] = field(default_factory=dict)
     edge_infos: dict[int, list[EnrichedEdgeInfo]] = field(default_factory=dict)
+    recursive_ops: dict[int, EnrichedRecursiveOp] = field(default_factory=dict)
+    exists_exprs: dict[int, EnrichedExistsExpr] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -123,17 +203,22 @@ class SQLEnrichmentPass:
         data_sources: dict[int, EnrichedDataSource] = {}
         join_pairs: dict[int, list[EnrichedJoinPair]] = {}
         edge_infos: dict[int, list[EnrichedEdgeInfo]] = {}
+        recursive_ops: dict[int, EnrichedRecursiveOp] = {}
+        exists_exprs: dict[int, EnrichedExistsExpr] = {}
 
         visited: set[int] = set()
         for terminal in plan.terminal_operators:
             self._walk(
                 terminal, visited, data_sources, join_pairs, edge_infos,
+                recursive_ops, exists_exprs,
             )
 
         return EnrichedPlanData(
             data_sources=data_sources,
             join_pairs=join_pairs,
             edge_infos=edge_infos,
+            recursive_ops=recursive_ops,
+            exists_exprs=exists_exprs,
         )
 
     def _walk(
@@ -143,6 +228,8 @@ class SQLEnrichmentPass:
         data_sources: dict[int, EnrichedDataSource],
         join_pairs: dict[int, list[EnrichedJoinPair]],
         edge_infos: dict[int, list[EnrichedEdgeInfo]],
+        recursive_ops: dict[int, EnrichedRecursiveOp],
+        exists_exprs: dict[int, EnrichedExistsExpr],
     ) -> None:
         """Bottom-up walk: enrich children first, then current operator."""
         op_id = op.operator_debug_id
@@ -151,10 +238,14 @@ class SQLEnrichmentPass:
         visited.add(op_id)
 
         for child in op.in_operators:
-            self._walk(child, visited, data_sources, join_pairs, edge_infos)
+            self._walk(
+                child, visited, data_sources, join_pairs, edge_infos,
+                recursive_ops, exists_exprs,
+            )
 
         self._enrich_one(
-            op, data_sources, join_pairs, edge_infos,
+            op, data_sources, join_pairs, edge_infos, recursive_ops,
+            exists_exprs,
         )
 
     def _enrich_one(
@@ -163,17 +254,19 @@ class SQLEnrichmentPass:
         data_sources: dict[int, EnrichedDataSource],
         join_pairs: dict[int, list[EnrichedJoinPair]],
         edge_infos: dict[int, list[EnrichedEdgeInfo]],
+        recursive_ops: dict[int, EnrichedRecursiveOp],
+        exists_exprs: dict[int, EnrichedExistsExpr],
     ) -> None:
-        """Dispatch to type-specific enrichment.
-
-        Skeleton — each branch will be implemented as we migrate renderer logic.
-        """
+        """Dispatch to type-specific enrichment."""
         if isinstance(op, DataSourceOperator):
             self._enrich_data_source(op, data_sources)
         elif isinstance(op, JoinOperator):
             self._enrich_join(op, join_pairs)
         elif isinstance(op, RecursiveTraversalOperator):
-            self._enrich_recursive(op, edge_infos)
+            self._enrich_recursive(op, recursive_ops)
+
+        # Walk expression trees for EXISTS sub-expressions (any operator type)
+        self._enrich_exists_in_operator(op, exists_exprs)
 
     # ------------------------------------------------------------------
     # Type-specific enrichment methods (stubs for incremental migration)
@@ -263,15 +356,334 @@ class SQLEnrichmentPass:
         """Resolve SQL column names for join key pairs.
 
         TODO: Migrate logic from sql_renderer._collect_join_key_columns() lines 397-486.
+        Note: _collect_join_key_columns is column-pruning logic, not SQL resolution.
+        The actual join rendering uses entity schema fields directly.  This stub
+        may be removed if there's no real SQL resolution to migrate here.
         """
 
     def _enrich_recursive(
         self,
         op: RecursiveTraversalOperator,
-        edge_infos: dict[int, list[EnrichedEdgeInfo]],
+        recursive_ops: dict[int, EnrichedRecursiveOp],
     ) -> None:
-        """Resolve edge table info for recursive traversal.
+        """Resolve edge tables, columns, filters, and node info for recursive traversal.
 
-        TODO: Migrate logic from recursive_cte_renderer._resolve_edge_tables(),
+        Migrated from recursive_cte_renderer._resolve_edge_tables(),
         _get_edge_column_names(), _get_edge_table_name(), _get_edge_filter_clause().
         """
+        edge_types = op.edge_types if op.edge_types else []
+        edge_tables: list[EnrichedRecursiveEdge] = []
+        source_id_col = op.source_id_column or "source_id"
+        target_id_col = op.target_id_column or "target_id"
+        edge_props: list[str] = list(op.edge_properties) if op.edge_properties else []
+
+        if edge_types:
+            for edge_type in edge_types:
+                edge_table = None
+                edge_schema = None
+
+                if not op.source_node_type or not op.target_node_type:
+                    edges = self._db_schema.find_edges_by_verb(
+                        edge_type,
+                        from_node_name=op.source_node_type or None,
+                        to_node_name=op.target_node_type or None,
+                    )
+                    if edges:
+                        edge_schema = edges[0]
+                        edge_table = self._db_schema.get_sql_table_descriptors(
+                            edge_schema.id
+                        )
+                else:
+                    edge_id = EdgeSchema.get_edge_id(
+                        edge_type, op.source_node_type, op.target_node_type,
+                    )
+                    edge_table = self._db_schema.get_sql_table_descriptors(edge_id)
+                    if not edge_table:
+                        edge_table = self._db_schema.get_sql_table_descriptors(
+                            edge_type
+                        )
+                    edge_schema = self._db_schema.get_edge_definition(
+                        edge_type, op.source_node_type, op.target_node_type,
+                    )
+
+                if edge_table:
+                    edge_tables.append(
+                        EnrichedRecursiveEdge(
+                            edge_type=edge_type,
+                            table_descriptor=edge_table,
+                            filter_clause=edge_table.filter if edge_table.filter else None,
+                        )
+                    )
+
+                if len(edge_tables) == 1 and edge_schema:
+                    if edge_schema.source_id_property:
+                        source_id_col = edge_schema.source_id_property.property_name
+                    if edge_schema.sink_id_property:
+                        target_id_col = edge_schema.sink_id_property.property_name
+                    if op.collect_edges and not edge_props:
+                        for prop in edge_schema.properties:
+                            if prop.property_name not in (
+                                source_id_col, target_id_col,
+                            ):
+                                edge_props.append(prop.property_name)
+        else:
+            wildcard_table = self._db_schema.get_wildcard_edge_table_descriptor()
+            if wildcard_table:
+                edge_tables.append(
+                    EnrichedRecursiveEdge(
+                        edge_type=WILDCARD_EDGE_TYPE,
+                        table_descriptor=wildcard_table,
+                        filter_clause=wildcard_table.filter if wildcard_table.filter else None,
+                    )
+                )
+            wildcard_schema = self._db_schema.get_wildcard_edge_definition()
+            if wildcard_schema:
+                if wildcard_schema.source_id_property:
+                    source_id_col = wildcard_schema.source_id_property.property_name
+                if wildcard_schema.sink_id_property:
+                    target_id_col = wildcard_schema.sink_id_property.property_name
+                if op.collect_edges and not edge_props:
+                    for prop in wildcard_schema.properties:
+                        if prop.property_name not in (source_id_col, target_id_col):
+                            edge_props.append(prop.property_name)
+
+        if not edge_tables:
+            return
+
+        # Single-table optimisation
+        table_to_filters: dict[str, list[str]] = {}
+        for et in edge_tables:
+            tname = et.table_descriptor.full_table_name
+            if tname not in table_to_filters:
+                table_to_filters[tname] = []
+            if et.filter_clause:
+                table_to_filters[tname].append(et.filter_clause)
+
+        single_table = len(table_to_filters) == 1
+        single_table_name: str | None = None
+        single_table_filter: str | None = None
+        if single_table:
+            single_table_name = next(iter(table_to_filters))
+            filters_list = table_to_filters[single_table_name]
+            if len(filters_list) > 1:
+                single_table_filter = " OR ".join(f"({f})" for f in filters_list)
+            elif len(filters_list) == 1:
+                single_table_filter = filters_list[0]
+
+        # Resolve source and target node info
+        source_node = self._resolve_node_info(op.source_node_type)
+        target_node = self._resolve_node_info(op.target_node_type)
+
+        # Pre-rewrite filter ASTs for all alias variants
+        edge_filter_as_e = None
+        start_filter_as_src = None
+        start_filter_as_n = None
+        sink_filter_as_tgt = None
+        sink_filter_as_sink = None
+
+        if op.edge_filter and op.edge_filter_lambda_var:
+            edge_filter_as_e = rewrite_predicate_for_edge_alias(
+                op.edge_filter, op.edge_filter_lambda_var,
+                edge_alias="e",
+            )
+        if op.start_node_filter and op.source_alias:
+            start_filter_as_src = rewrite_predicate_for_edge_alias(
+                op.start_node_filter, op.source_alias,
+                edge_alias="src",
+            )
+            start_filter_as_n = rewrite_predicate_for_edge_alias(
+                op.start_node_filter, op.source_alias,
+                edge_alias="n",
+            )
+        if op.sink_node_filter and op.target_alias:
+            sink_filter_as_tgt = rewrite_predicate_for_edge_alias(
+                op.sink_node_filter, op.target_alias,
+                edge_alias="tgt",
+            )
+            sink_filter_as_sink = rewrite_predicate_for_edge_alias(
+                op.sink_node_filter, op.target_alias,
+                edge_alias="sink",
+            )
+
+        recursive_ops[op.operator_debug_id] = EnrichedRecursiveOp(
+            edge_tables=tuple(edge_tables),
+            source_id_col=source_id_col,
+            target_id_col=target_id_col,
+            edge_property_names=tuple(edge_props),
+            single_table=single_table,
+            single_table_name=single_table_name,
+            single_table_filter=single_table_filter,
+            source_node=source_node,
+            target_node=target_node,
+            edge_filter_as_e=edge_filter_as_e,
+            start_filter_as_src=start_filter_as_src,
+            start_filter_as_n=start_filter_as_n,
+            sink_filter_as_tgt=sink_filter_as_tgt,
+            sink_filter_as_sink=sink_filter_as_sink,
+        )
+
+    def _resolve_node_info(self, node_type: str) -> EnrichedNodeInfo | None:
+        """Resolve node table descriptor, ID column, and property names."""
+        table_desc = self._resolve_table_descriptor(node_type)
+        if table_desc is None:
+            return None
+
+        node_schema = self._db_schema.get_node_definition(node_type)
+        if not node_schema and (not node_type or node_type == WILDCARD_NODE_TYPE):
+            node_schema = self._db_schema.get_wildcard_node_definition()
+
+        if node_schema and node_schema.node_id_property:
+            id_col = node_schema.node_id_property.property_name
+        else:
+            id_col = "id"
+
+        prop_names: tuple[str, ...] = ()
+        if node_schema:
+            prop_names = tuple(p.property_name for p in node_schema.properties)
+
+        return EnrichedNodeInfo(
+            table_descriptor=table_desc,
+            id_column=id_col,
+            property_names=prop_names,
+        )
+
+    # ------------------------------------------------------------------
+    # EXISTS expression enrichment
+    # ------------------------------------------------------------------
+
+    def _enrich_exists_in_operator(
+        self,
+        op: LogicalOperator,
+        exists_exprs: dict[int, EnrichedExistsExpr],
+    ) -> None:
+        """Find all QueryExpressionExists in an operator's expression trees."""
+        expressions: list[QueryExpression] = []
+        if isinstance(op, SelectionOperator) and op.filter_expression:
+            expressions.append(op.filter_expression)
+        if isinstance(op, ProjectionOperator):
+            if op.filter_expression:
+                expressions.append(op.filter_expression)
+            if op.having_expression:
+                expressions.append(op.having_expression)
+            for _alias, proj_expr in op.projections:
+                if proj_expr:
+                    expressions.append(proj_expr)
+
+        for expr_root in expressions:
+            for exists_expr in expr_root.get_children_query_expression_type(
+                QueryExpressionExists
+            ):
+                expr_id = id(exists_expr)
+                if expr_id not in exists_exprs:
+                    enriched = self._enrich_exists_expr(exists_expr)
+                    if enriched is not None:
+                        exists_exprs[expr_id] = enriched
+
+    def _enrich_exists_expr(
+        self, expr: QueryExpressionExists
+    ) -> EnrichedExistsExpr | None:
+        """Resolve all SQL metadata for a single EXISTS expression.
+
+        Mirrors the 7 db_schema lookups in expression_renderer._render_exists().
+        """
+        if expr.subquery or not expr.pattern_entities:
+            return None
+
+        source_node: NodeEntity | None = None
+        relationship: RelationshipEntity | None = None
+        target_node: NodeEntity | None = None
+
+        for entity in expr.pattern_entities:
+            if isinstance(entity, NodeEntity):
+                if source_node is None:
+                    source_node = entity
+                else:
+                    target_node = entity
+            elif isinstance(entity, RelationshipEntity):
+                relationship = entity
+
+        if not relationship or not source_node:
+            return None
+
+        rel_name = relationship.entity_name
+        source_entity_name = source_node.entity_name or ""
+        target_entity_name = target_node.entity_name if target_node else ""
+
+        edge_schema: EdgeSchema | None = None
+        rel_table_desc: SQLTableDescriptor | None = None
+
+        if source_entity_name and target_entity_name:
+            if not expr.correlation_uses_source:
+                edge_id = EdgeSchema.get_edge_id(
+                    rel_name, target_entity_name, source_entity_name
+                )
+            else:
+                edge_id = EdgeSchema.get_edge_id(
+                    rel_name, source_entity_name, target_entity_name
+                )
+            rel_table_desc = self._db_schema.get_sql_table_descriptors(edge_id)
+            if not expr.correlation_uses_source:
+                edge_schema = self._db_schema.get_edge_definition(
+                    rel_name, target_entity_name, source_entity_name
+                )
+            else:
+                edge_schema = self._db_schema.get_edge_definition(
+                    rel_name, source_entity_name, target_entity_name
+                )
+        else:
+            result = self._db_schema.find_edge_by_verb(
+                rel_name, target_entity_name
+            )
+            if result:
+                edge_schema, rel_table_desc = result
+                source_entity_name = edge_schema.source_node_id
+
+        if not rel_table_desc:
+            return None
+
+        rel_table = rel_table_desc.full_table_name
+        source_id_col = "source_id"
+        target_id_col = "target_id"
+        if edge_schema:
+            if edge_schema.source_id_property:
+                source_id_col = edge_schema.source_id_property.property_name
+            if edge_schema.sink_id_property:
+                target_id_col = edge_schema.sink_id_property.property_name
+
+        # Resolve target node table and ID column
+        target_table_name: str | None = None
+        target_node_id_col = "id"
+        if target_node and target_node.entity_name:
+            target_table_desc = self._db_schema.get_sql_table_descriptors(
+                target_node.entity_name
+            )
+            if target_table_desc:
+                target_table_name = target_table_desc.full_table_name
+                target_node_schema = self._db_schema.get_node_definition(
+                    target_node.entity_name
+                )
+                if target_node_schema and target_node_schema.node_id_property:
+                    target_node_id_col = (
+                        target_node_schema.node_id_property.property_name
+                    )
+
+        # Resolve source node ID column
+        source_node_id_col = "id"
+        if source_node.entity_name:
+            source_node_schema = self._db_schema.get_node_definition(
+                source_node.entity_name
+            )
+            if source_node_schema and source_node_schema.node_id_property:
+                source_node_id_col = (
+                    source_node_schema.node_id_property.property_name
+                )
+
+        return EnrichedExistsExpr(
+            rel_table_name=rel_table,
+            source_id_col=source_id_col,
+            target_id_col=target_id_col,
+            source_entity_name=source_entity_name,
+            target_table_name=target_table_name,
+            target_node_id_col=target_node_id_col,
+            source_node_id_col=source_node_id_col,
+        )

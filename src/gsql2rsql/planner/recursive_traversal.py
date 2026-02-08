@@ -282,6 +282,7 @@ def create_recursive_match_tree(
 
     # Join recursive result with target node
     join_op = JoinOperator(join_type=JoinType.INNER)
+    join_op.recursive_source_alias = source_node.alias
     join_op.add_join_pair(
         JoinKeyPair(
             node_alias=target_node.alias,
@@ -360,6 +361,12 @@ def _process_remaining_pattern_parts(
 
         # Determine join type and create join pairs
         new_join_op = JoinOperator(join_type=JoinType.INNER)
+        # Propagate recursive source alias through join chain
+        if (isinstance(current_op, JoinOperator)
+                and current_op.recursive_source_alias):
+            new_join_op.recursive_source_alias = (
+                current_op.recursive_source_alias
+            )
 
         if isinstance(entity, RelationshipEntity):
             # Join target node to relationship
