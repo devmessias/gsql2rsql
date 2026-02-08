@@ -94,9 +94,6 @@ validate-sql-syntax:  ## Validate generated SQL syntax
 benchmark-queries:  ## Benchmark query transpilation performance
 	$(UV) run python scripts/benchmark.py
 
-test-recursive-query:  ## Test variable-length path query with custom schema
-	@echo "Testing recursive query transpilation..."
-	@echo "MATCH path = (root:Vertex)-[rels:REL*1..5]-(n:Vertex) WHERE root.node_id = '1234_algo' AND n.node_type = 'node_type' AND NONE(r IN rels WHERE r.relationship_type IN ['a', 'b']) RETURN rels AS edges, n AS vertex_info" | $(UV) run gsql2rsql transpile --schema tests/schemas/recursive_test_schema.json
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Code Quality
@@ -142,31 +139,6 @@ grammar-check:  ## Check if ANTLR jar exists
 
 publish-local:  ## Publish to PyPI
 	$(UV) publish
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-EXAMPLE_SCHEMA := examples/schema.json
-EXAMPLE_SCHEMA_SINGLE_TABLE := examples/schema_single_edge_table.json
-
-cli-help:  ## Show CLI help
-	$(UV) run gsql2rsql --help
-
-cli-transpile-help:  ## Show transpile command help
-	$(UV) run gsql2rsql transpile --help
-
-cli-example:  ## Run example query
-	@echo "MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, f.name" | $(UV) run gsql2rsql transpile -s $(EXAMPLE_SCHEMA)
-
-cli-bfs-example:  ## Run BFS example query
-	@echo "MATCH (root:Person)-[:KNOWS*1..5]->(neighbor:Person) RETURN DISTINCT neighbor.id, neighbor.name" | $(UV) run gsql2rsql transpile -s $(EXAMPLE_SCHEMA)
-
-cli-bfs-from-root:  ## Run BFS from specific root node
-	@echo "MATCH (root:Person)-[:KNOWS*1..5]->(neighbor:Person) WHERE root.id = 1 RETURN DISTINCT neighbor.id, neighbor.name" | $(UV) run gsql2rsql transpile -s $(EXAMPLE_SCHEMA)
-
-cli-bfs-multi-edge:  ## Run BFS with multiple edge types (single table with filter)
-	@echo "MATCH (p:Person)-[:KNOWS|FOLLOWS*1..3]->(f:Person) WHERE p.id = 1 RETURN DISTINCT f.id, f.name" | $(UV) run gsql2rsql transpile -s $(EXAMPLE_SCHEMA_SINGLE_TABLE)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-Query SQL Dump & Diff (for human validation)

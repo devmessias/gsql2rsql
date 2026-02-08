@@ -247,6 +247,7 @@ examples:
 
   - description: "Identify seasonal spending patterns for credit limit adjustments"
     application: "Credit: Seasonal analysis"
+    expected_error: true  # OVER (PARTITION BY ...) is SQL window syntax, not valid Cypher
     query: |
       MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
       WHERE t.timestamp > TIMESTAMP() - DURATION('P365D')

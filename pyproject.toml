@@ -23,12 +23,6 @@ classifiers = [
 ]
 dependencies = [
     "antlr4-python3-runtime>=4.13.0",
-    "click>=8.1.0",
-    "prompt-toolkit>=3.0.0",
-    "colorama>=0.4.6",
-    "pyyaml>=6.0",
-    "rich>=13.0.0",
-    "textual>=0.47.0",
 ]
 
 [project.optional-dependencies]
@@ -42,9 +36,6 @@ dev = [
     "pyspark>=3.5.0",
 ]
 
-[project.scripts]
-gsql2rsql = "gsql2rsql.cli:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -56,7 +47,7 @@ packages = ["src/gsql2rsql"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 include = ["src"]
-exclude = ["**/grammar/**", "**/__pycache__", "**/cli.py"]
+exclude = ["**/grammar/**", "**/__pycache__"]
 reportMissingImports = true
 reportMissingTypeStubs = false
 reportUnusedImport = false
@@ -88,7 +79,7 @@ warn_no_return = true
 follow_imports = "normal"
 show_error_codes = true
 plugins = []
-exclude = ["src/gsql2rsql/parser/grammar/", "src/gsql2rsql/cli.py"]
+exclude = ["src/gsql2rsql/parser/grammar/"]
 include = ["src"]
 
 [[tool.mypy.overrides]]
@@ -212,5 +203,6 @@ dev = [
     "mkdocs-minify-plugin>=0.8.0",
     "pyspark>=4.1.0",
     "pytest-xdist>=3.8.0",
+    "pyyaml>=6.0",
     "vulture>=2.14",
 ]
