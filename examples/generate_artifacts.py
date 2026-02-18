@@ -192,7 +192,7 @@ def transpile_query(
 
     # Step 2: Generate Logical Plan
     try:
-        from gsql2rsql.planner.subquery_optimizer import optimize_plan
+        from gsql2rsql.planner.pass_manager import optimize_plan
 
         plan = LogicalPlan.process_query_tree(ast, schema_provider)
         # Apply optimizations (predicate pushdown, subquery flattening)

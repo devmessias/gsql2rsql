@@ -186,11 +186,9 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         self._nodes: dict[str, NodeSchema] = {}
         self._edges: dict[str, EdgeSchema] = {}
         self._table_descriptors: dict[str, SQLTableDescriptor] = {}
-        # Explicit wildcard configuration (optional, for backward compatibility)
+        # Explicit wildcard configuration
         self._wildcard_node: NodeSchema | None = None
         self._wildcard_table_desc: SQLTableDescriptor | None = None
-        self._wildcard_edge: EdgeSchema | None = None
-        self._wildcard_edge_table_desc: SQLTableDescriptor | None = None
         # Auto-detected base tables (from first node/edge added)
         self._base_node_table: SQLTableDescriptor | None = None
         self._base_node_schema: NodeSchema | None = None
@@ -274,23 +272,6 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         self._wildcard_node = schema
         self._wildcard_table_desc = table_descriptor
 
-    def set_wildcard_edge(
-        self,
-        schema: EdgeSchema,
-        table_descriptor: SQLTableDescriptor,
-    ) -> None:
-        """Register wildcard edge with its SQL descriptor.
-
-        WARNING: Untyped edge support causes full table scans on the edges table.
-        Specify edge types whenever possible for production queries.
-
-        Args:
-            schema: Edge schema for wildcard edges.
-            table_descriptor: SQL table descriptor with filter=None (no type filter).
-        """
-        self._wildcard_edge = schema
-        self._wildcard_edge_table_desc = table_descriptor
-
     def enable_no_label_support(
         self,
         table_name: str,
@@ -342,67 +323,6 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
         # Register the wildcard node
         self.set_wildcard_node(wildcard_schema, wildcard_desc)
 
-    def enable_untyped_edge_support(
-        self,
-        table_name: str,
-        source_id_column: str,
-        sink_id_column: str,
-        properties: list[EntityProperty] | None = None,
-    ) -> None:
-        """Enable support for edges without type in MATCH patterns.
-
-        This method configures the schema provider to handle queries like:
-            MATCH (a:Person)-[]-(b)
-            MATCH (a)-[*1..3]-(b)
-        where the edge has no type specified.
-
-        WARNING: Untyped edge support causes full table scans on the edges table.
-        Specify edge types whenever possible for production queries.
-
-        Args:
-            table_name: The edges table name (e.g., "catalog.schema.edges").
-            source_id_column: Column name for edge source (e.g., "src").
-            sink_id_column: Column name for edge destination (e.g., "dst").
-            properties: Optional list of edge properties available on all edges.
-
-        Example:
-            >>> provider = SimpleSQLSchemaProvider()
-            >>> # Add edge types...
-            >>> provider.enable_untyped_edge_support(
-            ...     table_name="catalog.schema.edges",
-            ...     source_id_column="src",
-            ...     sink_id_column="dst",
-            ...     properties=[EntityProperty("weight", float)],
-            ... )
-        """
-        from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
-
-        # Create wildcard edge schema
-        wildcard_edge_schema = EdgeSchema(
-            name=WILDCARD_EDGE_TYPE,
-            source_node_id=WILDCARD_NODE_TYPE,
-            sink_node_id=WILDCARD_NODE_TYPE,
-            source_id_property=EntityProperty(
-                property_name=source_id_column,
-                data_type=str,
-            ),
-            sink_id_property=EntityProperty(
-                property_name=sink_id_column,
-                data_type=str,
-            ),
-            properties=properties or [],
-        )
-
-        # Create table descriptor without type filter (matches all edges)
-        wildcard_desc = SQLTableDescriptor(
-            table_name=table_name,
-            node_id_columns=[source_id_column, sink_id_column],
-            filter=None,  # No type filter - matches all edges
-        )
-
-        # Register the wildcard edge
-        self.set_wildcard_edge(wildcard_edge_schema, wildcard_desc)
-
     def get_wildcard_node_definition(self) -> NodeSchema | None:
         """Get the wildcard node schema.
 
@@ -442,12 +362,8 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
     def get_wildcard_edge_definition(self) -> EdgeSchema | None:
         """Get the wildcard edge schema.
 
-        Returns explicitly configured wildcard, or auto-generates one from
-        the base edge table if available.
+        Auto-generates one from the base edge table if available.
         """
-        if self._wildcard_edge is not None:
-            return self._wildcard_edge
-        # Auto-generate from base edge schema
         if self._base_edge_schema is not None:
             from gsql2rsql.common.schema import WILDCARD_EDGE_TYPE, WILDCARD_NODE_TYPE
             return EdgeSchema(
@@ -463,12 +379,8 @@ class SimpleSQLSchemaProvider(ISQLDBSchemaProvider):
     def get_wildcard_edge_table_descriptor(self) -> SQLTableDescriptor | None:
         """Get SQL descriptor for wildcard edges (no type filter).
 
-        Returns explicitly configured wildcard descriptor, or auto-generates
-        one from the base edge table (same table, no filter).
+        Auto-generates from the base edge table (same table, no filter).
         """
-        if self._wildcard_edge_table_desc is not None:
-            return self._wildcard_edge_table_desc
-        # Auto-generate from base edge table (same table, no filter)
         if self._base_edge_table is not None:
             return SQLTableDescriptor(
                 table_name=self._base_edge_table.table_name

@@ -41,7 +41,7 @@ from gsql2rsql.renderer.schema_provider import (
     SQLTableDescriptor,
 )
 from gsql2rsql.planner.operators import RecursiveTraversalOperator
-from gsql2rsql.planner.subquery_optimizer import optimize_plan
+from gsql2rsql.planner.pass_manager import optimize_plan
 
 
 class TestRecursiveSinkFilterPushdown:

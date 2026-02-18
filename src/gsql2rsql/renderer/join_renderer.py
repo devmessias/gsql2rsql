@@ -24,6 +24,7 @@ from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 if TYPE_CHECKING:
     from gsql2rsql.renderer.expression_renderer import ExpressionRenderer
     from gsql2rsql.renderer.render_context import RenderContext
+    from gsql2rsql.renderer.sql_enrichment import EnrichedRecursiveOp
 
 
 class JoinRenderer:
@@ -38,15 +39,15 @@ class JoinRenderer:
         self,
         ctx: "RenderContext",
         expr: "ExpressionRenderer",
-        render_operator_fn: Callable,
-        render_agg_boundary_ref_fn: Callable,
+        render_operator_fn: Callable[[LogicalOperator, int], str],
+        render_agg_boundary_ref_fn: Callable[[AggregationBoundaryOperator, int], str],
     ) -> None:
         self._ctx = ctx
         self._expr = expr
         self._render_operator = render_operator_fn
         self._render_aggregation_boundary_reference = render_agg_boundary_ref_fn
 
-    def _get_enriched_recursive(self, op: RecursiveTraversalOperator):
+    def _get_enriched_recursive(self, op: RecursiveTraversalOperator) -> EnrichedRecursiveOp | None:
         """Get enriched data for a RecursiveTraversalOperator."""
         if self._ctx.enriched:
             return self._ctx.enriched.recursive_ops.get(

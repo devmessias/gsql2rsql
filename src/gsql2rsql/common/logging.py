@@ -37,20 +37,3 @@ class ILoggable(ABC):
     def error(self, message: str, *args: Any) -> None:
         """Log an error message."""
         self.log(LogLevel.ERROR, message, *args)
-
-
-class BaseLogger(ILoggable):
-    """Base logger implementation that does nothing by default."""
-
-    def __init__(self, min_level: LogLevel = LogLevel.INFO) -> None:
-        self.min_level = min_level
-
-    def log(self, level: LogLevel, message: str, *args: Any) -> None:
-        """Log a message if it meets the minimum level."""
-        if level >= self.min_level:
-            formatted_message = message.format(*args) if args else message
-            self._write_log(level, formatted_message)
-
-    def _write_log(self, level: LogLevel, message: str) -> None:
-        """Write the log message. Override in subclasses."""
-        pass

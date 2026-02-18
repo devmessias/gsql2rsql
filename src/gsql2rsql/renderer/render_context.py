@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from gsql2rsql.planner.column_ref import ResolvedColumnRef
 from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.operators import LogicalOperator
-from gsql2rsql.planner.schema import EntityField, EntityType, Schema
+from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider
 
 if TYPE_CHECKING:
@@ -58,12 +58,6 @@ class RenderContext:
     # Counters
     # ------------------------------------------------------------------
 
-    def next_cte_name(self) -> str:
-        """Return a unique CTE name and advance the counter."""
-        name = f"_cte_{self._cte_counter}"
-        self._cte_counter += 1
-        return name
-
     def next_join_alias_pair(self) -> tuple[str, str]:
         """Generate unique ``(_left_N, _right_N)`` alias pair for JOINs."""
         alias_id = self._join_alias_counter
@@ -97,7 +91,7 @@ class RenderContext:
         )
         return f"{self.COLUMN_PREFIX}{clean_prefix}_{field_name}"
 
-    def resolve_field_key(self, field, entity_alias: str) -> str:
+    def resolve_field_key(self, field: ValueField, entity_alias: str) -> str:
         """Return the SQL column name for *field*, using pre-rendered name when available.
 
         Variable-length path fields already carry the full SQL column name in

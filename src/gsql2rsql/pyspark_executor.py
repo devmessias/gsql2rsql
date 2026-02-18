@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
 from gsql2rsql.common.schema import EdgeSchema, EntityProperty, NodeSchema
-from gsql2rsql.planner.subquery_optimizer import optimize_plan
+from gsql2rsql.planner.pass_manager import optimize_plan
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
 if TYPE_CHECKING:
@@ -207,7 +207,7 @@ def transpile_query(
         plan = LogicalPlan.process_query_tree(ast, schema_provider)
         optimize_plan(plan)
         plan.resolve(query)  # Resolve column references before rendering
-        renderer = SQLRenderer(schema_provider)
+        renderer = SQLRenderer(db_schema_provider=schema_provider)
         sql = renderer.render_plan(plan)
         return sql, None
     except Exception as e:

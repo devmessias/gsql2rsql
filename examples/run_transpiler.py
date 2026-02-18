@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from gsql2rsql import OpenCypherParser, LogicalPlan, SQLRenderer
 from gsql2rsql.common.schema import EdgeSchema, EntityProperty, NodeSchema
-from gsql2rsql.planner.subquery_optimizer import optimize_plan
+from gsql2rsql.planner.pass_manager import optimize_plan
 from gsql2rsql.renderer.schema_provider import SimpleSQLSchemaProvider, SQLTableDescriptor
 
 

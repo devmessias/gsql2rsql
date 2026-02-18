@@ -8,7 +8,6 @@ entity-as-struct rendering, date/time/duration helpers, etc.
 
 from __future__ import annotations
 
-import re
 
 from gsql2rsql.common.exceptions import (
     TranspilerInternalErrorException,

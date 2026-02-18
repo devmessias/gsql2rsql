@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from gsql2rsql.renderer.expression_renderer import ExpressionRenderer
     from gsql2rsql.renderer.render_context import RenderContext
     from gsql2rsql.renderer.schema_provider import SQLTableDescriptor
+    from gsql2rsql.renderer.sql_enrichment import EnrichedRecursiveOp
 
 
 @dataclass
@@ -107,7 +108,7 @@ class RecursiveCTERenderer:
 
     def _get_enriched_recursive(
         self, op: RecursiveTraversalOperator
-    ):
+    ) -> EnrichedRecursiveOp | None:
         """Get enriched data for a RecursiveTraversalOperator."""
         if self._ctx.enriched:
             return self._ctx.enriched.recursive_ops.get(

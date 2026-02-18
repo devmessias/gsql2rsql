@@ -143,7 +143,7 @@ from gsql2rsql.planner.operators import (
     SelectionOperator,
     LogicalOperator,
 )
-from gsql2rsql.planner.subquery_optimizer import optimize_plan
+from gsql2rsql.planner.pass_manager import optimize_plan
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
     SQLTableDescriptor,

@@ -11,16 +11,9 @@ from gsql2rsql.common.exceptions import (
 from gsql2rsql.common.logging import ILoggable
 from gsql2rsql.parser.ast import (
     QueryExpression,
-    QueryExpressionAggregationFunction,
-    QueryExpressionBinary,
-    QueryExpressionFunction,
-    QueryExpressionList,
-    QueryExpressionParameter,
     QueryExpressionProperty,
-    QueryExpressionValue,
 )
 from gsql2rsql.parser.operators import (
-    AggregationFunction,
     Function,
 )
 from gsql2rsql.renderer.dialect import (
@@ -34,7 +27,6 @@ from gsql2rsql.planner.operators import (
     DataSourceOperator,
     JoinKeyPairType,
     JoinOperator,
-    JoinType,
     LogicalOperator,
     ProjectionOperator,
     RecursiveTraversalOperator,
@@ -43,7 +35,7 @@ from gsql2rsql.planner.operators import (
     SetOperator,
     UnwindOperator,
 )
-from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
+from gsql2rsql.planner.schema import EntityField, EntityType, Schema
 from gsql2rsql.renderer.expression_renderer import ExpressionRenderer
 from gsql2rsql.renderer.join_renderer import JoinRenderer
 from gsql2rsql.renderer.procedural_bfs_renderer import ProceduralBFSRenderer
@@ -68,11 +60,9 @@ class SQLRenderer:
 
     def __init__(
         self,
-        graph_def: ISQLDBSchemaProvider | None = None,
+        db_schema_provider: ISQLDBSchemaProvider,
         logger: ILoggable | None = None,
         *,
-        graph_schema_provider: ISQLDBSchemaProvider | None = None,
-        db_schema_provider: ISQLDBSchemaProvider | None = None,
         enable_column_pruning: bool = True,
         config: dict[str, Any] | None = None,
         vlp_rendering_mode: str = "cte",
@@ -82,24 +72,15 @@ class SQLRenderer:
         Initialize the SQL renderer.
 
         Args:
-            graph_def: The SQL schema provider with table mappings.
-                Deprecated: use db_schema_provider instead.
-            logger: Optional logger for debugging.
-            graph_schema_provider: The graph schema provider (for future use).
             db_schema_provider: The SQL database schema provider.
+            logger: Optional logger for debugging.
             enable_column_pruning: Enable column pruning optimization.
             config: Optional configuration dictionary.
                 Supported keys:
                 - 'undirected_strategy': Strategy for undirected relationships.
                   Values: 'union_edges' (default) or 'or_join'
         """
-        # Support both old and new parameter names
-        self._graph_def = db_schema_provider or graph_def
-        if self._graph_def is None:
-            raise ValueError(
-                "Either graph_def or db_schema_provider must be provided"
-            )
-        self._graph_schema_provider = graph_schema_provider
+        self._graph_def = db_schema_provider
         self._logger = logger
         self._cte_counter = 0
         # Global counter for unique JOIN aliases to prevent Databricks optimizer issues.
@@ -217,10 +198,9 @@ class SQLRenderer:
         self._resolution_result = plan.resolution_result
 
         # SQL Enrichment: resolve SQL-specific metadata in a single pass
-        # before any rendering begins.  Currently a no-op skeleton — each
-        # _enrich_* method will be implemented as we migrate renderer logic.
+        # before any rendering begins.
         enrichment = SQLEnrichmentPass(self._db_schema)
-        enriched = enrichment.enrich(plan, self._resolution_result)
+        enriched = enrichment.enrich(plan)
 
         # Column pruning: collect required columns before rendering
         self._required_columns = set()

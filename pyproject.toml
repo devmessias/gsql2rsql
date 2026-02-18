@@ -80,7 +80,6 @@ follow_imports = "normal"
 show_error_codes = true
 plugins = []
 exclude = ["src/gsql2rsql/parser/grammar/"]
-include = ["src"]
 
 [[tool.mypy.overrides]]
 module = "antlr4.*"

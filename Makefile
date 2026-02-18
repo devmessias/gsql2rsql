@@ -1,5 +1,17 @@
-.PHONY: help install install-dev test test-cov lint format typecheck typecheck-mypy grammar clean build publish \
-       test-pyspark test-pyspark-basic test-pyspark-examples test-pyspark-quick test-pyspark-verbose
+.PHONY: help install install-dev venv \
+       test test-cov test-no-pyspark test-bfs test-no-label test-verbose \
+       test-pyspark test-pyspark-timeout test-pyspark-basic test-pyspark-examples \
+       test-pyspark-quick test-pyspark-verbose test-pyspark-features test-pyspark-fraud \
+       test-pyspark-credit test-pyspark-summary \
+       lint lint-fix format format-check typecheck typecheck-mypy check \
+       grammar grammar-check \
+       dump-sql dump-sql-save dump-sql-custom generate-golden-files \
+       test-transpile test-transpile-golden diff-all \
+       docs-install docs-generate-artifacts docs-generate-pages docs-generate \
+       docs-serve docs-build docs-deploy docs-clean docs-full generate-readme \
+       clean clean-all tree watch-test \
+       build check-release version-bump-patch version-bump-minor version-bump-major \
+       changelog release-dry-run release publish-test publish
 
 PYTHON := .venv/bin/python3
 UV := uv
@@ -79,23 +91,6 @@ test-pyspark-summary:  ## Generate PySpark test summary report
 	$(UV) run pytest tests/test_examples_with_pyspark.py::TestExamplesSummary -v -s
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Testing & Validation
-# ─────────────────────────────────────────────────────────────────────────────
-
-test-equivalence:  ## Test SQL equivalence for generated queries
-	$(UV) run python scripts/test_equivalence.py
-
-generate-test-queries:  ## Generate comprehensive OpenCypher test queries
-	$(UV) run python scripts/generate_queries.py
-
-validate-sql-syntax:  ## Validate generated SQL syntax
-	$(UV) run python scripts/validate_sql.py
-
-benchmark-queries:  ## Benchmark query transpilation performance
-	$(UV) run python scripts/benchmark.py
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Code Quality
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -130,58 +125,8 @@ grammar-check:  ## Check if ANTLR jar exists
 	@test -f $(ANTLR_JAR) || (echo "Error: $(ANTLR_JAR) not found. Download from https://www.antlr.org/download.html" && exit 1)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Build & Publish
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-
-
-
-publish-local:  ## Publish to PyPI
-	$(UV) publish
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Per-Query SQL Dump & Diff (for human validation)
 # ─────────────────────────────────────────────────────────────────────────────
-
-dump-sql-01:  ## Dump SQL for test 01 (simple node lookup)
-	@$(UV) run python scripts/dump_query_sql.py 01 simple_node_lookup --diff
-
-dump-sql-02:  ## Dump SQL for test 02 (node with property filter)
-	@$(UV) run python scripts/dump_query_sql.py 02 node_with_property_filter --diff
-
-dump-sql-03:  ## Dump SQL for test 03 (property projection)
-	@$(UV) run python scripts/dump_query_sql.py 03 property_projection_aliases --diff
-
-dump-sql-06:  ## Dump SQL for test 06 (single-hop relationship)
-	@$(UV) run python scripts/dump_query_sql.py 06 single_hop_relationship --diff
-
-dump-sql-11:  ## Dump SQL for test 11 (aggregation with GROUP BY)
-	@$(UV) run python scripts/dump_query_sql.py 11 aggregation_group_by --diff
-
-dump-sql-12:  ## Dump SQL for test 12 (aggregation with ORDER BY)
-	@$(UV) run python scripts/dump_query_sql.py 12 aggregation_order_by --diff
-
-dump-sql-14:  ## Dump SQL for test 14 (COLLECT aggregation)
-	@$(UV) run python scripts/dump_query_sql.py 14 collect_aggregation --diff
-
-dump-sql-15:  ## Dump SQL for test 15 (DISTINCT rows)
-	@$(UV) run python scripts/dump_query_sql.py 15 distinct_rows --diff
-
-dump-sql-17:  ## Dump SQL for test 17 (CASE expression)
-	@$(UV) run python scripts/dump_query_sql.py 17 case_expression --diff
-
-dump-sql-18:  ## Dump SQL for test 18 (EXISTS pattern)
-	@$(UV) run python scripts/dump_query_sql.py 18 exists_pattern --diff
-
-dump-sql-19:  ## Dump SQL for test 19 (UNION)
-	@$(UV) run python scripts/dump_query_sql.py 19 union --diff
-
-dump-sql-20:  ## Dump SQL for test 20 (COALESCE)
-	@$(UV) run python scripts/dump_query_sql.py 20 coalesce --diff
-
-dump-sql-21:  ## Dump SQL for test 21 (Variable-length *0..N)
-	@$(UV) run python scripts/dump_query_sql.py 21 variable_length_zero --diff
 
 dump-sql:  ## Dump SQL for a specific test (usage: make dump-sql ID=01 NAME=simple_node_lookup)
 	@$(UV) run python scripts/dump_query_sql.py $(ID) $(NAME) --diff

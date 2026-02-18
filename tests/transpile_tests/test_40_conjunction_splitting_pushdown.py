@@ -45,10 +45,8 @@ from gsql2rsql.planner.operators import (
     ProjectionOperator,
     LogicalOperator,
 )
-from gsql2rsql.planner.subquery_optimizer import (
-    SelectionPushdownOptimizer,
-    optimize_plan,
-)
+from gsql2rsql.planner.pass_manager import optimize_plan
+from gsql2rsql.planner.selection_pushdown import SelectionPushdownOptimizer
 from gsql2rsql.renderer.schema_provider import (
     SimpleSQLSchemaProvider,
     SQLTableDescriptor,

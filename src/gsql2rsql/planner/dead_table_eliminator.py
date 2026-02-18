@@ -115,7 +115,6 @@ from gsql2rsql.planner.operators import (
     ProjectionOperator,
     SelectionOperator,
 )
-from gsql2rsql.planner.schema import EntityType
 
 if TYPE_CHECKING:
     from gsql2rsql.planner.logical_plan import LogicalPlan
@@ -396,11 +395,6 @@ class DeadTableEliminationOptimizer:
 
         elif isinstance(expr, QueryExpressionFunction):
             # Regular function call: collect parameters
-            # Check if it's a function that uses variables directly
-            func_name = ""
-            if expr.function and expr.function.name:
-                func_name = expr.function.name.upper()
-
             for param in expr.parameters:
                 # Recurse into parameters
                 self._collect_from_expression(param, used, context)

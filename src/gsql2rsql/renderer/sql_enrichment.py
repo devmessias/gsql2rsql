@@ -13,7 +13,7 @@ Architecture (see ADR-001, ADR-004 in decisions_log.md)::
     Optimizer (pass_manager.py)
         ↓  Optimized LogicalPlan
     Column Resolver
-        ↓  ResolutionResult
+        ↓  Resolved LogicalPlan
     **SQL Enrichment** (this module)        ← runs inside render_plan()
         ↓  EnrichedPlanData (SQL table names, join columns, edge info)
     Renderer (reads EnrichedPlanData, emits SQL)
@@ -42,7 +42,6 @@ from gsql2rsql.parser.ast import (
     QueryExpressionExists,
     RelationshipEntity,
 )
-from gsql2rsql.planner.column_resolver import ResolutionResult
 from gsql2rsql.planner.logical_plan import LogicalPlan
 from gsql2rsql.planner.operators import (
     DataSourceOperator,
@@ -56,7 +55,7 @@ from gsql2rsql.planner.operators import (
 from gsql2rsql.planner.path_analyzer import (
     rewrite_predicate_for_edge_alias,
 )
-from gsql2rsql.planner.schema import EntityField, EntityType
+from gsql2rsql.planner.schema import EntityField
 from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider, SQLTableDescriptor
 
 
@@ -183,7 +182,7 @@ class EnrichedPlanData:
 class SQLEnrichmentPass:
     """Single-pass tree walker that resolves SQL metadata.
 
-    Call ``.enrich(plan, resolution)`` to produce an ``EnrichedPlanData``
+    Call ``.enrich(plan)`` to produce an ``EnrichedPlanData``
     instance.  The pass walks every operator exactly once (bottom-up) and
     delegates to type-specific ``_enrich_*`` methods.
 
@@ -197,7 +196,6 @@ class SQLEnrichmentPass:
     def enrich(
         self,
         plan: LogicalPlan,
-        resolution: ResolutionResult,
     ) -> EnrichedPlanData:
         """Walk plan once, produce SQL-resolved metadata."""
         data_sources: dict[int, EnrichedDataSource] = {}

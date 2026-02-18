@@ -28,10 +28,10 @@ Trade-offs:
 import pytest
 
 from gsql2rsql import LogicalPlan, OpenCypherParser, SQLRenderer
-from gsql2rsql.planner.subquery_optimizer import (
+from gsql2rsql.planner.pass_manager import optimize_plan
+from gsql2rsql.planner.subquery_flattening import (
     SubqueryFlatteningOptimizer,
     FlatteningStats,
-    optimize_plan,
 )
 from gsql2rsql.planner.operators import (
     ProjectionOperator,

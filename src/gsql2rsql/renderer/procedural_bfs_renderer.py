@@ -1589,7 +1589,7 @@ class ProceduralBFSRenderer:
                 )
             return " UNION ALL ".join(parts)
 
-        wp: list[str] = [bwd_visited_ref]
+        wp = [bwd_visited_ref]
         if p.edge_type_filter:
             wp.append(
                 p.edge_type_filter.replace("'", "''")
@@ -1669,7 +1669,7 @@ class ProceduralBFSRenderer:
                 )
             return " UNION ALL ".join(parts)
 
-        wp: list[str] = [base_visited]
+        wp = [base_visited]
         if p.edge_type_filter:
             wp.append(
                 p.edge_type_filter.replace("'", "''")

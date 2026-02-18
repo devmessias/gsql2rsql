@@ -238,7 +238,7 @@ def _generate_quickstart_sql(cypher_query: str, strategy: str) -> str | None:
         from gsql2rsql.common.schema import EdgeSchema, EntityProperty, NodeSchema
         from gsql2rsql.parser.opencypher_parser import OpenCypherParser
         from gsql2rsql.planner.logical_plan import LogicalPlan
-        from gsql2rsql.planner.subquery_optimizer import optimize_plan
+        from gsql2rsql.planner.pass_manager import optimize_plan
         from gsql2rsql.renderer.schema_provider import (
             SimpleSQLSchemaProvider,
             SQLTableDescriptor,
