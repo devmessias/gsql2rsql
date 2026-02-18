@@ -2,6 +2,34 @@
 
 
 
+## v0.9.6 (2026-02-18)
+
+### Fix
+
+* fix: types ([`8879f07`](https://github.com/devmessias/gsql2rsql/commit/8879f07efd3c2cbb318d3a68cf76b9ab5c706748))
+
+### Refactor
+
+* refactor: remove dead code and fix mypy strict type errors
+
+Dead code removed:
+- subquery_optimizer.py backward-compat re-export module (deleted)
+- BaseLogger class (never instantiated)
+- SQLRenderer deprecated graph_def alias and graph_schema_provider param
+- schema_provider set_wildcard_edge/enable_untyped_edge_support (never called)
+- sql_enrichment.enrich() unused resolution param
+- render_context.next_cte_name() (never called)
+- dead_table_eliminator func_name variable (assigned, never read)
+- 12 unused imports (ruff auto-fix)
+
+Type annotations added for mypy strict:
+- render_context: field param typed as ValueField
+- join_renderer: Callable params fully typed, _get_enriched_recursive return type
+- recursive_cte_renderer: _get_enriched_recursive return type
+- procedural_bfs_renderer: removed redundant wp type annotation (no-redef)
+- pyproject.toml: removed invalid mypy include option ([`76117ed`](https://github.com/devmessias/gsql2rsql/commit/76117eded0be2fd6f4cccd15053ca085b0aaa4a2))
+
+
 ## v0.9.5 (2026-02-18)
 
 ### Performance
