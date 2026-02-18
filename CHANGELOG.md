@@ -2,6 +2,33 @@
 
 
 
+## v0.9.5 (2026-02-18)
+
+### Performance
+
+* perf(procedual-bfs): add procedural BFS renderer with bidirectional support
+
+Frontier-based BFS alternative to WITH RECURSIVE CTE for
+variable-length path queries. Supports two materialization strategies:
+- temp_tables (Databricks): CREATE TEMPORARY TABLE + INSERT INTO
+- numbered_views (PySpark 4.2+): EXECUTE IMMEDIATE + numbered views
+
+Includes bidirectional optimization using reachable-set pruning
+when both source and sink have equality filters. ([`a6a7578`](https://github.com/devmessias/gsql2rsql/commit/a6a757868906582c3d027d30cb206587f937853e))
+
+### Refactor
+
+* refactor: move ci and tui
+
+exagero, totalmente desnecessario ([`cb2b904`](https://github.com/devmessias/gsql2rsql/commit/cb2b904caae802573f4f883812a34040545ac46e))
+
+* refactor: migrate some responsabilities to enrichment phase ([`736555b`](https://github.com/devmessias/gsql2rsql/commit/736555b6ccdaa176a991283e905a6369bb126521))
+
+* refactor: enrichment phase before rendering sql ([`76e9133`](https://github.com/devmessias/gsql2rsql/commit/76e9133ccacad86a839959d49adb612c497ce543))
+
+* refactor: func registry design pattern (rendere demasiadamente complexo) ([`6fcf802`](https://github.com/devmessias/gsql2rsql/commit/6fcf8025f2d8b059210a29c9e227db5d96066a78))
+
+
 ## v0.9.4 (2026-02-07)
 
 ### Fix
