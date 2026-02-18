@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from gsql2rsql.planner.logical_plan import LogicalPlan
+    from gsql2rsql.planner.subquery_flattening import FlatteningStats
 
 
 class OptimizationPass(Protocol):

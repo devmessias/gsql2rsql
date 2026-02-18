@@ -68,7 +68,7 @@ class ExpressionRenderer:
     def __init__(self, ctx: "RenderContext") -> None:
         self._ctx = ctx
 
-    def _render_order_by_expression(
+    def render_order_by_expression(
         self,
         expr: QueryExpression,
         context_op: LogicalOperator,
@@ -140,16 +140,16 @@ class ExpressionRenderer:
                     return f"{output_alias}.{property_name}"
 
         # Default: use normal expression rendering
-        return self._render_expression(expr, context_op)
+        return self.render_expression(expr, context_op)
 
-    def _render_expression(
+    def render_expression(
         self, expr: QueryExpression, context_op: LogicalOperator
     ) -> str:
         """Render an expression to SQL."""
         if isinstance(expr, QueryExpressionValue):
-            return self._render_value(expr)
+            return self.render_value(expr)
         elif isinstance(expr, QueryExpressionParameter):
-            return self._render_parameter(expr)
+            return self.render_parameter(expr)
         elif isinstance(expr, QueryExpressionProperty):
             return self._render_property(expr, context_op)
         elif isinstance(expr, QueryExpressionBinary):
@@ -175,7 +175,7 @@ class ExpressionRenderer:
         else:
             return str(expr)
 
-    def _render_value(self, expr: QueryExpressionValue) -> str:
+    def render_value(self, expr: QueryExpressionValue) -> str:
         """Render a literal value (Databricks SQL syntax)."""
         if expr.value is None:
             return "NULL"
@@ -186,7 +186,7 @@ class ExpressionRenderer:
             return "TRUE" if expr.value else "FALSE"
         return str(expr.value)
 
-    def _render_parameter(self, expr: QueryExpressionParameter) -> str:
+    def render_parameter(self, expr: QueryExpressionParameter) -> str:
         """Render a parameter expression (Databricks SQL syntax).
 
         Uses :param_name syntax for named parameters in Databricks SQL.
@@ -243,8 +243,8 @@ class ExpressionRenderer:
             expr.operator.name == BinaryOperator.IN
             and isinstance(expr.right_expression, QueryExpressionParameter)
         ):
-            left = self._render_expression(expr.left_expression, context_op)
-            right = self._render_expression(expr.right_expression, context_op)
+            left = self.render_expression(expr.left_expression, context_op)
+            right = self.render_expression(expr.right_expression, context_op)
             return f"ARRAY_CONTAINS({right}, {left})"
 
         # Special handling for comparisons with duration when timestamps are involved
@@ -268,8 +268,8 @@ class ExpressionRenderer:
                     raise TranspilerInternalErrorException(
                         "Binary expression has None operand"
                     )
-                left = self._render_expression(expr.left_expression, context_op)
-                right = self._render_expression(expr.right_expression, context_op)
+                left = self.render_expression(expr.left_expression, context_op)
+                right = self.render_expression(expr.right_expression, context_op)
 
                 # Convert the INTERVAL to seconds
                 if duration_expr == expr.right_expression and isinstance(
@@ -282,8 +282,13 @@ class ExpressionRenderer:
                 pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
                 return pattern.format(left, right)
 
-        left = self._render_expression(expr.left_expression, context_op)
-        right = self._render_expression(expr.right_expression, context_op)
+        left = self.render_expression(expr.left_expression, context_op)
+        right = self.render_expression(expr.right_expression, context_op)
+
+        # String concatenation: Cypher + on strings → Spark CONCAT()
+        if expr.operator.name == BinaryOperator.PLUS:
+            if self._is_string_concat(expr.left_expression, expr.right_expression):
+                return f"CONCAT({left}, {right})"
 
         # Special handling for timestamp subtraction in Databricks SQL
         # Spark doesn't support direct timestamp - timestamp, need UNIX_TIMESTAMP
@@ -301,6 +306,31 @@ class ExpressionRenderer:
 
         pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
         return pattern.format(left, right)
+
+    def _is_string_concat(
+        self, left: QueryExpression, right: QueryExpression
+    ) -> bool:
+        """Check if a + operation is string concatenation (not numeric)."""
+        return self._has_string_type(left) or self._has_string_type(right)
+
+    def _has_string_type(self, expr: QueryExpression) -> bool:
+        """Check if an expression is string-typed (recursively for + chains)."""
+        expr_type = expr.evaluate_type()
+        if expr_type is str:
+            return True
+        if isinstance(expr, QueryExpressionValue) and isinstance(expr.value, str):
+            return True
+        # Recurse into + chains: if (a + 'x') is the left operand,
+        # the inner 'x' makes the whole chain string concatenation
+        if isinstance(expr, QueryExpressionBinary):
+            if expr.operator and expr.operator.name == BinaryOperator.PLUS:
+                left = expr.left_expression
+                right = expr.right_expression
+                if left and self._has_string_type(left):
+                    return True
+                if right and self._has_string_type(right):
+                    return True
+        return False
 
     def _is_duration_expression(self, expr: QueryExpression) -> bool:
         """Check if an expression is a DURATION function call."""
@@ -417,11 +447,11 @@ class ExpressionRenderer:
 
         Args:
             pre_rendered_params: If provided, use these instead of rendering
-                expr.parameters via _render_expression. Used by list predicate
+                expr.parameters via render_expression. Used by list predicate
                 filter rendering to pass lambda-aware parameter renderings.
         """
         params = pre_rendered_params if pre_rendered_params is not None else [
-            self._render_expression(p, context_op) for p in expr.parameters
+            self.render_expression(p, context_op) for p in expr.parameters
         ]
 
         func = expr.function
@@ -536,7 +566,7 @@ class ExpressionRenderer:
             return f"COLLECT_LIST({entity_struct})"
 
         inner = (
-            self._render_expression(expr.inner_expression, context_op)
+            self.render_expression(expr.inner_expression, context_op)
             if expr.inner_expression
             else "*"
         )
@@ -563,14 +593,14 @@ class ExpressionRenderer:
         """
         if not expr.inner_expression:
             return "COLLECT_LIST(NULL)"
-        value_sql = self._render_expression(expr.inner_expression, context_op)
+        value_sql = self.render_expression(expr.inner_expression, context_op)
 
         # Build STRUCT with sort keys and value
         struct_parts = []
         sort_comparisons = []
 
         for i, (sort_expr, is_desc) in enumerate(expr.order_by):
-            sort_key_sql = self._render_expression(sort_expr, context_op)
+            sort_key_sql = self.render_expression(sort_expr, context_op)
             key_name = f"_sk{i}"
             struct_parts.append(f"{sort_key_sql} AS {key_name}")
 
@@ -615,7 +645,7 @@ class ExpressionRenderer:
         self, expr: QueryExpressionList, context_op: LogicalOperator
     ) -> str:
         """Render a list expression."""
-        items = [self._render_expression(item, context_op) for item in expr.items]
+        items = [self.render_expression(item, context_op) for item in expr.items]
         return f"({', '.join(items)})"
 
     def _render_list_predicate(
@@ -640,7 +670,7 @@ class ExpressionRenderer:
         - SINGLE(x IN list WHERE cond) -> SIZE(FILTER(list, x -> cond)) = 1
         """
         var_name = expr.variable_name
-        list_sql = self._render_expression(expr.list_expression, context_op)
+        list_sql = self.render_expression(expr.list_expression, context_op)
 
         # Check for simple equality optimization: ANY(x IN list WHERE x = value)
         equality_value = self._extract_equality_value(
@@ -718,7 +748,7 @@ class ExpressionRenderer:
             and right is not None
         ):
             # Pattern: x = value
-            return self._render_expression(right, context_op)
+            return self.render_expression(right, context_op)
 
         # Check if right is just the variable and left is the value
         if (
@@ -728,7 +758,7 @@ class ExpressionRenderer:
             and left is not None
         ):
             # Pattern: value = x
-            return self._render_expression(left, context_op)
+            return self.render_expression(left, context_op)
 
         return None
 
@@ -781,7 +811,7 @@ class ExpressionRenderer:
             return self._render_function(expr, context_op, pre_rendered_params=params)
         else:
             # For other expression types, use default rendering
-            return self._render_expression(expr, context_op)
+            return self.render_expression(expr, context_op)
 
     def _render_case(
         self, expr: QueryExpressionCaseExpression, context_op: LogicalOperator
@@ -790,15 +820,15 @@ class ExpressionRenderer:
         parts = ["CASE"]
 
         if expr.test_expression:
-            parts.append(self._render_expression(expr.test_expression, context_op))
+            parts.append(self.render_expression(expr.test_expression, context_op))
 
         for when_expr, then_expr in expr.alternatives:
-            when_rendered = self._render_expression(when_expr, context_op)
-            then_rendered = self._render_expression(then_expr, context_op)
+            when_rendered = self.render_expression(when_expr, context_op)
+            then_rendered = self.render_expression(then_expr, context_op)
             parts.append(f"WHEN {when_rendered} THEN {then_rendered}")
 
         if expr.else_expression:
-            else_rendered = self._render_expression(expr.else_expression, context_op)
+            else_rendered = self.render_expression(expr.else_expression, context_op)
             parts.append(f"ELSE {else_rendered}")
 
         parts.append("END")
@@ -831,7 +861,7 @@ class ExpressionRenderer:
         - [node IN nodes(path) | node.id] -> path (not TRANSFORM(path, node -> node.id))
         """
         var = expr.variable_name
-        list_sql = self._render_expression(expr.list_expression, context_op)
+        list_sql = self.render_expression(expr.list_expression, context_op)
 
         # =====================================================================
         # OPTIMIZATION: Detect [node IN nodes(path) | node.id] pattern
@@ -917,8 +947,8 @@ class ExpressionRenderer:
         """
         acc_name = expr.accumulator_name
         var_name = expr.variable_name
-        list_sql = self._render_expression(expr.list_expression, context_op)
-        initial_sql = self._render_expression(expr.initial_value, context_op)
+        list_sql = self.render_expression(expr.list_expression, context_op)
+        initial_sql = self.render_expression(expr.initial_value, context_op)
 
         # Cast numeric initial value to DOUBLE if the reducer involves field access
         # This avoids type mismatch when the reducer returns DOUBLE (e.g., amount fields)
@@ -987,7 +1017,7 @@ class ExpressionRenderer:
             elif expr.variable_name == acc_name:
                 # Property access on accumulator (if it's a struct)
                 return f"{acc_name}.{expr.property_name}"
-            return self._render_expression(expr, context_op)
+            return self.render_expression(expr, context_op)
         elif isinstance(expr, QueryExpressionBinary):
             if not expr.left_expression or not expr.right_expression or not expr.operator:
                 return "NULL"
@@ -1007,7 +1037,7 @@ class ExpressionRenderer:
             # Use the same function rendering logic
             return self._render_function_with_params(expr.function, params)
         else:
-            return self._render_expression(expr, context_op)
+            return self.render_expression(expr, context_op)
 
     def _render_function_with_params(self, func: Function, params: list[str]) -> str:
         """Render a function with pre-rendered parameters.
@@ -1112,7 +1142,7 @@ class ExpressionRenderer:
         where_parts = [correlation]
 
         if expr.where_expression:
-            where_rendered = self._render_expression(expr.where_expression, context_op)
+            where_rendered = self.render_expression(expr.where_expression, context_op)
             where_parts.append(where_rendered)
 
         lines.append("WHERE " + " AND ".join(where_parts))
@@ -1120,27 +1150,27 @@ class ExpressionRenderer:
         subquery = " ".join(lines)
         return f"{prefix}EXISTS ({subquery})"
 
-    def _has_aggregation(self, expr: QueryExpression) -> bool:
+    def has_aggregation(self, expr: QueryExpression) -> bool:
         """Check if an expression contains an aggregation function."""
         if isinstance(expr, QueryExpressionAggregationFunction):
             return True
         if isinstance(expr, QueryExpressionBinary):
             left_has = (
-                self._has_aggregation(expr.left_expression)
+                self.has_aggregation(expr.left_expression)
                 if expr.left_expression
                 else False
             )
             right_has = (
-                self._has_aggregation(expr.right_expression)
+                self.has_aggregation(expr.right_expression)
                 if expr.right_expression
                 else False
             )
             return left_has or right_has
         if isinstance(expr, QueryExpressionFunction):
-            return any(self._has_aggregation(p) for p in expr.parameters)
+            return any(self.has_aggregation(p) for p in expr.parameters)
         return False
 
-    def _references_aliases(self, expr: QueryExpression, aliases: set[str]) -> bool:
+    def references_aliases(self, expr: QueryExpression, aliases: set[str]) -> bool:
         """Check if an expression references any of the given aliases.
 
         This is used to detect expressions like `shared_cards + shared_merchants`
@@ -1154,18 +1184,18 @@ class ExpressionRenderer:
             return False
         if isinstance(expr, QueryExpressionBinary):
             left_refs = (
-                self._references_aliases(expr.left_expression, aliases)
+                self.references_aliases(expr.left_expression, aliases)
                 if expr.left_expression
                 else False
             )
             right_refs = (
-                self._references_aliases(expr.right_expression, aliases)
+                self.references_aliases(expr.right_expression, aliases)
                 if expr.right_expression
                 else False
             )
             return left_refs or right_refs
         if isinstance(expr, QueryExpressionFunction):
-            return any(self._references_aliases(p, aliases) for p in expr.parameters)
+            return any(self.references_aliases(p, aliases) for p in expr.parameters)
         if isinstance(expr, QueryExpressionAggregationFunction):
             # Aggregation functions don't reference aliases in the same sense
             return False
@@ -1178,7 +1208,7 @@ class ExpressionRenderer:
     ) -> tuple[EntityField | None, list[tuple[str, str]]]:
         """Collect (prop_name, sql_col) pairs from an entity's schema.
 
-        Shared core of _render_entity_as_struct and _render_entity_in_collect_as_struct.
+        Shared core of render_entity_as_struct and _render_entity_in_collect_as_struct.
 
         Returns:
             (entity_field_or_None, props_list)
@@ -1231,7 +1261,7 @@ class ExpressionRenderer:
             return f"NAMED_STRUCT({', '.join(parts)})"
         return f"NAMED_STRUCT('id', {fallback_id_col})"
 
-    def _render_entity_as_struct(
+    def render_entity_as_struct(
         self,
         resolved_proj: "ResolvedProjection",
         entity_var: str,
@@ -1269,7 +1299,7 @@ class ExpressionRenderer:
                     props.append((col[len(prefix):], col))
 
         # Fallback 2: Try resolved expressions
-        if not props:
+        if not props and self._ctx.resolution_result is not None:
             op_id = context_op.operator_debug_id
             if op_id in self._ctx.resolution_result.resolved_projections:
                 for rp in self._ctx.resolution_result.resolved_projections[op_id]:
@@ -1280,7 +1310,7 @@ class ExpressionRenderer:
 
         return self._build_named_struct(props, f"{prefix}id")
 
-    def _get_entity_properties_for_aggregation(
+    def get_entity_properties_for_aggregation(
         self, op: ProjectionOperator
     ) -> list[str]:
         """Get required entity property columns that need to be projected through GROUP BY.
@@ -1378,11 +1408,11 @@ class ExpressionRenderer:
         # Sort to ensure deterministic output (avoid non-determinism from set iteration)
         return sorted(extra_columns)
 
-    def _render_edge_filter_expression(self, expr: QueryExpression) -> str:
+    def render_edge_filter_expression(self, expr: QueryExpression) -> str:
         """Render an edge filter expression using DIRECT column references.
 
         This method is specifically for rendering predicates that have been
-        pushed down into the recursive CTE. Unlike _render_expression, this
+        pushed down into the recursive CTE. Unlike render_expression, this
         renders property accesses as direct SQL column references (e.g., e.amount)
         rather than entity-prefixed aliases (e.g., _gsql2rsql_e_amount).
 
@@ -1392,7 +1422,7 @@ class ExpressionRenderer:
 
         Example:
             Input: QueryExpressionProperty(variable_name="e", property_name="amount")
-            _render_expression output: "_gsql2rsql_e_amount" (wrong for CTE)
+            render_expression output: "_gsql2rsql_e_amount" (wrong for CTE)
             This method output: "e.amount" (correct for CTE)
 
         Args:
@@ -1411,14 +1441,14 @@ class ExpressionRenderer:
             # Recursively render binary expressions
             if not expr.operator or not expr.left_expression or not expr.right_expression:
                 return "NULL"
-            left = self._render_edge_filter_expression(expr.left_expression)
-            right = self._render_edge_filter_expression(expr.right_expression)
+            left = self.render_edge_filter_expression(expr.left_expression)
+            right = self.render_edge_filter_expression(expr.right_expression)
             pattern = OPERATOR_PATTERNS.get(expr.operator.name, "({0}) ? ({1})")
             return pattern.format(left, right)
 
         elif isinstance(expr, QueryExpressionFunction):
             # Render function calls with recursive parameter rendering
-            params = [self._render_edge_filter_expression(p) for p in expr.parameters]
+            params = [self.render_edge_filter_expression(p) for p in expr.parameters]
             func = expr.function
 
             # CTE-specific overrides: these functions have different semantics
@@ -1441,7 +1471,7 @@ class ExpressionRenderer:
                 return render_from_template(tmpl, params)
 
             raise NotImplementedError(
-                f"_render_edge_filter_expression: unsupported function {func!r}. "
+                f"render_edge_filter_expression: unsupported function {func!r}. "
                 f"Add to FUNCTION_TEMPLATES in dialect.py or add an explicit handler."
             )
 
@@ -1459,11 +1489,11 @@ class ExpressionRenderer:
 
         elif isinstance(expr, QueryExpressionList):
             # Render list literals for IN operator: [1, 2, 3] -> (1, 2, 3)
-            # Use recursive call to _render_edge_filter_expression for items
+            # Use recursive call to render_edge_filter_expression for items
             # to maintain consistent rendering within the CTE context.
             # List items in IN clauses are typically values (strings, numbers),
-            # which _render_edge_filter_expression handles correctly.
-            items = [self._render_edge_filter_expression(item) for item in expr.items]
+            # which render_edge_filter_expression handles correctly.
+            items = [self.render_edge_filter_expression(item) for item in expr.items]
             return f"({', '.join(items)})"
 
         # Fallback: try the regular renderer (shouldn't normally reach here)
@@ -1510,7 +1540,7 @@ class ExpressionRenderer:
 
         parts = []
         for key, value in expr.entries:
-            value_sql = self._render_expression(value, context_op)
+            value_sql = self.render_expression(value, context_op)
             parts.append(f"{value_sql} AS {key}")
 
         return f"STRUCT({', '.join(parts)})"
@@ -1525,7 +1555,7 @@ class ExpressionRenderer:
         """
         entries_dict = {}
         for key, value in map_expr.entries:
-            entries_dict[key.lower()] = self._render_expression(
+            entries_dict[key.lower()] = self.render_expression(
                 value, context_op
             )
 
@@ -1545,7 +1575,7 @@ class ExpressionRenderer:
         """
         entries_dict = {}
         for key, value in map_expr.entries:
-            entries_dict[key.lower()] = self._render_expression(
+            entries_dict[key.lower()] = self.render_expression(
                 value, context_op
             )
 
@@ -1568,7 +1598,7 @@ class ExpressionRenderer:
         """
         entries_dict = {}
         for key, value in map_expr.entries:
-            entries_dict[key.lower()] = self._render_expression(
+            entries_dict[key.lower()] = self.render_expression(
                 value, context_op
             )
 
@@ -1589,7 +1619,7 @@ class ExpressionRenderer:
         """
         entries_dict = {}
         for key, value in map_expr.entries:
-            entries_dict[key.lower()] = self._render_expression(
+            entries_dict[key.lower()] = self.render_expression(
                 value, context_op
             )
 

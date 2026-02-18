@@ -7,6 +7,7 @@ edge table lookups, filter clause generation, and aggregation boundary CTEs.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from gsql2rsql.common.exceptions import (
@@ -83,11 +84,11 @@ class RecursiveCTERenderer:
         self,
         ctx: "RenderContext",
         expr: "ExpressionRenderer",
-        render_operator_fn=None,
+        render_operator_fn: Callable[..., str] | None = None,
     ) -> None:
         self._ctx = ctx
         self._expr = expr
-        self._render_operator = render_operator_fn
+        self._render_operator: Callable[..., str] | None = render_operator_fn
 
     @staticmethod
     def _build_where_clause(
@@ -114,7 +115,7 @@ class RecursiveCTERenderer:
             )
         return None
 
-    def _render_recursive_cte(self, op: RecursiveTraversalOperator) -> str:
+    def render_recursive_cte(self, op: RecursiveTraversalOperator) -> str:
         """Render a recursive CTE for variable-length path traversal.
 
         Generates Databricks SQL WITH RECURSIVE for BFS/DFS traversal.
@@ -215,14 +216,14 @@ class RecursiveCTERenderer:
 
         # Edge predicate pushdown
         if enriched_rec.edge_filter_as_e:
-            ei.edge_filter_sql = self._expr._render_edge_filter_expression(
+            ei.edge_filter_sql = self._expr.render_edge_filter_expression(
                 enriched_rec.edge_filter_as_e
             )
 
         # Source node filter pushdown
         if enriched_rec.start_filter_as_src and enriched_rec.source_node:
             ei.source_node_filter_sql = (
-                self._expr._render_edge_filter_expression(
+                self._expr.render_edge_filter_expression(
                     enriched_rec.start_filter_as_src
                 )
             )
@@ -268,7 +269,7 @@ class RecursiveCTERenderer:
 
         enriched_rec = self._get_enriched_recursive(op)
         if enriched_rec and enriched_rec.start_filter_as_n:
-            filter_sql = self._expr._render_edge_filter_expression(
+            filter_sql = self._expr.render_edge_filter_expression(
                 enriched_rec.start_filter_as_n
             )
             lines.append(f"    WHERE {filter_sql}")
@@ -779,10 +780,12 @@ class RecursiveCTERenderer:
             lines.append(f"    FROM {prev} {v}")
             lines.append(f"    JOIN {edge_table_name} e")
             lines.append(f"      ON {v}.current_node = e.{cfg.traverse_col}")
-            lines.append(self._build_where_clause(
+            where = self._build_where_clause(
                 f"NOT ARRAY_CONTAINS({v}.path, e.{cfg.arrive_col})",
                 f"({edge_filter_clause})" if edge_filter_clause else None,
-            ))
+            )
+            if where:
+                lines.append(where)
             lines.append("  ),")
         lines.append("")
         return lines
@@ -1068,7 +1071,7 @@ class RecursiveCTERenderer:
         enriched_rec = self._get_enriched_recursive(op)
         if not enriched_rec or not enriched_rec.start_filter_as_src:
             return None
-        return self._expr._render_edge_filter_expression(
+        return self._expr.render_edge_filter_expression(
             enriched_rec.start_filter_as_src
         )
 
@@ -1079,11 +1082,11 @@ class RecursiveCTERenderer:
         enriched_rec = self._get_enriched_recursive(op)
         if not enriched_rec or not enriched_rec.sink_filter_as_tgt:
             return None
-        return self._expr._render_edge_filter_expression(
+        return self._expr.render_edge_filter_expression(
             enriched_rec.sink_filter_as_tgt
         )
 
-    def _render_recursive_reference(
+    def render_recursive_reference(
         self, op: RecursiveTraversalOperator, depth: int
     ) -> str:
         """Render a reference to a recursive CTE."""
@@ -1104,15 +1107,17 @@ class RecursiveCTERenderer:
         lines.append(f"{indent}FROM {cte_name}")
 
         # Add WHERE clause for depth bounds
-        lines.append(self._build_where_clause(
+        where = self._build_where_clause(
             f"depth >= {min_depth}",
             f"depth <= {op.max_hops}" if op.max_hops is not None else None,
             indent=indent,
-        ))
+        )
+        if where:
+            lines.append(where)
 
         return "\n".join(lines)
 
-    def _render_aggregation_boundary_cte(
+    def render_aggregation_boundary_cte(
         self, op: AggregationBoundaryOperator
     ) -> str:
         """Render an aggregation boundary operator as a CTE definition.
@@ -1152,18 +1157,18 @@ class RecursiveCTERenderer:
 
         # Group keys - these become both SELECT columns and GROUP BY columns
         for alias, expr in op.group_keys:
-            rendered_expr = self._expr._render_expression(expr, context_op)
+            rendered_expr = self._expr.render_expression(expr, context_op)
             select_items.append(f"    {rendered_expr} AS `{alias}`")
 
         # Aggregates
         for alias, expr in op.aggregates:
-            rendered_expr = self._expr._render_expression(expr, context_op)
+            rendered_expr = self._expr.render_expression(expr, context_op)
             select_items.append(f"    {rendered_expr} AS `{alias}`")
 
         lines.append(",\n".join(select_items))
 
         # Render FROM clause (the input operator)
-        if op.in_operator:
+        if op.in_operator and self._render_operator:
             input_sql = self._render_operator(op.in_operator, depth=1)
             lines.append("  FROM (")
             lines.append(input_sql)
@@ -1173,20 +1178,20 @@ class RecursiveCTERenderer:
         if op.group_keys:
             group_by_exprs = []
             for alias, expr in op.group_keys:
-                rendered_expr = self._expr._render_expression(expr, context_op)
+                rendered_expr = self._expr.render_expression(expr, context_op)
                 group_by_exprs.append(rendered_expr)
             lines.append(f"  GROUP BY {', '.join(group_by_exprs)}")
 
         # Render HAVING clause
         if op.having_filter:
-            having_sql = self._expr._render_expression(op.having_filter, context_op)
+            having_sql = self._expr.render_expression(op.having_filter, context_op)
             lines.append(f"  HAVING {having_sql}")
 
         # Render ORDER BY clause
         if op.order_by:
             order_parts = []
             for expr, is_desc in op.order_by:
-                rendered_expr = self._expr._render_expression(expr, context_op)
+                rendered_expr = self._expr.render_expression(expr, context_op)
                 direction = "DESC" if is_desc else "ASC"
                 order_parts.append(f"{rendered_expr} {direction}")
             lines.append(f"  ORDER BY {', '.join(order_parts)}")
@@ -1203,7 +1208,7 @@ class RecursiveCTERenderer:
 
         return "\n".join(lines)
 
-    def _render_aggregation_boundary_reference(
+    def render_aggregation_boundary_reference(
         self, op: AggregationBoundaryOperator, depth: int
     ) -> str:
         """Render a reference to an aggregation boundary CTE.

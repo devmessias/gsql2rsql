@@ -206,11 +206,18 @@ class JoinRenderer:
         if recursive_op.is_circular:
             where_parts.append("p.start_node = p.end_node")
 
+        # Node type filters from labels (e.g., :Person -> node_type = 'Person')
+        # These come from table_descriptor.filter set by enrichment
+        if target_node and target_node.table_descriptor.filter:
+            where_parts.append(f"sink.{target_node.table_descriptor.filter}")
+        if source_node and source_node.table_descriptor.filter:
+            where_parts.append(f"source.{source_node.table_descriptor.filter}")
+
         # SINK NODE FILTER PUSHDOWN: Apply filter on target node here
         # This filters rows DURING the join rather than AFTER all joins complete
         enriched_rec = self._get_enriched_recursive(recursive_op)
         if enriched_rec and enriched_rec.sink_filter_as_sink:
-            sink_filter_sql = self._expr._render_edge_filter_expression(
+            sink_filter_sql = self._expr.render_edge_filter_expression(
                 enriched_rec.sink_filter_as_sink
             )
             where_parts.append(sink_filter_sql)
@@ -339,7 +346,7 @@ class JoinRenderer:
 
         return "\n".join(lines)
 
-    def _render_join(self, op: JoinOperator, depth: int) -> str:
+    def render_join(self, op: JoinOperator, depth: int) -> str:
         """Render a join operator."""
         lines: list[str] = []
         indent = self._ctx.indent(depth)
@@ -613,8 +620,16 @@ class JoinRenderer:
                 f"{indent}  ,{prop_col} AS "
                 f"{self._ctx.get_field_name(alias, prop_col)}"
             )
+        # Reverse branch: exclude self-loops (src = dst) to avoid duplication
+        reverse_where_parts: list[str] = []
+        if enriched_ds.type_filter_clause:
+            reverse_where_parts.append(enriched_ds.type_filter_clause)
+        reverse_where_parts.append(f"{source_col} != {sink_col}")
+        reverse_where = (
+            f"\n{indent}WHERE {' AND '.join(reverse_where_parts)}"
+        )
         lines.append(f"{indent}FROM")
-        lines.append(f"{indent}  {table_name}{where_clause}")
+        lines.append(f"{indent}  {table_name}{reverse_where}")
 
         return "\n".join(lines)
 

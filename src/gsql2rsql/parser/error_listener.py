@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from antlr4.error.ErrorListener import ErrorListener
+
 from gsql2rsql.common.exceptions import TranspilerSyntaxErrorException
 
 
@@ -22,7 +24,7 @@ class SyntaxError:
 
 
 @dataclass
-class SyntaxErrorCollector:
+class SyntaxErrorCollector(ErrorListener):  # type: ignore[misc]
     """ANTLR error listener that collects syntax errors instead of printing to stderr.
 
     Usage:
@@ -42,7 +44,7 @@ class SyntaxErrorCollector:
     def syntaxError(  # noqa: N802 — ANTLR naming convention
         self,
         recognizer: object,
-        offending_symbol: object,
+        offendingSymbol: object,  # noqa: N803
         line: int,
         column: int,
         msg: str,
@@ -50,8 +52,8 @@ class SyntaxErrorCollector:
     ) -> None:
         """Called by ANTLR on each syntax error."""
         symbol_text = None
-        if offending_symbol is not None and hasattr(offending_symbol, "text"):
-            symbol_text = offending_symbol.text
+        if offendingSymbol is not None and hasattr(offendingSymbol, "text"):
+            symbol_text = getattr(offendingSymbol, "text", None)
         self.errors.append(
             SyntaxError(
                 line=line,
@@ -61,13 +63,22 @@ class SyntaxErrorCollector:
             )
         )
 
-    def reportAmbiguity(self, *args: object) -> None:  # noqa: N802
+    def reportAmbiguity(  # noqa: N802, N803
+        self, recognizer: object, dfa: object, startIndex: object,
+        stopIndex: object, exact: object, ambigAlts: object, configs: object,
+    ) -> None:
         pass
 
-    def reportAttemptingFullContext(self, *args: object) -> None:  # noqa: N802
+    def reportAttemptingFullContext(  # noqa: N802, N803
+        self, recognizer: object, dfa: object, startIndex: object,
+        stopIndex: object, conflictingAlts: object, configs: object,
+    ) -> None:
         pass
 
-    def reportContextSensitivity(self, *args: object) -> None:  # noqa: N802
+    def reportContextSensitivity(  # noqa: N802, N803
+        self, recognizer: object, dfa: object, startIndex: object,
+        stopIndex: object, prediction: object, configs: object,
+    ) -> None:
         pass
 
     # Public API

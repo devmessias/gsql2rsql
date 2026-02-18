@@ -242,7 +242,7 @@ class SQLRenderer:
         self._join = JoinRenderer(
             self._ctx, self._expr,
             self._render_operator,
-            self._cte._render_aggregation_boundary_reference,
+            self._cte.render_aggregation_boundary_reference,
         )
 
         # Fork: procedural BFS mode
@@ -302,11 +302,11 @@ class SQLRenderer:
         has_recursive = False
 
         if isinstance(op, RecursiveTraversalOperator):
-            cte = self._cte._render_recursive_cte(op)
+            cte = self._cte.render_recursive_cte(op)
             ctes.append(cte)
             has_recursive = True
         elif isinstance(op, AggregationBoundaryOperator):
-            cte = self._cte._render_aggregation_boundary_cte(op)
+            cte = self._cte.render_aggregation_boundary_cte(op)
             ctes.append(cte)
 
         for out_op in op.out_operators:
@@ -390,7 +390,7 @@ class SQLRenderer:
             declarations.append(decl)
             procedural_blocks.append(body)
         elif isinstance(op, AggregationBoundaryOperator):
-            cte = self._cte._render_aggregation_boundary_cte(op)
+            cte = self._cte.render_aggregation_boundary_cte(op)
             non_recursive_ctes.append(cte)
 
         for out_op in op.out_operators:
@@ -802,7 +802,7 @@ class SQLRenderer:
         if isinstance(op, DataSourceOperator):
             return self._render_data_source(op, depth)
         elif isinstance(op, JoinOperator):
-            return self._join._render_join(op, depth)
+            return self._join.render_join(op, depth)
         elif isinstance(op, SelectionOperator):
             return self._render_selection(op, depth)
         elif isinstance(op, ProjectionOperator):
@@ -814,11 +814,11 @@ class SQLRenderer:
                 return self._proc_bfs.render_procedural_reference(
                     op, depth,
                 )
-            return self._cte._render_recursive_reference(op, depth)
+            return self._cte.render_recursive_reference(op, depth)
         elif isinstance(op, UnwindOperator):
             return self._render_unwind(op, depth)
         elif isinstance(op, AggregationBoundaryOperator):
-            return self._cte._render_aggregation_boundary_reference(op, depth)
+            return self._cte.render_aggregation_boundary_reference(op, depth)
         else:
             raise TranspilerNotSupportedException(
                 f"Operator type {type(op).__name__}"
@@ -955,7 +955,7 @@ class SQLRenderer:
     ) -> str:
         """Render a filter expression for a DataSource using raw column names.
 
-        Unlike _render_expression which uses aliased names like _gsql2rsql_p_name,
+        Unlike render_expression which uses aliased names like _gsql2rsql_p_name,
         this method renders expressions using raw column names from the table.
 
         Args:
@@ -982,10 +982,10 @@ class SQLRenderer:
             return self._get_field_name(expr.variable_name, expr.property_name or "")
 
         elif isinstance(expr, QueryExpressionValue):
-            return self._expr._render_value(expr)
+            return self._expr.render_value(expr)
 
         elif isinstance(expr, QueryExpressionParameter):
-            return self._expr._render_parameter(expr)
+            return self._expr.render_parameter(expr)
 
         elif isinstance(expr, QueryExpressionBinary):
             if not expr.operator or not expr.left_expression or not expr.right_expression:
@@ -1054,7 +1054,7 @@ class SQLRenderer:
         lines.append(f"{indent}) AS _filter")
 
         if op.filter_expression:
-            filter_sql = self._expr._render_expression(op.filter_expression, op)
+            filter_sql = self._expr.render_expression(op.filter_expression, op)
             lines.append(f"{indent}WHERE {filter_sql}")
 
         return "\n".join(lines)
@@ -1080,7 +1080,7 @@ class SQLRenderer:
 
         # Render the list expression
         if op.list_expression:
-            list_sql = self._expr._render_expression(op.list_expression, op)
+            list_sql = self._expr.render_expression(op.list_expression, op)
         else:
             list_sql = "ARRAY()"
 
@@ -1124,7 +1124,7 @@ class SQLRenderer:
 
         # Render projection fields
         # Note: Check for aggregation first since we need it for alias logic
-        has_aggregation = any(self._expr._has_aggregation(expr) for _, expr in op.projections)
+        has_aggregation = any(self._expr.has_aggregation(expr) for _, expr in op.projections)
 
         # Detect if we need DISTINCT → GROUP BY TO_JSON workaround.
         # Spark cannot do SELECT DISTINCT on columns with MAP type (including
@@ -1148,14 +1148,14 @@ class SQLRenderer:
         entities_rendered_as_struct: set[str] = set()
 
         for i, (alias, expr) in enumerate(op.projections):
-            rendered = self._expr._render_expression(expr, op)
+            rendered = self._expr.render_expression(expr, op)
             prefix = " " if i == 0 else ","
 
             # Check if this is a bare entity reference (not an aggregate, not a property access)
             is_bare_entity = (
                 isinstance(expr, QueryExpressionProperty)
                 and expr.property_name is None
-                and not self._expr._has_aggregation(expr)
+                and not self._expr.has_aggregation(expr)
             )
 
             # NEW: For root projection (depth == 0), render entities as NAMED_STRUCT
@@ -1169,7 +1169,7 @@ class SQLRenderer:
                     entity_var = expr.variable_name
                     # Render as NAMED_STRUCT with all properties
                     # Returns None if the variable is not an entity (e.g., UNWIND variables)
-                    struct_rendered = self._expr._render_entity_as_struct(resolved_proj, entity_var, op)
+                    struct_rendered = self._expr.render_entity_as_struct(resolved_proj, entity_var, op)
                     if struct_rendered is not None:
                         rendered = struct_rendered
                         entities_rendered_as_struct.add(entity_var)
@@ -1226,7 +1226,7 @@ class SQLRenderer:
             and not (depth == 0 and has_entity_return and not has_aggregation)
         )
         if should_add_extra_columns:
-            extra_columns = self._expr._get_entity_properties_for_aggregation(op)
+            extra_columns = self._expr.get_entity_properties_for_aggregation(op)
             # Filter out columns for entities that were rendered as STRUCT
             if entities_rendered_as_struct:
                 extra_columns = [
@@ -1252,7 +1252,7 @@ class SQLRenderer:
         # WHERE clause (from flattened SelectionOperator)
         # Applied BEFORE GROUP BY - filters individual rows
         if op.filter_expression:
-            filter_sql = self._expr._render_expression(op.filter_expression, op)
+            filter_sql = self._expr.render_expression(op.filter_expression, op)
             lines.append(f"{indent}WHERE {filter_sql}")
 
         # GROUP BY for DISTINCT workaround (replaces SELECT DISTINCT with GROUP BY TO_JSON)
@@ -1266,16 +1266,16 @@ class SQLRenderer:
             # First, identify which aliases are aggregates
             aggregate_aliases: set[str] = {
                 alias for alias, expr in op.projections
-                if self._expr._has_aggregation(expr)
+                if self._expr.has_aggregation(expr)
             }
             # Non-aggregate expressions go in GROUP BY, but only if they don't
             # reference any aggregate aliases (e.g., similarity_score = ... + shared_merchants
             # shouldn't be in GROUP BY if shared_merchants is an aggregate)
             non_agg_exprs = [
-                self._expr._render_expression(expr, op)
+                self._expr.render_expression(expr, op)
                 for alias, expr in op.projections
-                if not self._expr._has_aggregation(expr)
-                and not self._expr._references_aliases(expr, aggregate_aliases)
+                if not self._expr.has_aggregation(expr)
+                and not self._expr.references_aliases(expr, aggregate_aliases)
             ]
             # Also include extra entity property columns in GROUP BY
             all_group_by_cols = non_agg_exprs + extra_columns
@@ -1289,7 +1289,7 @@ class SQLRenderer:
         # treat it as a regular WHERE clause (e.g., WITH ... WHERE on computed columns)
         needs_subquery_wrap = False
         if op.having_expression:
-            having_sql = self._expr._render_expression(op.having_expression, op)
+            having_sql = self._expr.render_expression(op.having_expression, op)
             if has_aggregation:
                 lines.append(f"{indent}HAVING {having_sql}")
             else:
@@ -1298,7 +1298,7 @@ class SQLRenderer:
                 # return_rate is computed in this SELECT). SQL doesn't allow this,
                 # so we need to wrap in a subquery.
                 projection_aliases = {alias for alias, _ in op.projections}
-                if self._expr._references_aliases(op.having_expression, projection_aliases):
+                if self._expr.references_aliases(op.having_expression, projection_aliases):
                     # Mark that we need to wrap this in a subquery
                     needs_subquery_wrap = True
                 else:
@@ -1312,7 +1312,7 @@ class SQLRenderer:
             order_parts: list[str] = []
             for expr, is_desc in op.order_by:
                 # Check if this is a property access on an entity rendered as struct
-                rendered = self._expr._render_order_by_expression(
+                rendered = self._expr.render_order_by_expression(
                     expr, op, entities_rendered_as_struct, resolved_projections_map,
                     op.projections
                 )
@@ -1331,7 +1331,7 @@ class SQLRenderer:
         # aliases defined in this SELECT), wrap the entire query
         if needs_subquery_wrap and op.having_expression:
             inner_sql = "\n".join(lines)
-            having_sql = self._expr._render_expression(op.having_expression, op)
+            having_sql = self._expr.render_expression(op.having_expression, op)
             # Build outer wrapper that projects all columns and applies the filter
             outer_lines = [
                 f"{indent}SELECT *",

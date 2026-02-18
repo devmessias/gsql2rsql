@@ -202,7 +202,7 @@ class ProceduralBFSRenderer:
         # Edge predicate filter
         edge_predicate = None
         if enriched.edge_filter_as_e:
-            edge_predicate = self._expr._render_edge_filter_expression(
+            edge_predicate = self._expr.render_edge_filter_expression(
                 enriched.edge_filter_as_e
             )
 
@@ -212,7 +212,7 @@ class ProceduralBFSRenderer:
         node_id_col = enriched.source_node.id_column
         start_filter = None
         if enriched.start_filter_as_n:
-            start_filter = self._expr._render_edge_filter_expression(
+            start_filter = self._expr.render_edge_filter_expression(
                 enriched.start_filter_as_n
             )
         node_type_filter = enriched.source_node.table_descriptor.filter
@@ -233,7 +233,7 @@ class ProceduralBFSRenderer:
             bidir_target_type_filter = td.filter
             if enriched.sink_filter_as_tgt:
                 bidir_target_filter = (
-                    self._expr._render_edge_filter_expression(
+                    self._expr.render_edge_filter_expression(
                         enriched.sink_filter_as_tgt
                     )
                 )

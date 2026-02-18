@@ -86,45 +86,45 @@ class TestSQLRenderer:
     def test_render_literal_value_string(self) -> None:
         """Test rendering string literal values (Databricks syntax)."""
         expr = QueryExpressionValue(value="hello", value_type=str)
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         # Databricks uses simple quotes, not N'' prefix
         assert result == "'hello'"
 
     def test_render_literal_value_escaped_string(self) -> None:
         """Test rendering strings with quotes."""
         expr = QueryExpressionValue(value="it's", value_type=str)
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         assert result == "'it''s'"
 
     def test_render_literal_value_integer(self) -> None:
         """Test rendering integer values."""
         expr = QueryExpressionValue(value=42, value_type=int)
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         assert result == "42"
 
     def test_render_literal_value_float(self) -> None:
         """Test rendering float values."""
         expr = QueryExpressionValue(value=3.14, value_type=float)
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         assert result == "3.14"
 
     def test_render_literal_value_boolean_true(self) -> None:
         """Test rendering boolean TRUE (Databricks syntax)."""
         expr = QueryExpressionValue(value=True, value_type=bool)
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         # Databricks uses TRUE/FALSE, not 1/0
         assert result == "TRUE"
 
     def test_render_literal_value_boolean_false(self) -> None:
         """Test rendering boolean FALSE (Databricks syntax)."""
         expr = QueryExpressionValue(value=False, value_type=bool)
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         assert result == "FALSE"
 
     def test_render_literal_value_null(self) -> None:
         """Test rendering NULL values."""
         expr = QueryExpressionValue(value=None, value_type=type(None))
-        result = self.expr_renderer._render_value(expr)
+        result = self.expr_renderer.render_value(expr)
         assert result == "NULL"
 
     def test_render_property_expression(self) -> None:

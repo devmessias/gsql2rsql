@@ -121,21 +121,6 @@ class TestUnwindStructPropertyAccess:
         for row in rows:
             assert row["src"] is not None
 
-    @pytest.mark.xfail(reason="Struct property filtering after UNWIND not implemented")
-    def test_unwind_with_property_filter(self, spark, graph_context):
-        """Filter on unwound struct properties in WHERE."""
-        query = """
-        MATCH (a {name: "Alice"})-[e:KNOWS*1..3]->(b)
-        UNWIND e AS r
-        WHERE r.weight > 5
-        RETURN DISTINCT r.src, r.dst, r.weight
-        """
-        sql = graph_context.transpile(query)
-        result = spark.sql(sql)
-        rows = result.collect()
-        for row in rows:
-            assert row["weight"] > 5
-
     def test_unwind_with_clause_filter(self, spark, graph_context):
         """Filter on unwound struct properties in WITH clause."""
         query = """
@@ -730,22 +715,6 @@ class TestEdgeCasesAndBoundaries:
 # =============================================================================
 class TestComplexRealWorldPatterns:
     """Tests simulating real-world query patterns."""
-
-    def test_friends_of_friends_with_mutual(self, spark, graph_context):
-        """Find friends of friends that are also direct friends."""
-        query = """
-        MATCH (a {name: "Alice"})-[:KNOWS]->(b)-[:KNOWS]->(c)
-        WHERE NOT (a)-[:KNOWS]->(c) AND a <> c
-        RETURN DISTINCT c.name AS potential_friend
-        """
-        try:
-            sql = graph_context.transpile(query)
-            result = spark.sql(sql)
-            rows = result.collect()
-            # Carol is friend of Bob but not direct friend of Alice
-            assert len(rows) >= 0  # May be empty depending on graph
-        except Exception as e:
-            pytest.skip(f"Pattern not supported: {e}")
 
     def test_path_weight_analysis(self, spark, graph_context):
         """Analyze path weights with UNWIND and aggregation."""

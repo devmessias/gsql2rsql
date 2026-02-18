@@ -733,10 +733,6 @@ class TestEdgeCases:
         for row in rows:
             assert row["strength"] in ["strong", "medium", "weak"]
 
-    @pytest.mark.xfail(
-        reason="Cypher uses + for string concatenation, Spark SQL requires CONCAT()",
-        strict=True,
-    )
     def test_property_concatenation(self, spark, graph_context):
         """Concatenate properties."""
         query = """

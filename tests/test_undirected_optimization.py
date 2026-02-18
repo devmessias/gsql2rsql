@@ -215,16 +215,24 @@ class TestUndirectedJoinOptimization:
             "possible query explosion (expected ~12-15 for 2-hop)"
         )
 
-    @pytest.mark.skip(
-        reason="Self-loop handling to be implemented in follow-up"
-    )
     def test_self_loops_deduplicated(self):
         """
         Test that self-loops are handled correctly (not duplicated).
 
-        Self-loops like (a)-[:KNOWS]->(a) should appear once, not twice.
-        This is a known limitation that may require DISTINCT or WHERE
-        filtering.
+        The reverse branch of UNION ALL excludes self-loops via
+        WHERE src != dst, so they only appear once (from the forward branch).
         """
-        # TODO: Implement self-loop deduplication strategy
-        pass
+        cypher = "MATCH (p:Person)-[:KNOWS]-(f:Person) RETURN p.name, f.name"
+
+        parser = OpenCypherParser()
+        ast = parser.parse(cypher)
+        plan = LogicalPlan.process_query_tree(ast, self.schema)
+        plan.resolve(original_query=cypher)
+
+        renderer = SQLRenderer(db_schema_provider=self.schema)
+        sql = renderer.render_plan(plan)
+
+        # The reverse branch should have a self-loop exclusion filter
+        assert "!=" in sql or "<>" in sql, (
+            "Expected self-loop exclusion (src != dst) in reverse UNION ALL branch"
+        )

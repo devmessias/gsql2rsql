@@ -11,7 +11,7 @@ by three dispatch sites:
 
 1. ``ExpressionRenderer._render_function`` — main expression rendering
 2. ``ExpressionRenderer._render_function_with_params`` — REDUCE lambda context
-3. ``ExpressionRenderer._render_edge_filter_expression`` — CTE edge filter context
+3. ``ExpressionRenderer.render_edge_filter_expression`` — CTE edge filter context
 
 Complex functions that need AST inspection (DATE, DATETIME, DURATION, etc.)
 are NOT in the registry — they remain as explicit handlers in the renderer.
