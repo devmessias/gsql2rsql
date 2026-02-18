@@ -36,12 +36,14 @@ from gsql2rsql import GraphContext
 @pytest.fixture(scope="module")
 def spark():
     """Create SparkSession for tests."""
-    return (
+    session = (
         SparkSession.builder.master("local[*]")
         .appName("CartesianPredicatePushdown")
         .config("spark.sql.crossJoin.enabled", "true")  # Enable for test
         .getOrCreate()
     )
+    yield session
+    session.stop()
 
 
 @pytest.fixture(scope="module")
@@ -69,9 +71,8 @@ def graph_context(spark):
     ]
 
     nodes_df = spark.createDataFrame(nodes_data, nodes_schema)
-    nodes_df.createOrReplaceTempView("nodes")
-    spark.sql("DROP TABLE IF EXISTS test_db.nodes")
     spark.sql("CREATE DATABASE IF NOT EXISTS test_db")
+    spark.sql("DROP TABLE IF EXISTS test_db.nodes")
     nodes_df.write.mode("overwrite").saveAsTable("test_db.nodes")
 
     # Create edges table
@@ -92,7 +93,6 @@ def graph_context(spark):
     ]
 
     edges_df = spark.createDataFrame(edges_data, edges_schema)
-    edges_df.createOrReplaceTempView("edges")
     spark.sql("DROP TABLE IF EXISTS test_db.edges")
     edges_df.write.mode("overwrite").saveAsTable("test_db.edges")
 
@@ -108,7 +108,11 @@ def graph_context(spark):
         },
     )
 
-    return gc
+    yield gc
+
+    spark.sql("DROP TABLE IF EXISTS test_db.nodes")
+    spark.sql("DROP TABLE IF EXISTS test_db.edges")
+    spark.sql("DROP DATABASE IF EXISTS test_db")
 
 
 class TestCartesianPredicatePushdown:

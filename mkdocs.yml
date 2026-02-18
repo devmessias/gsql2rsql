@@ -170,6 +170,7 @@ nav:
       - Fraud Detection: examples/fraud.md
       - Credit Analysis: examples/credit.md
       - All Features: examples/features.md
+      - Procedural BFS: examples/procedural_bfs.md
   - Contributing: contributing.md
   - About: about.md
 

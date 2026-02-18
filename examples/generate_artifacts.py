@@ -18,6 +18,9 @@ from typing import Any
 import yaml
 
 
+_VLP_PATTERN = re.compile(r'\*\d+\.\.\d+')
+
+
 @dataclass
 class TranspileResult:
     """Result of a transpilation attempt."""
@@ -29,6 +32,8 @@ class TranspileResult:
     ast: str | None = None
     logical_plan: str | None = None
     sql: str | None = None
+    procedural_databricks_sql: str | None = None
+    procedural_pyspark_sql: str | None = None
     error: str | None = None
     success: bool = False
 
@@ -206,7 +211,7 @@ def transpile_query(
         result.error = f"RESOLVER ERROR:\n{e}\n\n{traceback.format_exc()}"
         return result
 
-    # Step 4: Render SQL
+    # Step 4: Render SQL (CTE mode — default)
     try:
         renderer = SQLRenderer(schema_provider)
         sql = renderer.render_plan(plan)
@@ -215,6 +220,31 @@ def transpile_query(
     except Exception as e:
         result.error = f"RENDERER ERROR:\n{e}\n\n{traceback.format_exc()}"
         return result
+
+    # Step 5: Procedural BFS variants for VLP queries
+    if _VLP_PATTERN.search(query):
+        for strategy, attr in [
+            ("temp_tables", "procedural_databricks_sql"),
+            ("numbered_views", "procedural_pyspark_sql"),
+        ]:
+            try:
+                proc_ast = parser.parse(query)
+                proc_plan = LogicalPlan.process_query_tree(
+                    proc_ast, schema_provider,
+                )
+                optimize_plan(proc_plan)
+                proc_plan.resolve(query)
+                proc_renderer = SQLRenderer(
+                    schema_provider,
+                    vlp_rendering_mode="procedural",
+                    materialization_strategy=strategy,
+                )
+                setattr(
+                    result, attr,
+                    proc_renderer.render_plan(proc_plan),
+                )
+            except Exception:
+                pass  # procedural not supported for this query
 
     return result
 
@@ -234,9 +264,19 @@ def save_artifacts(result: TranspileResult, output_dir: Path) -> None:
     if result.logical_plan:
         (output_dir / "logical_plan.txt").write_text(result.logical_plan, encoding="utf-8")
 
-    # Save SQL
+    # Save SQL (CTE mode)
     if result.sql:
         (output_dir / "databricks.sql").write_text(result.sql, encoding="utf-8")
+
+    # Save procedural BFS SQL variants
+    if result.procedural_databricks_sql:
+        (output_dir / "procedural_databricks.sql").write_text(
+            result.procedural_databricks_sql, encoding="utf-8",
+        )
+    if result.procedural_pyspark_sql:
+        (output_dir / "procedural_pyspark.sql").write_text(
+            result.procedural_pyspark_sql, encoding="utf-8",
+        )
 
     # Save error if any
     if result.error:
@@ -252,6 +292,8 @@ def save_artifacts(result: TranspileResult, output_dir: Path) -> None:
         "has_ast": result.ast is not None,
         "has_logical_plan": result.logical_plan is not None,
         "has_sql": result.sql is not None,
+        "has_procedural_databricks": result.procedural_databricks_sql is not None,
+        "has_procedural_pyspark": result.procedural_pyspark_sql is not None,
         "has_error": result.error is not None,
     }
     (output_dir / "metadata.json").write_text(

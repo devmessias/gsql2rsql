@@ -154,6 +154,8 @@ class GraphContext:
         # Setup transpiler components
         self._parser = OpenCypherParser()
         self._renderer: SQLRenderer | None = None  # Lazy init after schemas are ready
+        self._vlp_rendering_mode: str = "cte"
+        self._materialization_strategy: str = "temp_tables"
 
     def _discover_types(self) -> None:
         """Auto-discover node and edge types from tables."""
@@ -359,6 +361,10 @@ class GraphContext:
         bidirectional_mode: Literal[
             "off", "recursive", "unrolling", "auto"
         ] = "recursive",
+        vlp_rendering_mode: Literal["cte", "procedural"] = "cte",
+        materialization_strategy: Literal[
+            "temp_tables", "numbered_views"
+        ] = "temp_tables",
     ) -> str:
         """Transpile OpenCypher query to Databricks SQL.
 
@@ -394,9 +400,19 @@ class GraphContext:
                 "Schema not initialized. Call set_types() or provide spark parameter."
             )
 
-        # Lazy initialize renderer after schemas are ready
-        if self._renderer is None:
-            self._renderer = SQLRenderer(db_schema_provider=self._schema)
+        # Lazy initialize renderer (recreate when mode/strategy changes)
+        if (
+            self._renderer is None
+            or self._vlp_rendering_mode != vlp_rendering_mode
+            or self._materialization_strategy != materialization_strategy
+        ):
+            self._vlp_rendering_mode = vlp_rendering_mode
+            self._materialization_strategy = materialization_strategy
+            self._renderer = SQLRenderer(
+                db_schema_provider=self._schema,
+                vlp_rendering_mode=vlp_rendering_mode,
+                materialization_strategy=materialization_strategy,
+            )
 
         # Parse query
         ast = self._parser.parse(query)

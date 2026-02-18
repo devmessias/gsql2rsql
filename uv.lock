@@ -419,7 +419,7 @@ wheels = [
 
 [[package]]
 name = "gsql2rsql"
-version = "0.9.3"
+version = "0.9.4"
 source = { editable = "." }
 dependencies = [
     { name = "antlr4-python3-runtime" },
@@ -473,7 +473,7 @@ dev = [
     { name = "mkdocs-macros-plugin", specifier = ">=1.5.0" },
     { name = "mkdocs-material", specifier = ">=9.7.1" },
     { name = "mkdocs-minify-plugin", specifier = ">=0.8.0" },
-    { name = "pyspark", specifier = ">=4.1.0" },
+    { name = "pyspark", specifier = ">=4.2.0.dev2" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "vulture", specifier = ">=2.14" },
@@ -1301,12 +1301,12 @@ wheels = [
 
 [[package]]
 name = "pyspark"
-version = "4.1.1"
+version = "4.2.0.dev2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "py4j" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/bf/58ee13add151469c25825b7125bbf62c3bdcec05eec4d458fcb5c5516066/pyspark-4.1.1.tar.gz", hash = "sha256:77f78984aa84fbe865c717dd37b49913b4e5c97d76ef6824f932f1aefa6621ec", size = 455359625, upload-time = "2026-01-09T09:38:38.28Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/88/69a2df73eb3e88d5bcf6d28216bbdb33fc45639915dbba3b19afcb0ecaf1/pyspark-4.2.0.dev2.tar.gz", hash = "sha256:9031d1e9e3320f86969f63a1e7d01add67a835059266b73da7a1a69ba553aa61", size = 459477970, upload-time = "2026-02-08T23:39:11.846Z" }
 
 [[package]]
 name = "pytest"

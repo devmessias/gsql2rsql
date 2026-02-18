@@ -46,6 +46,7 @@ from gsql2rsql.planner.operators import (
 from gsql2rsql.planner.schema import EntityField, EntityType, Schema, ValueField
 from gsql2rsql.renderer.expression_renderer import ExpressionRenderer
 from gsql2rsql.renderer.join_renderer import JoinRenderer
+from gsql2rsql.renderer.procedural_bfs_renderer import ProceduralBFSRenderer
 from gsql2rsql.renderer.recursive_cte_renderer import RecursiveCTERenderer
 from gsql2rsql.renderer.render_context import RenderContext
 from gsql2rsql.renderer.schema_provider import ISQLDBSchemaProvider
@@ -74,6 +75,8 @@ class SQLRenderer:
         db_schema_provider: ISQLDBSchemaProvider | None = None,
         enable_column_pruning: bool = True,
         config: dict[str, Any] | None = None,
+        vlp_rendering_mode: str = "cte",
+        materialization_strategy: str = "temp_tables",
     ) -> None:
         """
         Initialize the SQL renderer.
@@ -117,6 +120,8 @@ class SQLRenderer:
 
         # Configuration
         self._config = config or {}
+        self._vlp_rendering_mode = vlp_rendering_mode
+        self._materialization_strategy = materialization_strategy
 
     @property
     def _db_schema(self) -> ISQLDBSchemaProvider:
@@ -163,6 +168,8 @@ class SQLRenderer:
             enable_column_pruning=self._enable_column_pruning,
             config=self._config,
             enriched=enriched,
+            vlp_rendering_mode=self._vlp_rendering_mode,
+            materialization_strategy=self._materialization_strategy,
         )
         ctx.cte_counter = self._cte_counter
         ctx.join_alias_counter = self._join_alias_counter
@@ -226,12 +233,27 @@ class SQLRenderer:
         # The context shares mutable references to required_columns/required_value_fields.
         self._ctx = self._create_context(enriched=enriched)
         self._expr = ExpressionRenderer(self._ctx)
-        self._cte = RecursiveCTERenderer(self._ctx, self._expr, self._render_operator)
+        self._cte = RecursiveCTERenderer(
+            self._ctx, self._expr, self._render_operator,
+        )
+        self._proc_bfs = ProceduralBFSRenderer(
+            self._ctx, self._expr, self._render_operator,
+        )
         self._join = JoinRenderer(
             self._ctx, self._expr,
             self._render_operator,
             self._cte._render_aggregation_boundary_reference,
         )
+
+        # Fork: procedural BFS mode
+        if self._vlp_rendering_mode == "procedural":
+            has_recursive = any(
+                isinstance(op, RecursiveTraversalOperator)
+                for start_op in plan.starting_operators
+                for op in self._walk_operators(start_op)
+            )
+            if has_recursive:
+                return self._render_plan_procedural(plan)
 
         # Collect any operators that need CTEs
         # Use a shared visited set to avoid duplicates across starting operators
@@ -292,6 +314,90 @@ class SQLRenderer:
             has_recursive = has_recursive or child_has_recursive
 
         return has_recursive
+
+    @staticmethod
+    def _walk_operators(
+        op: LogicalOperator,
+    ) -> list[LogicalOperator]:
+        """Yield all operators reachable from *op* (BFS)."""
+        result: list[LogicalOperator] = []
+        stack = [op]
+        visited: set[int] = set()
+        while stack:
+            current = stack.pop()
+            cid = id(current)
+            if cid in visited:
+                continue
+            visited.add(cid)
+            result.append(current)
+            stack.extend(current.out_operators)
+        return result
+
+    def _render_plan_procedural(self, plan: LogicalPlan) -> str:
+        """Render plan using procedural BFS instead of WITH RECURSIVE CTEs."""
+        declarations: list[str] = []
+        procedural_blocks: list[str] = []
+
+        # Collect procedural blocks for each RecursiveTraversalOperator
+        # and non-recursive CTEs (AggregationBoundary etc.)
+        non_recursive_ctes: list[str] = []
+        visited: set[int] = set()
+        for start_op in plan.starting_operators:
+            self._collect_procedural_blocks(
+                start_op, declarations, procedural_blocks,
+                non_recursive_ctes, visited,
+            )
+
+        # Render the main query (same as CTE path)
+        terminal_op = plan.terminal_operators[0]
+        main_query = self._render_operator(terminal_op, depth=0)
+
+        # Handle non-recursive CTEs (AggregationBoundary etc.)
+        if non_recursive_ctes:
+            cte_block = "WITH\n" + ",\n".join(non_recursive_ctes)
+            main_query = f"{cte_block}\n{main_query}"
+
+        # Wrap in BEGIN...END
+        parts: list[str] = ["BEGIN"]
+        for d in declarations:
+            for line in d.split("\n"):
+                parts.append(f"  {line}")
+        parts.append("")
+        for block in procedural_blocks:
+            for line in block.split("\n"):
+                parts.append(f"  {line}")
+            parts.append("")
+        parts.append(f"  {main_query};")
+        parts.append("END")
+        return "\n".join(parts)
+
+    def _collect_procedural_blocks(
+        self,
+        op: LogicalOperator,
+        declarations: list[str],
+        procedural_blocks: list[str],
+        non_recursive_ctes: list[str],
+        visited: set[int],
+    ) -> None:
+        """Walk plan tree, collecting procedural BFS blocks and non-recursive CTEs."""
+        op_id = id(op)
+        if op_id in visited:
+            return
+        visited.add(op_id)
+
+        if isinstance(op, RecursiveTraversalOperator):
+            decl, body = self._proc_bfs.render_procedural_block(op)
+            declarations.append(decl)
+            procedural_blocks.append(body)
+        elif isinstance(op, AggregationBoundaryOperator):
+            cte = self._cte._render_aggregation_boundary_cte(op)
+            non_recursive_ctes.append(cte)
+
+        for out_op in op.out_operators:
+            self._collect_procedural_blocks(
+                out_op, declarations, procedural_blocks,
+                non_recursive_ctes, visited,
+            )
 
     def _get_resolved_ref(
         self,
@@ -704,6 +810,10 @@ class SQLRenderer:
         elif isinstance(op, SetOperator):
             return self._render_set_operator(op, depth)
         elif isinstance(op, RecursiveTraversalOperator):
+            if self._ctx.vlp_rendering_mode == "procedural":
+                return self._proc_bfs.render_procedural_reference(
+                    op, depth,
+                )
             return self._cte._render_recursive_reference(op, depth)
         elif isinstance(op, UnwindOperator):
             return self._render_unwind(op, depth)

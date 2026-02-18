@@ -39,6 +39,8 @@ class RenderContext:
         enable_column_pruning: bool,
         config: dict[str, object],
         enriched: EnrichedPlanData | None = None,
+        vlp_rendering_mode: str = "cte",
+        materialization_strategy: str = "temp_tables",
     ) -> None:
         self.db_schema = db_schema
         self.resolution_result = resolution_result
@@ -47,6 +49,8 @@ class RenderContext:
         self.enable_column_pruning = enable_column_pruning
         self.config = config
         self.enriched = enriched
+        self.vlp_rendering_mode = vlp_rendering_mode
+        self.materialization_strategy = materialization_strategy
         self._cte_counter = 0
         self._join_alias_counter = 0
 

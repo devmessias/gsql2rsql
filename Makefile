@@ -218,15 +218,15 @@ docs-install:  ## Install documentation dependencies
 	pip install -r requirements-docs.txt
 
 docs-generate-artifacts:  ## Generate transpilation artifacts for examples
-	$(UV) run python examples/generate_artifacts.py
+	-$(UV) run python examples/generate_artifacts.py
 
 docs-generate-pages:  ## Generate documentation pages from artifacts
 	$(UV) run python scripts/generate_example_docs.py
 
 docs-generate: docs-generate-artifacts docs-generate-pages  ## Generate all documentation content
 
-docs-serve:  ## Serve documentation locally
-	$(UV) run mkdocs serve
+docs-serve: docs-generate  ## Serve documentation locally (generates artifacts + pages first)
+	$(UV) run mkdocs serve -a 0.0.0.0:8787
 
 docs-build:  ## Build documentation site
 	$(UV) run mkdocs build

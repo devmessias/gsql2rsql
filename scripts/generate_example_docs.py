@@ -229,6 +229,312 @@ def generate_index_page(
     print(f"  ✓ Generated: {output_path.relative_to(output_path.parent.parent)}")
 
 
+def _generate_quickstart_sql(cypher_query: str, strategy: str) -> str | None:
+    """Transpile a query with procedural BFS for the quickstart section.
+
+    Returns None if transpilation fails (e.g., unsupported feature).
+    """
+    try:
+        from gsql2rsql.common.schema import EdgeSchema, EntityProperty, NodeSchema
+        from gsql2rsql.parser.opencypher_parser import OpenCypherParser
+        from gsql2rsql.planner.logical_plan import LogicalPlan
+        from gsql2rsql.planner.subquery_optimizer import optimize_plan
+        from gsql2rsql.renderer.schema_provider import (
+            SimpleSQLSchemaProvider,
+            SQLTableDescriptor,
+        )
+        from gsql2rsql.renderer.sql_renderer import SQLRenderer
+
+        schema = SimpleSQLSchemaProvider()
+        schema.add_node(
+            NodeSchema(
+                name="Person",
+                properties=[
+                    EntityProperty("node_id", str),
+                    EntityProperty("name", str),
+                    EntityProperty("age", int),
+                ],
+                node_id_property=EntityProperty("node_id", str),
+            ),
+            SQLTableDescriptor(
+                table_name="nodes",
+                node_id_columns=["node_id"],
+                filter="node_type = 'Person'",
+            ),
+        )
+        schema.add_edge(
+            EdgeSchema(
+                name="KNOWS",
+                source_node_id="Person",
+                sink_node_id="Person",
+                source_id_property=EntityProperty("src", str),
+                sink_id_property=EntityProperty("dst", str),
+                properties=[
+                    EntityProperty("src", str),
+                    EntityProperty("dst", str),
+                    EntityProperty("amount", int),
+                ],
+            ),
+            SQLTableDescriptor(
+                entity_id="Person@KNOWS@Person",
+                table_name="edges",
+                node_id_columns=["src", "dst"],
+                filter="relationship_type = 'KNOWS'",
+            ),
+        )
+
+        # Enable no-label nodes and untyped edges for queries like:
+        #   MATCH (root {node_id: ...}) MATCH p = (root)-[*1..4]-()
+        schema.enable_no_label_support(
+            table_name="nodes",
+            node_id_columns=["node_id"],
+            properties=[
+                EntityProperty("node_id", str),
+                EntityProperty("name", str),
+                EntityProperty("age", int),
+            ],
+        )
+        schema.enable_untyped_edge_support(
+            table_name="edges",
+            source_id_column="src",
+            sink_id_column="dst",
+            properties=[
+                EntityProperty("src", str),
+                EntityProperty("dst", str),
+                EntityProperty("amount", int),
+            ],
+        )
+
+        parser = OpenCypherParser()
+        renderer = SQLRenderer(
+            db_schema_provider=schema,
+            vlp_rendering_mode="procedural",
+            materialization_strategy=strategy,
+        )
+        ast = parser.parse(cypher_query)
+        plan = LogicalPlan.process_query_tree(ast, schema)
+        optimize_plan(plan)
+        plan.resolve(original_query=cypher_query)
+        return renderer.render_plan(plan)
+    except Exception as e:
+        print(f"    WARNING: quickstart SQL generation failed ({strategy}): {e}")
+        return None
+
+
+_QUICKSTART_CYPHER = """\
+MATCH (root {node_id: 'Alice'})
+MATCH p = (root)-[*1..4]-()
+UNWIND relationships(p) AS r
+RETURN r"""
+
+
+def _build_quickstart_section() -> list[str]:
+    """Build the Quick Start section with GraphContext example and live SQL."""
+    sql_databricks = _generate_quickstart_sql(_QUICKSTART_CYPHER, "temp_tables")
+    sql_pyspark = _generate_quickstart_sql(_QUICKSTART_CYPHER, "numbered_views")
+
+    lines = [
+        "## Quick Start with GraphContext",
+        "",
+        "The simplest way to use procedural BFS is via `GraphContext`:",
+        "",
+        '!!! warning "PySpark: enable SQL scripting"',
+        "    Procedural BFS generates `BEGIN...END` blocks with `DECLARE`, "
+        "`WHILE`, etc. PySpark requires SQL scripting to be enabled:",
+        "",
+        "    ```python",
+        '    spark.conf.set("spark.sql.scripting.enabled", "true")',
+        "    ```",
+        "",
+        "    Databricks has SQL scripting enabled by default.",
+        "",
+        "```python",
+        "from gsql2rsql import GraphContext",
+        "",
+        "graph = GraphContext(",
+        '    spark=spark,',
+        '    nodes_table="catalog.schema.nodes",',
+        '    edges_table="catalog.schema.edges",',
+        ")",
+        "",
+        "# Procedural BFS for Databricks (default)",
+        'sql = graph.transpile(',
+        '    """',
+        "    MATCH (root {node_id: 'Alice'})",
+        "    MATCH p = (root)-[*1..4]-()",
+        "    UNWIND relationships(p) AS r",
+        "    RETURN r",
+        '    """,',
+        '    vlp_rendering_mode="procedural",',
+        '    materialization_strategy="temp_tables",',
+        ")",
+        "",
+        "# Procedural BFS for PySpark 4.2+",
+        'sql_pyspark = graph.transpile(',
+        '    """',
+        "    MATCH (root {node_id: 'Alice'})",
+        "    MATCH p = (root)-[*1..4]-()",
+        "    UNWIND relationships(p) AS r",
+        "    RETURN r",
+        '    """,',
+        '    vlp_rendering_mode="procedural",',
+        '    materialization_strategy="numbered_views",',
+        ")",
+        "```",
+        "",
+        '!!! info "Edge collection support"',
+        "    Procedural BFS supports `UNWIND relationships(path) AS r` to "
+        "access edge properties. Each BFS result row is one edge, so "
+        "`UNWIND` produces one row per traversed edge. "
+        "`nodes(path)` is **not** supported (requires full path "
+        "reconstruction). Use `vlp_rendering_mode='cte'` if you need it.",
+        "",
+    ]
+
+    # Add generated SQL examples
+    if sql_databricks:
+        lines.append('??? example "Generated SQL — Databricks (temp_tables)"')
+        lines.append("    ```sql")
+        for sql_line in sql_databricks.strip().split("\n"):
+            lines.append(f"    {sql_line}")
+        lines.append("    ```")
+        lines.append("")
+
+    if sql_pyspark:
+        lines.append(
+            '??? example "Generated SQL — PySpark 4.2 (numbered_views)"',
+        )
+        lines.append("    ```sql")
+        for sql_line in sql_pyspark.strip().split("\n"):
+            lines.append(f"    {sql_line}")
+        lines.append("    ```")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+
+    return lines
+
+
+def generate_procedural_bfs_page(
+    artifacts_base: Path,
+    categories: list[str],
+    output_path: Path,
+) -> None:
+    """Generate a documentation page for procedural BFS examples.
+
+    Collects all VLP queries across all categories that have procedural
+    BFS SQL output (both Databricks temp_tables and PySpark numbered_views).
+    """
+    lines = [
+        "# Procedural BFS Examples",
+        "",
+        "This page shows queries with **variable-length paths** (VLP) transpiled",
+        "using the **procedural BFS** rendering mode.",
+        "",
+        "Procedural BFS uses SQL scripting (`BEGIN...END`, `WHILE`) instead of",
+        "`WITH RECURSIVE` CTEs. This enables a **global visited set** that",
+        "prevents re-visiting nodes (shortest-path semantics).",
+        "",
+        "Two materialization strategies are shown:",
+        "",
+        "- **Databricks** (`temp_tables`): Uses `CREATE TEMPORARY TABLE` + "
+        "`INSERT INTO`. Fixed table names, O(1) visited reads per level.",
+        "- **PySpark 4.2** (`numbered_views`): Uses `EXECUTE IMMEDIATE` + "
+        "numbered views. Dynamic names, UNION chain for visited.",
+        "",
+        "---",
+        "",
+    ]
+
+    # Add Quick Start section with GraphContext example
+    lines.extend(_build_quickstart_section())
+
+    query_idx = 0
+
+    for category in sorted(categories):
+        category_dir = artifacts_base / category
+
+        for artifact_dir in sorted(category_dir.glob("*")):
+            if not artifact_dir.is_dir():
+                continue
+
+            metadata = load_metadata(artifact_dir)
+            has_dbr = metadata.get("has_procedural_databricks", False)
+            has_pyspark = metadata.get("has_procedural_pyspark", False)
+
+            if not has_dbr and not has_pyspark:
+                continue
+
+            query_idx += 1
+            cypher = load_file_safe(artifact_dir / "query.cypher")
+            proc_dbr = load_file_safe(
+                artifact_dir / "procedural_databricks.sql",
+            )
+            proc_pyspark = load_file_safe(
+                artifact_dir / "procedural_pyspark.sql",
+            )
+            description = metadata.get("description", "Query")
+            category_label = category.replace("_queries", "").title()
+
+            lines.append(
+                f"## {query_idx}. {description}"
+            )
+            lines.append("")
+            lines.append(f"**Source**: {category_label}")
+            lines.append("")
+
+            # Cypher query
+            lines.append('???+ note "OpenCypher Query"')
+            lines.append("    ```cypher")
+            for cypher_line in cypher.strip().split("\n"):
+                lines.append(f"    {cypher_line}")
+            lines.append("    ```")
+            lines.append("")
+
+            # Databricks (temp_tables)
+            if proc_dbr:
+                lines.append(
+                    '??? example "Procedural BFS — Databricks '
+                    '(temp_tables)"',
+                )
+                lines.append("    ```sql")
+                for sql_line in proc_dbr.strip().split("\n"):
+                    lines.append(f"    {sql_line}")
+                lines.append("    ```")
+                lines.append("")
+
+            # PySpark (numbered_views)
+            if proc_pyspark:
+                lines.append(
+                    '??? example "Procedural BFS — PySpark 4.2 '
+                    '(numbered_views)"',
+                )
+                lines.append("    ```sql")
+                for sql_line in proc_pyspark.strip().split("\n"):
+                    lines.append(f"    {sql_line}")
+                lines.append("    ```")
+                lines.append("")
+
+            lines.append("---")
+            lines.append("")
+
+    if query_idx == 0:
+        lines.append(
+            "!!! warning \"No procedural BFS examples found\""
+        )
+        lines.append(
+            "    Run `python examples/generate_artifacts.py` first."
+        )
+        lines.append("")
+
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    print(
+        f"  ✓ Generated: "
+        f"{output_path.relative_to(output_path.parent.parent)}"
+    )
+
+
 def main() -> int:
     """Main entry point."""
     # Paths
@@ -272,6 +578,14 @@ def main() -> int:
         print(f"Processing category: {category}")
         generate_category_page(category, category_dir, output_path)
         print()
+
+    # Generate procedural BFS page
+    print("Processing: procedural_bfs")
+    procedural_path = docs_examples / "procedural_bfs.md"
+    generate_procedural_bfs_page(
+        artifacts_base, categories, procedural_path,
+    )
+    print()
 
     print("✓ Example documentation generated successfully!")
     return 0
