@@ -2,6 +2,17 @@
 
 
 
+## v0.9.7 (2026-02-22)
+
+### Documentation
+
+* docs: add functions reference page with all  opencypher supported functions and is_termiantor extension ([`0e0d685`](https://github.com/devmessias/gsql2rsql/commit/0e0d68563cc84b2749cd0de3aca5ba19c315c14a))
+
+### Performance
+
+* perf: implement is_terminator node expression for VLP ([`1a9e79a`](https://github.com/devmessias/gsql2rsql/commit/1a9e79a445aa61c5436590564b15ec8c4124ed0d))
+
+
 ## v0.9.6 (2026-02-18)
 
 ### Fix
