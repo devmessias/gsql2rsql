@@ -1067,6 +1067,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -1201,6 +1202,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -1331,6 +1333,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -1468,6 +1471,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -1621,6 +1625,7 @@ Databricks SQL translation.
                 ,strength AS _gsql2rsql__anon1_strength
               FROM
                 catalog.demo.Knows
+              WHERE person_id != friend_id
             ) AS _right_3 ON
               _left_3._gsql2rsql_p_id = _right_3._gsql2rsql__anon1_person_id
           ) AS _left_2
@@ -1648,6 +1653,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon2_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_m_id = _right_1._gsql2rsql__anon2_person_id
       ) AS _left_0
@@ -1810,6 +1816,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql_r_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql_r_person_id
       ) AS _left_0
@@ -3704,6 +3711,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -3838,6 +3846,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -3972,6 +3981,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -4102,6 +4112,7 @@ Databricks SQL translation.
             ,strength AS _gsql2rsql__anon1_strength
           FROM
             catalog.demo.Knows
+          WHERE person_id != friend_id
         ) AS _right_1 ON
           _left_1._gsql2rsql_p_id = _right_1._gsql2rsql__anon1_person_id
       ) AS _left_0
@@ -4266,6 +4277,7 @@ Databricks SQL translation.
                 ,strength AS _gsql2rsql__anon1_strength
               FROM
                 catalog.demo.Knows
+              WHERE person_id != friend_id
             ) AS _right_3 ON
               _left_3._gsql2rsql_p_id = _right_3._gsql2rsql__anon1_person_id
           ) AS _left_2
@@ -6731,10 +6743,10 @@ Databricks SQL translation.
         ,_left_3.`company_count` AS `company_count`
         ,_right_3._gsql2rsql_friend_id AS _gsql2rsql_friend_id
         ,_right_3._gsql2rsql_friend_name AS _gsql2rsql_friend_name
+        ,_right_3._gsql2rsql_a_id AS _gsql2rsql_a_id
         ,_right_3._gsql2rsql_a_name AS _gsql2rsql_a_name
         ,_right_3._gsql2rsql__anon1_person_id AS _gsql2rsql__anon1_person_id
         ,_right_3._gsql2rsql__anon1_friend_id AS _gsql2rsql__anon1_friend_id
-        ,_right_3._gsql2rsql_a_id AS _gsql2rsql_a_id
       FROM (
         SELECT
            `a`

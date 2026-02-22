@@ -1351,15 +1351,15 @@ Databricks SQL translation.
              _left_6.`c1` AS `c1`
             ,_left_6.`c2` AS `c2`
             ,_left_6.`shared_cards` AS `shared_cards`
-            ,_right_6._gsql2rsql_card1_id AS _gsql2rsql_card1_id
             ,_right_6._gsql2rsql__anon2_card_id AS _gsql2rsql__anon2_card_id
+            ,_right_6._gsql2rsql_m_id AS _gsql2rsql_m_id
+            ,_right_6._gsql2rsql_c1_id AS _gsql2rsql_c1_id
             ,_right_6._gsql2rsql__anon2_merchant_id AS _gsql2rsql__anon2_merchant_id
             ,_right_6._gsql2rsql_c1_status AS _gsql2rsql_c1_status
             ,_right_6._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
-            ,_right_6._gsql2rsql_c1_name AS _gsql2rsql_c1_name
-            ,_right_6._gsql2rsql_m_id AS _gsql2rsql_m_id
-            ,_right_6._gsql2rsql_c1_id AS _gsql2rsql_c1_id
             ,_right_6._gsql2rsql__anon1_customer_id AS _gsql2rsql__anon1_customer_id
+            ,_right_6._gsql2rsql_c1_name AS _gsql2rsql_c1_name
+            ,_right_6._gsql2rsql_card1_id AS _gsql2rsql_card1_id
           FROM (
             SELECT
                `c1`
@@ -3346,11 +3346,11 @@ Databricks SQL translation.
           ,_left_5.`blacklisted_customers` AS `blacklisted_customers`
           ,_left_5.`verified_customers` AS `verified_customers`
           ,_right_5._gsql2rsql__anon1_transaction_id AS _gsql2rsql__anon1_transaction_id
-          ,_right_5._gsql2rsql_t_amount AS _gsql2rsql_t_amount
-          ,_right_5._gsql2rsql_card_id AS _gsql2rsql_card_id
           ,_right_5._gsql2rsql_t_id AS _gsql2rsql_t_id
           ,_right_5._gsql2rsql__anon1_card_id AS _gsql2rsql__anon1_card_id
+          ,_right_5._gsql2rsql_card_id AS _gsql2rsql_card_id
           ,_right_5._gsql2rsql_card_number AS _gsql2rsql_card_number
+          ,_right_5._gsql2rsql_t_amount AS _gsql2rsql_t_amount
         FROM (
           SELECT
              `card`

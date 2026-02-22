@@ -165,6 +165,7 @@ nav:
   - Making delta tables graph-friendly: table-design.md
   - User Guide:
     - Getting Started: user-guide.md
+    - Functions Reference: functions.md
     - Examples:
       - examples/index.md
       - Fraud Detection: examples/fraud.md

@@ -1661,7 +1661,7 @@ Traceback (most recent call last):
           ^^^^^^^^^^^^^^^^^^^
   File "/home/devmessias/phd/cyper2dsql/python/src/gsql2rsql/parser/opencypher_parser.py", line 70, in parse
     error_collector.raise_if_errors(query_string)
-  File "/home/devmessias/phd/cyper2dsql/python/src/gsql2rsql/parser/error_listener.py", line 97, in raise_if_errors
+  File "/home/devmessias/phd/cyper2dsql/python/src/gsql2rsql/parser/error_listener.py", line 108, in raise_if_errors
     raise TranspilerSyntaxErrorException("\n".join(parts))
 gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7:24 near 'OVER' extraneous input 'OVER' expecting {OPTIONAL, MATCH, UNWIND, MERGE, CREATE, SET, DETACH, DELETE, REMOVE, CALL, WITH, RETURN}
 

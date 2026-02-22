@@ -64,222 +64,6 @@ sql_pyspark = graph.transpile(
 !!! info "Edge collection support"
     Procedural BFS supports `UNWIND relationships(path) AS r` to access edge properties. Each BFS result row is one edge, so `UNWIND` produces one row per traversed edge. `nodes(path)` is **not** supported (requires full path reconstruction). Use `vlp_rendering_mode='cte'` if you need it.
 
-??? example "Generated SQL — Databricks (temp_tables)"
-    ```sql
-    BEGIN
-      DECLARE current_depth_1 INT DEFAULT 0;
-      DECLARE rows_in_frontier_1 BIGINT DEFAULT 1;
-    
-      DROP TEMPORARY TABLE IF EXISTS bfs_visited_1;
-      DROP TEMPORARY TABLE IF EXISTS bfs_frontier_1;
-      DROP TEMPORARY TABLE IF EXISTS bfs_result_1;
-      DROP TEMPORARY TABLE IF EXISTS bfs_frontier_1_init;
-      CREATE TEMPORARY TABLE bfs_visited_1 (node STRING);
-      CREATE TEMPORARY TABLE bfs_frontier_1 AS
-      SELECT n.node_id AS node
-      FROM nodes n
-      WHERE (n.node_id) = ('Alice');
-      INSERT INTO bfs_visited_1
-      SELECT node FROM bfs_frontier_1;
-      CREATE TEMPORARY TABLE bfs_result_1 (src STRING, dst STRING, amount STRING, _next_node STRING, _bfs_depth INT);
-      CREATE TEMPORARY TABLE bfs_frontier_1_init AS
-      SELECT node FROM bfs_frontier_1;
-      
-      WHILE rows_in_frontier_1 > 0 AND current_depth_1 < 4 DO
-        SET current_depth_1 = current_depth_1 + 1;
-      
-        DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
-        CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.src, e.dst, e.amount, CASE WHEN f.node = e.src THEN e.dst ELSE e.src END AS _next_node, current_depth_1 AS _bfs_depth
-      FROM edges e
-      INNER JOIN bfs_frontier_1 f ON (e.src = f.node OR e.dst = f.node)
-      WHERE CASE WHEN f.node = e.src THEN e.dst ELSE e.src END NOT IN (SELECT node FROM bfs_visited_1);
-      
-        SET rows_in_frontier_1 = (SELECT COUNT(1) FROM bfs_edges_1);
-      
-        IF rows_in_frontier_1 > 0 THEN
-          INSERT INTO bfs_visited_1
-          SELECT DISTINCT _next_node FROM bfs_edges_1;
-          DROP TEMPORARY TABLE bfs_frontier_1;
-          CREATE TEMPORARY TABLE bfs_frontier_1 AS
-          SELECT DISTINCT _next_node AS node FROM bfs_edges_1;
-          INSERT INTO bfs_result_1
-          SELECT * FROM bfs_edges_1;
-        END IF;
-      END WHILE;
-      
-      CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
-      SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
-             r.src, r.dst, r.amount,
-             ARRAY(NAMED_STRUCT('src', r.src, 'dst', r.dst, 'amount', r.amount)) AS path_edges
-      FROM bfs_result_1 r
-      CROSS JOIN bfs_frontier_1_init f0;
-    
-      SELECT 
-       r AS r
-    FROM (
-      SELECT
-         _unwind_source.*
-        ,r
-      FROM (
-        SELECT
-           _left_0._gsql2rsql_root_node_id AS _gsql2rsql_root_node_id
-          ,_right_0._gsql2rsql__anon2_node_id AS _gsql2rsql__anon2_node_id
-          ,_right_0._gsql2rsql_p_id AS _gsql2rsql_p_id
-          ,_right_0._gsql2rsql_p_edges AS _gsql2rsql_p_edges
-        FROM (
-          SELECT
-             node_id AS _gsql2rsql_root_node_id
-          FROM
-            nodes
-          WHERE ((node_id) = ('Alice'))
-        ) AS _left_0
-        INNER JOIN (
-          SELECT
-             sink.node_id AS _gsql2rsql__anon2_node_id
-            ,sink.name AS _gsql2rsql__anon2_name
-            ,sink.age AS _gsql2rsql__anon2_age
-            ,source.node_id AS _gsql2rsql_root_node_id
-            ,source.name AS _gsql2rsql_root_name
-            ,source.age AS _gsql2rsql_root_age
-            ,p.start_node
-            ,p.end_node
-            ,p.depth
-            ,p.path AS _gsql2rsql_p_id
-            ,p.path_edges AS _gsql2rsql_p_edges
-          FROM paths_1 p
-          JOIN nodes sink
-            ON sink.node_id = p.end_node
-          JOIN nodes source
-            ON source.node_id = p.start_node
-          WHERE p.depth >= 1 AND p.depth <= 4
-        ) AS _right_0 ON
-          _left_0._gsql2rsql_root_node_id = _right_0._gsql2rsql_root_node_id
-      ) AS _unwind_source,
-      LATERAL EXPLODE(_gsql2rsql_p_edges) AS _exploded(r)
-    ) AS _proj;
-    END
-    ```
-
-??? example "Generated SQL — PySpark 4.2 (numbered_views)"
-    ```sql
-    BEGIN
-      DECLARE bfs_depth_1 INT DEFAULT 0;
-      DECLARE bfs_frontier_count_1 BIGINT DEFAULT 1;
-      DECLARE bfs_union_sql_1 STRING DEFAULT '';
-    
-      CREATE OR REPLACE TEMPORARY VIEW bfs_frontier_1_0 AS
-      SELECT n.node_id AS node
-      FROM nodes n
-      WHERE (n.node_id) = ('Alice');
-      
-      CREATE OR REPLACE TEMPORARY VIEW bfs_visited_1_0 AS
-      SELECT node FROM bfs_frontier_1_0;
-      
-      WHILE bfs_frontier_count_1 > 0 AND bfs_depth_1 < 4 DO
-        SET bfs_depth_1 = bfs_depth_1 + 1;
-      
-        EXECUTE IMMEDIATE
-          'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.src, e.dst, e.amount, CASE WHEN f.node = e.src THEN e.dst ELSE e.src END AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM edges e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON (e.src = f.node OR e.dst = f.node) WHERE CASE WHEN f.node = e.src THEN e.dst ELSE e.src END NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
-      
-        EXECUTE IMMEDIATE
-          'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
-      
-        IF bfs_frontier_count_1 > 0 THEN
-      
-          EXECUTE IMMEDIATE
-            'CREATE OR REPLACE TEMPORARY VIEW bfs_visited_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-             SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || '
-             UNION
-             SELECT DISTINCT _next_node AS node
-             FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING);
-      
-          EXECUTE IMMEDIATE
-            'CREATE OR REPLACE TEMPORARY VIEW bfs_frontier_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-             SELECT DISTINCT _next_node AS node
-             FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING);
-      
-          IF bfs_depth_1 >= 1 THEN
-            IF bfs_union_sql_1 = '' THEN
-              SET bfs_union_sql_1 =
-                'SELECT src, dst, amount, _next_node AS end_node, _bfs_depth AS depth FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING);
-            ELSE
-              SET bfs_union_sql_1 = bfs_union_sql_1
-                || ' UNION ALL SELECT src, dst, amount, _next_node AS end_node, _bfs_depth AS depth FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING);
-            END IF;
-          END IF;
-      
-        END IF;
-      END WHILE;
-      
-      IF bfs_union_sql_1 != '' THEN
-        EXECUTE IMMEDIATE
-          'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
-           SELECT f0.node AS start_node, r.end_node, r.depth,
-                  r.src, r.dst, r.amount,
-                  ARRAY(NAMED_STRUCT(''src'', r.src, ''dst'', r.dst, ''amount'', r.amount)) AS path_edges
-           FROM (' || bfs_union_sql_1 || ') r
-           CROSS JOIN bfs_frontier_1_0 f0';
-      ELSE
-        CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
-        SELECT
-          CAST(NULL AS STRING) AS start_node,
-          CAST(NULL AS STRING) AS end_node,
-          CAST(NULL AS INT) AS depth,
-          CAST(NULL AS STRING) AS src,
-          CAST(NULL AS STRING) AS dst,
-          CAST(NULL AS STRING) AS amount,
-          CAST(NULL AS ARRAY<STRUCT<src: STRING, dst: STRING, amount: STRING>>) AS path_edges
-        WHERE 1 = 0;
-      END IF;
-    
-      SELECT 
-       r AS r
-    FROM (
-      SELECT
-         _unwind_source.*
-        ,r
-      FROM (
-        SELECT
-           _left_0._gsql2rsql_root_node_id AS _gsql2rsql_root_node_id
-          ,_right_0._gsql2rsql__anon2_node_id AS _gsql2rsql__anon2_node_id
-          ,_right_0._gsql2rsql_p_id AS _gsql2rsql_p_id
-          ,_right_0._gsql2rsql_p_edges AS _gsql2rsql_p_edges
-        FROM (
-          SELECT
-             node_id AS _gsql2rsql_root_node_id
-          FROM
-            nodes
-          WHERE ((node_id) = ('Alice'))
-        ) AS _left_0
-        INNER JOIN (
-          SELECT
-             sink.node_id AS _gsql2rsql__anon2_node_id
-            ,sink.name AS _gsql2rsql__anon2_name
-            ,sink.age AS _gsql2rsql__anon2_age
-            ,source.node_id AS _gsql2rsql_root_node_id
-            ,source.name AS _gsql2rsql_root_name
-            ,source.age AS _gsql2rsql_root_age
-            ,p.start_node
-            ,p.end_node
-            ,p.depth
-            ,p.path AS _gsql2rsql_p_id
-            ,p.path_edges AS _gsql2rsql_p_edges
-          FROM paths_1 p
-          JOIN nodes sink
-            ON sink.node_id = p.end_node
-          JOIN nodes source
-            ON source.node_id = p.start_node
-          WHERE p.depth >= 1 AND p.depth <= 4
-        ) AS _right_0 ON
-          _left_0._gsql2rsql_root_node_id = _right_0._gsql2rsql_root_node_id
-      ) AS _unwind_source,
-      LATERAL EXPLODE(_gsql2rsql_p_edges) AS _exploded(r)
-    ) AS _proj;
-    END
-    ```
-
 ---
 
 ## 1. Analyze transaction chains to assess liquidity patterns
@@ -324,7 +108,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.credit.Transfer e
       INNER JOIN bfs_frontier_1 f ON e.source_account_id = f.node
       WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1) AND (e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY));
@@ -345,7 +129,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges
+             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -405,7 +190,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.credit.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND (e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY))';
+           SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.credit.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND (e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 30 DAY))';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -442,7 +227,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -455,7 +241,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS target_account_id,
           CAST(NULL AS STRING) AS amount,
           CAST(NULL AS STRING) AS timestamp,
-          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -538,7 +325,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.customer_id, e.knows_customer_id, CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.customer_id, e.knows_customer_id, CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.credit.CustomerKnows e
       INNER JOIN bfs_frontier_1 f ON (e.customer_id = f.node OR e.knows_customer_id = f.node)
       WHERE CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END NOT IN (SELECT node FROM bfs_visited_1);
@@ -558,7 +345,8 @@ sql_pyspark = graph.transpile(
       
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
-             r.customer_id, r.knows_customer_id
+             r.customer_id, r.knows_customer_id,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -657,7 +445,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.customer_id, e.knows_customer_id, CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.credit.CustomerKnows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON (e.customer_id = f.node OR e.knows_customer_id = f.node) WHERE CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.customer_id, e.knows_customer_id, CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.credit.CustomerKnows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON (e.customer_id = f.node OR e.knows_customer_id = f.node) WHERE CASE WHEN f.node = e.customer_id THEN e.knows_customer_id ELSE e.customer_id END NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -693,7 +481,8 @@ sql_pyspark = graph.transpile(
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
-                  r.customer_id, r.knows_customer_id
+                  r.customer_id, r.knows_customer_id,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -703,7 +492,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS end_node,
           CAST(NULL AS INT) AS depth,
           CAST(NULL AS STRING) AS customer_id,
-          CAST(NULL AS STRING) AS knows_customer_id
+          CAST(NULL AS STRING) AS knows_customer_id,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -822,7 +612,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -842,7 +632,8 @@ sql_pyspark = graph.transpile(
       
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
-             r.person_id, r.friend_id, r.since, r.strength
+             r.person_id, r.friend_id, r.since, r.strength,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -897,7 +688,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -933,7 +724,8 @@ sql_pyspark = graph.transpile(
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
-                  r.person_id, r.friend_id, r.since, r.strength
+                  r.person_id, r.friend_id, r.since, r.strength,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -945,7 +737,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS person_id,
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
-          CAST(NULL AS STRING) AS strength
+          CAST(NULL AS STRING) AS strength,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -1019,7 +812,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -1039,7 +832,8 @@ sql_pyspark = graph.transpile(
       
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
-             r.person_id, r.friend_id, r.since, r.strength
+             r.person_id, r.friend_id, r.since, r.strength,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -1094,7 +888,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -1130,7 +924,8 @@ sql_pyspark = graph.transpile(
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
-                  r.person_id, r.friend_id, r.since, r.strength
+                  r.person_id, r.friend_id, r.since, r.strength,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -1142,7 +937,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS person_id,
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
-          CAST(NULL AS STRING) AS strength
+          CAST(NULL AS STRING) AS strength,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -1215,7 +1011,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -1235,7 +1031,8 @@ sql_pyspark = graph.transpile(
       
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
-             r.person_id, r.friend_id, r.since, r.strength
+             r.person_id, r.friend_id, r.since, r.strength,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -1289,7 +1086,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -1325,7 +1122,8 @@ sql_pyspark = graph.transpile(
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
-                  r.person_id, r.friend_id, r.since, r.strength
+                  r.person_id, r.friend_id, r.since, r.strength,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -1337,7 +1135,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS person_id,
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
-          CAST(NULL AS STRING) AS strength
+          CAST(NULL AS STRING) AS strength,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -1410,7 +1209,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -1433,7 +1232,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -1489,7 +1289,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -1526,7 +1326,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -1539,7 +1340,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -1615,7 +1417,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -1638,7 +1440,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -1694,7 +1497,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -1731,7 +1534,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -1744,7 +1548,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -1818,7 +1623,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -1839,7 +1644,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -1895,7 +1701,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -1932,7 +1738,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -1945,7 +1752,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -2021,7 +1829,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1) AND (e.since) > (2010);
@@ -2044,7 +1852,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -2100,7 +1909,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND (e.since) > (2010)';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND (e.since) > (2010)';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -2137,7 +1946,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -2150,7 +1960,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -2227,7 +2038,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON (e.person_id = f.node OR e.friend_id = f.node)
       WHERE CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END NOT IN (SELECT node FROM bfs_visited_1);
@@ -2247,7 +2058,8 @@ sql_pyspark = graph.transpile(
       
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
-             r.person_id, r.friend_id, r.since, r.strength
+             r.person_id, r.friend_id, r.since, r.strength,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -2339,7 +2151,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON (e.person_id = f.node OR e.friend_id = f.node) WHERE CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON (e.person_id = f.node OR e.friend_id = f.node) WHERE CASE WHEN f.node = e.person_id THEN e.friend_id ELSE e.person_id END NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -2375,7 +2187,8 @@ sql_pyspark = graph.transpile(
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
-                  r.person_id, r.friend_id, r.since, r.strength
+                  r.person_id, r.friend_id, r.since, r.strength,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -2387,7 +2200,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS person_id,
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
-          CAST(NULL AS STRING) AS strength
+          CAST(NULL AS STRING) AS strength,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -2500,7 +2314,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -2521,7 +2335,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -2579,7 +2394,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -2616,7 +2431,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -2629,7 +2445,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -2706,7 +2523,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -2727,7 +2544,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -2785,7 +2603,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -2822,7 +2640,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -2835,7 +2654,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -2912,7 +2732,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -2933,7 +2753,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -3004,7 +2825,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -3041,7 +2862,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -3054,7 +2876,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -3144,7 +2967,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -3165,7 +2988,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -3229,7 +3053,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -3266,7 +3090,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -3279,7 +3104,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -3362,7 +3188,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.demo.Knows e
       INNER JOIN bfs_frontier_1 f ON e.person_id = f.node
       WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -3383,7 +3209,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.person_id, r.friend_id, r.since, r.strength,
-             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges
+             ARRAY(NAMED_STRUCT('person_id', r.person_id, 'friend_id', r.friend_id, 'since', r.since, 'strength', r.strength)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -3447,7 +3274,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.person_id, e.friend_id, e.since, e.strength, e.friend_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.demo.Knows e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.person_id = f.node WHERE e.friend_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -3484,7 +3311,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.person_id, r.friend_id, r.since, r.strength,
-                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''person_id'', r.person_id, ''friend_id'', r.friend_id, ''since'', r.since, ''strength'', r.strength)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -3497,7 +3325,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS friend_id,
           CAST(NULL AS STRING) AS since,
           CAST(NULL AS STRING) AS strength,
-          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<person_id: STRING, friend_id: STRING, since: STRING, strength: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -3583,7 +3412,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.fraud.Transfer e
       INNER JOIN bfs_frontier_1 f ON e.source_account_id = f.node
       WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1);
@@ -3606,7 +3435,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges
+             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -3669,7 +3499,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.fraud.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
+           SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.fraud.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ')';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -3706,7 +3536,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -3719,7 +3550,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS target_account_id,
           CAST(NULL AS STRING) AS amount,
           CAST(NULL AS STRING) AS timestamp,
-          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -3805,7 +3637,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.fraud.Transfer e
       INNER JOIN bfs_frontier_1 f ON e.source_account_id = f.node
       WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1) AND ((e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY))) AND ((e.amount) > (1000));
@@ -3828,7 +3660,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges
+             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -3913,7 +3746,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.fraud.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND ((e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY))) AND ((e.amount) > (1000))';
+           SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.fraud.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND ((e.timestamp) > ((CURRENT_TIMESTAMP()) - (INTERVAL 7 DAY))) AND ((e.amount) > (1000))';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -3950,7 +3783,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -3963,7 +3797,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS target_account_id,
           CAST(NULL AS STRING) AS amount,
           CAST(NULL AS STRING) AS timestamp,
-          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
@@ -4073,7 +3908,7 @@ sql_pyspark = graph.transpile(
       
         DROP TEMPORARY TABLE IF EXISTS bfs_edges_1;
         CREATE TEMPORARY TABLE bfs_edges_1 AS
-        SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
+        SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, current_depth_1 AS _bfs_depth
       FROM catalog.fraud.Transfer e
       INNER JOIN bfs_frontier_1 f ON e.source_account_id = f.node
       WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1) AND (e.amount) > (500);
@@ -4096,7 +3931,8 @@ sql_pyspark = graph.transpile(
       CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
       SELECT f0.node AS start_node, r._next_node AS end_node, r._bfs_depth AS depth,
              r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges
+             ARRAY(NAMED_STRUCT('source_account_id', r.source_account_id, 'target_account_id', r.target_account_id, 'amount', r.amount, 'timestamp', r.timestamp)) AS path_edges,
+             CAST(NULL AS ARRAY<STRING>) AS path
       FROM bfs_result_1 r
       CROSS JOIN bfs_frontier_1_init f0;
     
@@ -4157,7 +3993,7 @@ sql_pyspark = graph.transpile(
       
         EXECUTE IMMEDIATE
           'CREATE OR REPLACE TEMPORARY VIEW bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ' AS
-           SELECT DISTINCT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.fraud.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND (e.amount) > (500)';
+           SELECT e.source_account_id, e.target_account_id, e.amount, e.timestamp, e.target_account_id AS _next_node, ' || CAST(bfs_depth_1 AS STRING) || ' AS _bfs_depth FROM catalog.fraud.Transfer e INNER JOIN bfs_frontier_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ' f ON e.source_account_id = f.node WHERE e.target_account_id NOT IN (SELECT node FROM bfs_visited_1_' || CAST(bfs_depth_1 - 1 AS STRING) || ') AND (e.amount) > (500)';
       
         EXECUTE IMMEDIATE
           'SET bfs_frontier_count_1 = (SELECT COUNT(1) FROM bfs_edges_1_' || CAST(bfs_depth_1 AS STRING) || ')';
@@ -4194,7 +4030,8 @@ sql_pyspark = graph.transpile(
           'CREATE OR REPLACE TEMPORARY VIEW paths_1 AS
            SELECT f0.node AS start_node, r.end_node, r.depth,
                   r.source_account_id, r.target_account_id, r.amount, r.timestamp,
-                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges
+                  ARRAY(NAMED_STRUCT(''source_account_id'', r.source_account_id, ''target_account_id'', r.target_account_id, ''amount'', r.amount, ''timestamp'', r.timestamp)) AS path_edges,
+                  CAST(NULL AS ARRAY<STRING>) AS path
            FROM (' || bfs_union_sql_1 || ') r
            CROSS JOIN bfs_frontier_1_0 f0';
       ELSE
@@ -4207,7 +4044,8 @@ sql_pyspark = graph.transpile(
           CAST(NULL AS STRING) AS target_account_id,
           CAST(NULL AS STRING) AS amount,
           CAST(NULL AS STRING) AS timestamp,
-          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges
+          CAST(NULL AS ARRAY<STRUCT<source_account_id: STRING, target_account_id: STRING, amount: STRING, timestamp: STRING>>) AS path_edges,
+          CAST(NULL AS ARRAY<STRING>) AS path
         WHERE 1 = 0;
       END IF;
     
