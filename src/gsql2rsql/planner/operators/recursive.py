@@ -116,6 +116,7 @@ class RecursiveTraversalOperator(LogicalOperator):
         target_id_column: str = "id",
         start_node_filter: QueryExpression | None = None,
         sink_node_filter: QueryExpression | None = None,
+        barrier_filter: QueryExpression | None = None,
         cte_name: str = "",
         source_alias: str = "",
         target_alias: str = "",
@@ -145,6 +146,7 @@ class RecursiveTraversalOperator(LogicalOperator):
         self.target_id_column = target_id_column
         self.start_node_filter = start_node_filter
         self.sink_node_filter = sink_node_filter
+        self.barrier_filter = barrier_filter
         self.cte_name = cte_name
         self.source_alias = source_alias
         self.target_alias = target_alias

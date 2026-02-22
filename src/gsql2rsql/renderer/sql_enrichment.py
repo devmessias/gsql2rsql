@@ -134,6 +134,8 @@ class EnrichedRecursiveOp:
     start_filter_as_n: QueryExpression | None = None
     sink_filter_as_tgt: QueryExpression | None = None
     sink_filter_as_sink: QueryExpression | None = None
+    # Barrier filter (is_terminator directive) rewritten for "barrier" alias
+    barrier_filter_as_barrier: QueryExpression | None = None
 
 
 @dataclass(frozen=True)
@@ -503,6 +505,14 @@ class SQLEnrichmentPass:
                 edge_alias="sink",
             )
 
+        # Barrier filter (is_terminator directive)
+        barrier_filter_as_barrier = None
+        if op.barrier_filter and op.target_alias:
+            barrier_filter_as_barrier = rewrite_predicate_for_edge_alias(
+                op.barrier_filter, op.target_alias,
+                edge_alias="barrier",
+            )
+
         recursive_ops[op.operator_debug_id] = EnrichedRecursiveOp(
             edge_tables=tuple(edge_tables),
             source_id_col=source_id_col,
@@ -518,6 +528,7 @@ class SQLEnrichmentPass:
             start_filter_as_n=start_filter_as_n,
             sink_filter_as_tgt=sink_filter_as_tgt,
             sink_filter_as_sink=sink_filter_as_sink,
+            barrier_filter_as_barrier=barrier_filter_as_barrier,
         )
 
     def _resolve_node_info(self, node_type: str) -> EnrichedNodeInfo | None:

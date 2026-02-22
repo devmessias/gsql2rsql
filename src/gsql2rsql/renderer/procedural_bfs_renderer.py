@@ -44,6 +44,37 @@ if TYPE_CHECKING:
     from gsql2rsql.renderer.sql_enrichment import EnrichedRecursiveOp
 
 
+def _build_bfs_barrier_where(p: "_BFSParams", node_col: str) -> str:
+    """Build NOT EXISTS clause for barrier nodes in BFS frontier.
+
+    Returns SQL like:
+        NOT EXISTS (SELECT 1 FROM nodes barrier
+                    WHERE barrier.node_id = _next_node
+                      AND barrier.node_type = 'Station'
+                      AND barrier.is_hub = true)
+    """
+    parts = [f"barrier.{p.barrier_node_id_col} = {node_col}"]
+    if p.barrier_node_type_filter:
+        parts.append(f"barrier.{p.barrier_node_type_filter}")
+    parts.append(p.barrier_predicate)  # type: ignore[arg-type]
+    inner_where = " AND ".join(parts)
+    return (
+        f"NOT EXISTS (SELECT 1 FROM {p.barrier_node_table} barrier "
+        f"WHERE {inner_where})"
+    )
+
+
+def _build_bfs_barrier_where_escaped(
+    p: "_BFSParams", node_col: str,
+) -> str:
+    """Same as _build_bfs_barrier_where but with single-quote escaping.
+
+    For use inside EXECUTE IMMEDIATE strings in numbered_views strategy.
+    """
+    raw = _build_bfs_barrier_where(p, node_col)
+    return raw.replace("'", "''")
+
+
 @dataclass
 class _BFSParams:
     """Common parameters extracted once and shared between strategies."""
@@ -74,6 +105,11 @@ class _BFSParams:
     bidir_target_id_col: str = ""
     bidir_target_filter: str | None = None
     bidir_target_type_filter: str | None = None
+    # Barrier filter (is_terminator directive)
+    barrier_predicate: str | None = None
+    barrier_node_table: str | None = None
+    barrier_node_id_col: str | None = None
+    barrier_node_type_filter: str | None = None
 
 
 class ProceduralBFSRenderer:
@@ -238,6 +274,23 @@ class ProceduralBFSRenderer:
                     )
                 )
 
+        # Barrier filter (is_terminator directive)
+        barrier_predicate = None
+        barrier_node_table = None
+        barrier_node_id_col = None
+        barrier_node_type_filter = None
+        if enriched.barrier_filter_as_barrier:
+            barrier_predicate = (
+                self._expr.render_edge_filter_expression(
+                    enriched.barrier_filter_as_barrier
+                )
+            )
+            if enriched.target_node:
+                td = enriched.target_node.table_descriptor
+                barrier_node_table = td.full_table_name
+                barrier_node_id_col = enriched.target_node.id_column
+                barrier_node_type_filter = td.filter
+
         return _BFSParams(
             n=n,
             cte_name=cte_name,
@@ -264,6 +317,10 @@ class ProceduralBFSRenderer:
             bidir_target_id_col=bidir_target_id_col,
             bidir_target_filter=bidir_target_filter,
             bidir_target_type_filter=bidir_target_type_filter,
+            barrier_predicate=barrier_predicate,
+            barrier_node_table=barrier_node_table,
+            barrier_node_id_col=barrier_node_id_col,
+            barrier_node_type_filter=barrier_node_type_filter,
         )
 
     # ------------------------------------------------------------------
@@ -560,10 +617,20 @@ class ProceduralBFSRenderer:
 
         # Replace frontier: DROP + CREATE TABLE AS
         lines.append(f"    DROP TEMPORARY TABLE bfs_frontier_{p.n};")
-        lines.append(
-            f"    CREATE TEMPORARY TABLE bfs_frontier_{p.n} AS\n"
-            f"    SELECT DISTINCT _next_node AS node FROM bfs_edges_{p.n};"
-        )
+        if p.barrier_predicate and p.barrier_node_table:
+            barrier_where = _build_bfs_barrier_where(p, "_next_node")
+            lines.append(
+                f"    CREATE TEMPORARY TABLE bfs_frontier_{p.n} AS\n"
+                f"    SELECT DISTINCT _next_node AS node "
+                f"FROM bfs_edges_{p.n}\n"
+                f"    WHERE {barrier_where};"
+            )
+        else:
+            lines.append(
+                f"    CREATE TEMPORARY TABLE bfs_frontier_{p.n} AS\n"
+                f"    SELECT DISTINCT _next_node AS node "
+                f"FROM bfs_edges_{p.n};"
+            )
 
         # Accumulate result (only for levels >= min_hops)
         if p.min_hops > 1:
@@ -811,10 +878,21 @@ class ProceduralBFSRenderer:
         lines.append(
             f"    DROP TEMPORARY TABLE bfs_frontier_{p.n};"
         )
-        lines.append(
-            f"    CREATE TEMPORARY TABLE bfs_frontier_{p.n} AS\n"
-            f"    SELECT DISTINCT _next_node AS node "
-            f"FROM bfs_edges_{p.n};"
+        if p.barrier_predicate and p.barrier_node_table:
+            barrier_where = _build_bfs_barrier_where(
+                p, "_next_node",
+            )
+            lines.append(
+                f"    CREATE TEMPORARY TABLE bfs_frontier_{p.n} AS\n"
+                f"    SELECT DISTINCT _next_node AS node "
+                f"FROM bfs_edges_{p.n}\n"
+                f"    WHERE {barrier_where};"
+            )
+        else:
+            lines.append(
+                f"    CREATE TEMPORARY TABLE bfs_frontier_{p.n} AS\n"
+                f"    SELECT DISTINCT _next_node AS node "
+                f"FROM bfs_edges_{p.n};"
         )
 
         if p.min_hops > 1:
@@ -1129,14 +1207,28 @@ class ProceduralBFSRenderer:
         lines.append("")
 
         # Update frontier
-        lines.append(
-            f"    EXECUTE IMMEDIATE\n"
-            f"      'CREATE OR REPLACE TEMPORARY VIEW bfs_frontier_{p.n}_'"
-            f" || CAST(bfs_depth_{p.n} AS STRING) || ' AS\n"
-            f"       SELECT DISTINCT _next_node AS node\n"
-            f"       FROM bfs_edges_{p.n}_'"
-            f" || CAST(bfs_depth_{p.n} AS STRING);"
-        )
+        if p.barrier_predicate and p.barrier_node_table:
+            escaped_barrier = _build_bfs_barrier_where_escaped(
+                p, "_next_node",
+            )
+            lines.append(
+                f"    EXECUTE IMMEDIATE\n"
+                f"      'CREATE OR REPLACE TEMPORARY VIEW bfs_frontier_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING) || ' AS\n"
+                f"       SELECT DISTINCT _next_node AS node\n"
+                f"       FROM bfs_edges_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING) || '\n"
+                f"       WHERE {escaped_barrier}';"
+            )
+        else:
+            lines.append(
+                f"    EXECUTE IMMEDIATE\n"
+                f"      'CREATE OR REPLACE TEMPORARY VIEW bfs_frontier_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING) || ' AS\n"
+                f"       SELECT DISTINCT _next_node AS node\n"
+                f"       FROM bfs_edges_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING);"
+            )
         lines.append("")
 
         # D. Build UNION ALL incrementally (only for levels >= min_hops)
@@ -1492,15 +1584,30 @@ class ProceduralBFSRenderer:
         lines.append("")
 
         # Frontier
-        lines.append(
-            f"    EXECUTE IMMEDIATE\n"
-            f"      'CREATE OR REPLACE TEMPORARY VIEW "
-            f"bfs_frontier_{p.n}_'"
-            f" || CAST(bfs_depth_{p.n} AS STRING) || ' AS\n"
-            f"       SELECT DISTINCT _next_node AS node\n"
-            f"       FROM bfs_edges_{p.n}_'"
-            f" || CAST(bfs_depth_{p.n} AS STRING);"
-        )
+        if p.barrier_predicate and p.barrier_node_table:
+            escaped_barrier = _build_bfs_barrier_where_escaped(
+                p, "_next_node",
+            )
+            lines.append(
+                f"    EXECUTE IMMEDIATE\n"
+                f"      'CREATE OR REPLACE TEMPORARY VIEW "
+                f"bfs_frontier_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING) || ' AS\n"
+                f"       SELECT DISTINCT _next_node AS node\n"
+                f"       FROM bfs_edges_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING) || '\n"
+                f"       WHERE {escaped_barrier}';"
+            )
+        else:
+            lines.append(
+                f"    EXECUTE IMMEDIATE\n"
+                f"      'CREATE OR REPLACE TEMPORARY VIEW "
+                f"bfs_frontier_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING) || ' AS\n"
+                f"       SELECT DISTINCT _next_node AS node\n"
+                f"       FROM bfs_edges_{p.n}_'"
+                f" || CAST(bfs_depth_{p.n} AS STRING);"
+            )
         lines.append("")
 
         # Build UNION ALL incrementally

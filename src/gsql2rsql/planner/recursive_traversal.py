@@ -22,10 +22,12 @@ from gsql2rsql.parser.ast import (
     NodeEntity,
     QueryExpression,
     QueryExpressionBinary,
+    QueryExpressionFunction,
     QueryExpressionProperty,
     RelationshipDirection,
     RelationshipEntity,
 )
+from gsql2rsql.parser.operators import Function
 from gsql2rsql.planner.operators import (
     DataSourceOperator,
     JoinKeyPair,
@@ -95,6 +97,14 @@ def create_recursive_match_tree(
         source_node.alias,
     )
 
+    # Extract barrier filter (is_terminator directive) BEFORE sink filter.
+    # Must be first: extract_source_node_filter would incorrectly claim
+    # is_terminator(b.x) as a sink filter since it references only 'b'.
+    barrier_filter, remaining_where = extract_barrier_filter(
+        remaining_where,
+        target_node.alias,
+    )
+
     # Extract sink (target) node filter for optimization
     # This filter will be applied in the recursive join WHERE clause
     sink_node_filter, remaining_where = extract_source_node_filter(
@@ -102,7 +112,7 @@ def create_recursive_match_tree(
         target_node.alias,
     )
 
-    # Update match_clause with remaining WHERE (without source/sink filters)
+    # Update match_clause with remaining WHERE (without source/sink/barrier filters)
     match_clause.where_expression = remaining_where
 
     # =====================================================================
@@ -248,6 +258,7 @@ def create_recursive_match_tree(
         target_id_column=target_id_col,
         start_node_filter=start_node_filter,
         sink_node_filter=sink_node_filter,
+        barrier_filter=barrier_filter,
         cte_name=f"paths_{rel.alias or 'r'}",
         source_alias=source_node.alias,
         target_alias=target_node.alias,
@@ -409,6 +420,9 @@ def extract_source_node_filter(
     recursive CTE's base case, dramatically reducing the number of paths
     explored.
 
+    Handles arbitrarily nested AND trees by flattening all conjuncts first,
+    then partitioning them into source-only and remaining predicates.
+
     Args:
         where_expr: The WHERE clause expression
         source_alias: The node alias to extract filters for
@@ -420,6 +434,7 @@ def extract_source_node_filter(
         - WHERE p.name = 'Alice' -> (p.name = 'Alice', None)
         - WHERE p.name = 'Alice' AND f.age > 25 -> (p.name = 'Alice', f.age > 25)
         - WHERE f.age > 25 -> (None, f.age > 25)
+        - WHERE p.name = 'Alice' AND f.age > 25 AND g(x) -> (p.name = 'Alice', f.age > 25 AND g(x))
     """
     if not where_expr:
         return None, None
@@ -428,31 +443,131 @@ def extract_source_node_filter(
     if _references_only_variable(where_expr, source_alias):
         return where_expr, None
 
-    # Handle AND: split into source-only and other predicates
-    if isinstance(where_expr, QueryExpressionBinary):
-        if (where_expr.operator and
-                where_expr.operator.name.name == "AND"):
-            left = where_expr.left_expression
-            right = where_expr.right_expression
+    # Flatten nested AND tree into a list of conjuncts, then partition
+    conjuncts = _flatten_and_tree(where_expr)
+    if len(conjuncts) <= 1:
+        # Not an AND expression
+        return None, where_expr
 
-            # Check if both sides exist before analyzing
-            if left is None or right is None:
-                return None, where_expr
+    source_parts: list[QueryExpression] = []
+    remaining_parts: list[QueryExpression] = []
 
-            left_is_source = _references_only_variable(left, source_alias)
-            right_is_source = _references_only_variable(right, source_alias)
+    for conjunct in conjuncts:
+        if _references_only_variable(conjunct, source_alias):
+            source_parts.append(conjunct)
+        else:
+            remaining_parts.append(conjunct)
 
-            if left_is_source and right_is_source:
-                # Both sides reference only source - return entire expression
-                return where_expr, None
-            elif left_is_source:
-                # Left is source filter, right is remaining
-                return left, right
-            elif right_is_source:
-                # Right is source filter, left is remaining
-                return right, left
+    if not source_parts:
+        return None, where_expr
 
-    return None, where_expr
+    extracted = _rebuild_and_tree(source_parts)
+    remaining = _rebuild_and_tree(remaining_parts) if remaining_parts else None
+    return extracted, remaining
+
+
+def extract_barrier_filter(
+    where_expr: QueryExpression | None,
+    target_alias: str,
+) -> tuple[QueryExpression | None, QueryExpression | None]:
+    """Extract is_terminator() directive from WHERE clause.
+
+    Finds `is_terminator(<predicate>)` in the AND-flattened WHERE conjuncts,
+    extracts the inner predicate, and returns it separately.
+
+    The inner predicate MUST reference only `target_alias`.
+
+    Args:
+        where_expr: The WHERE clause expression (after source/sink extraction)
+        target_alias: The target node alias (e.g., 'b')
+
+    Returns:
+        Tuple of (barrier_predicate, remaining_expression)
+        barrier_predicate is the INNER expression (e.g., b.is_hub = true),
+        NOT the is_terminator() wrapper.
+    """
+    if not where_expr:
+        return None, None
+
+    # Single is_terminator() call (no AND wrapper)
+    if (
+        isinstance(where_expr, QueryExpressionFunction)
+        and where_expr.function == Function.IS_TERMINATOR
+        and len(where_expr.parameters) == 1
+    ):
+        inner = where_expr.parameters[0]
+        if _references_only_variable(inner, target_alias):
+            return inner, None
+        return None, where_expr
+
+    # Flatten AND tree and search conjuncts
+    conjuncts = _flatten_and_tree(where_expr)
+    if len(conjuncts) <= 1:
+        return None, where_expr
+
+    barrier_pred: QueryExpression | None = None
+    remaining_parts: list[QueryExpression] = []
+
+    for conjunct in conjuncts:
+        if (
+            barrier_pred is None
+            and isinstance(conjunct, QueryExpressionFunction)
+            and conjunct.function == Function.IS_TERMINATOR
+            and len(conjunct.parameters) == 1
+            and _references_only_variable(conjunct.parameters[0], target_alias)
+        ):
+            barrier_pred = conjunct.parameters[0]
+        else:
+            remaining_parts.append(conjunct)
+
+    if barrier_pred is None:
+        return None, where_expr
+
+    remaining = _rebuild_and_tree(remaining_parts) if remaining_parts else None
+    return barrier_pred, remaining
+
+
+def _flatten_and_tree(expr: QueryExpression) -> list[QueryExpression]:
+    """Flatten a nested AND tree into a list of conjuncts.
+
+    Example: (A AND B) AND C  ->  [A, B, C]
+    Non-AND expressions return a single-element list.
+    """
+    if (
+        isinstance(expr, QueryExpressionBinary)
+        and expr.operator
+        and expr.operator.name.name == "AND"
+    ):
+        parts: list[QueryExpression] = []
+        if expr.left_expression is not None:
+            parts.extend(_flatten_and_tree(expr.left_expression))
+        if expr.right_expression is not None:
+            parts.extend(_flatten_and_tree(expr.right_expression))
+        return parts
+    return [expr]
+
+
+def _rebuild_and_tree(parts: list[QueryExpression]) -> QueryExpression:
+    """Rebuild a left-associative AND tree from a list of conjuncts.
+
+    [A, B, C]  ->  (A AND B) AND C
+    """
+    from gsql2rsql.parser.operators import (
+        BinaryOperator,
+        BinaryOperatorInfo,
+        BinaryOperatorType,
+    )
+
+    assert parts, "Cannot rebuild AND tree from empty list"
+    result = parts[0]
+    and_op = BinaryOperatorInfo(BinaryOperator.AND, BinaryOperatorType.LOGICAL)
+    for i in range(1, len(parts)):
+        result = QueryExpressionBinary(
+            operator=and_op,
+            left_expression=result,
+            right_expression=parts[i],
+        )
+    return result
 
 
 def _references_only_variable(

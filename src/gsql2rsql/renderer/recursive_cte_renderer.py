@@ -28,6 +28,32 @@ if TYPE_CHECKING:
     from gsql2rsql.renderer.sql_enrichment import EnrichedRecursiveOp
 
 
+def _build_barrier_not_exists(
+    barrier_filter_sql: str,
+    barrier_node_table: str,
+    barrier_node_id_col: str,
+    barrier_node_type_filter: str | None,
+    node_col: str,
+) -> str:
+    """Build NOT EXISTS subquery for barrier nodes.
+
+    Returns SQL like:
+        NOT EXISTS (SELECT 1 FROM nodes barrier
+                    WHERE barrier.node_id = <node_col>
+                      AND barrier.node_type = 'Station'
+                      AND barrier.is_hub = true)
+    """
+    parts = [f"barrier.{barrier_node_id_col} = {node_col}"]
+    if barrier_node_type_filter:
+        parts.append(f"barrier.{barrier_node_type_filter}")
+    parts.append(barrier_filter_sql)
+    inner_where = " AND ".join(parts)
+    return (
+        f"NOT EXISTS (SELECT 1 FROM {barrier_node_table} barrier "
+        f"WHERE {inner_where})"
+    )
+
+
 @dataclass
 class EdgeInfo:
     """Parameter object replacing closure-captured variables in CTE generation.
@@ -51,6 +77,10 @@ class EdgeInfo:
     edge_filter_sql: str | None = None
     source_node_filter_sql: str | None = None
     source_node_table: "SQLTableDescriptor | None" = None
+    barrier_filter_sql: str | None = None
+    barrier_node_table: str | None = None
+    barrier_node_id_col: str | None = None
+    barrier_node_type_filter: str | None = None
 
 
 @dataclass
@@ -229,6 +259,19 @@ class RecursiveCTERenderer:
                 )
             )
             ei.source_node_table = enriched_rec.source_node.table_descriptor
+
+        # Barrier filter (is_terminator directive)
+        if enriched_rec.barrier_filter_as_barrier:
+            ei.barrier_filter_sql = (
+                self._expr.render_edge_filter_expression(
+                    enriched_rec.barrier_filter_as_barrier
+                )
+            )
+            if enriched_rec.target_node:
+                td = enriched_rec.target_node.table_descriptor
+                ei.barrier_node_table = td.full_table_name
+                ei.barrier_node_id_col = enriched_rec.target_node.id_column
+                ei.barrier_node_type_filter = td.filter
 
     def _build_edge_struct(self, ei: EdgeInfo, alias: str = "e") -> str:
         """Build NAMED_STRUCT expression for an edge with its properties."""
@@ -417,6 +460,16 @@ class RecursiveCTERenderer:
             where_parts.append(f"({filter_clause})")
         if ei.edge_filter_sql:
             where_parts.append(ei.edge_filter_sql)
+        if ei.barrier_filter_sql and ei.barrier_node_table:
+            where_parts.append(
+                _build_barrier_not_exists(
+                    ei.barrier_filter_sql,
+                    ei.barrier_node_table,
+                    ei.barrier_node_id_col or "id",
+                    ei.barrier_node_type_filter,
+                    "p.end_node",
+                )
+            )
         rec.append(f"    WHERE {where_parts[0]}")
         for wp in where_parts[1:]:
             rec.append(f"      AND {wp}")
@@ -656,6 +709,7 @@ class RecursiveCTERenderer:
         edge_filter_clause: str | None,
         edge_struct: str,
         is_undirected: bool,
+        barrier_not_exists: str | None = None,
     ) -> list[str]:
         """Emit the recursive-case block for one direction."""
         cte_full = f"{cfg.cte_prefix}_{cte_name}"
@@ -692,6 +746,8 @@ class RecursiveCTERenderer:
         )
         if edge_filter_clause:
             lines.append(f"      AND ({edge_filter_clause})")
+        if barrier_not_exists:
+            lines.append(f"      AND {barrier_not_exists}")
 
         # Undirected reverse
         if is_undirected:
@@ -725,6 +781,8 @@ class RecursiveCTERenderer:
             )
             if edge_filter_clause:
                 lines.append(f"      AND ({edge_filter_clause})")
+            if barrier_not_exists:
+                lines.append(f"      AND {barrier_not_exists}")
             lines.append("    )")
 
         lines.append("  ),")
@@ -823,6 +881,23 @@ class RecursiveCTERenderer:
             op, edge_src_col, edge_dst_col,
         )
 
+        # Resolve barrier NOT EXISTS for forward expansion
+        barrier_sql: str | None = None
+        enriched_rec = self._get_enriched_recursive(op)
+        if enriched_rec and enriched_rec.barrier_filter_as_barrier:
+            bf_sql = self._expr.render_edge_filter_expression(
+                enriched_rec.barrier_filter_as_barrier
+            )
+            if enriched_rec.target_node:
+                td = enriched_rec.target_node.table_descriptor
+                barrier_sql = _build_barrier_not_exists(
+                    bf_sql,
+                    td.full_table_name,
+                    enriched_rec.target_node.id_column,
+                    td.filter,
+                    "f.current_node",
+                )
+
         lines: list[str] = []
         for cfg in (fwd, bwd):
             lines.extend(self._build_bidir_depth0(
@@ -833,10 +908,16 @@ class RecursiveCTERenderer:
                 edge_dst_col, edge_filter_clause,
                 edge_struct, is_undirected,
             ))
+            # Barrier only on forward expansion
+            cfg_barrier = (
+                barrier_sql if cfg.cte_prefix == "forward"
+                else None
+            )
             lines.extend(self._build_bidir_recursive_block(
                 cfg, cte_name, edge_table_name,
                 edge_filter_clause, edge_struct,
                 is_undirected,
+                barrier_not_exists=cfg_barrier,
             ))
 
         # Final CTE: join forward and backward where they meet

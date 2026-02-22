@@ -26,6 +26,7 @@ COMPLEX_HANDLERS = {
     Function.TIME,
     Function.LOCALTIME,
     Function.DURATION,
+    Function.IS_TERMINATOR,  # Directive, not a SQL function
 }
 
 

@@ -16,7 +16,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from gsql2rsql.common.exceptions import TranspilerInternalErrorException
+from gsql2rsql.common.exceptions import (
+    TranspilerInternalErrorException,
+    TranspilerNotSupportedException,
+)
 from gsql2rsql.parser.ast import (
     Entity,
     MatchClause,
@@ -24,6 +27,7 @@ from gsql2rsql.parser.ast import (
     PartialQueryNode,
     QueryExpression,
     QueryExpressionBinary,
+    QueryExpressionFunction,
     QueryExpressionMapLiteral,
     QueryExpressionProperty,
     QueryExpressionValue,
@@ -34,6 +38,7 @@ from gsql2rsql.parser.operators import (
     BinaryOperator,
     BinaryOperatorInfo,
     BinaryOperatorType,
+    Function,
 )
 from gsql2rsql.planner.operators import (
     DataSourceOperator,
@@ -53,6 +58,18 @@ def _extract_int_value(expr: QueryExpression | None) -> int | None:
     if isinstance(expr, QueryExpressionValue) and expr.value is not None:
         return int(expr.value)
     return None
+
+
+def _contains_is_terminator(expr: QueryExpression) -> bool:
+    """Check if an expression tree contains an is_terminator() call."""
+    if (
+        isinstance(expr, QueryExpressionFunction)
+        and expr.function == Function.IS_TERMINATOR
+    ):
+        return True
+    if hasattr(expr, "children"):
+        return any(_contains_is_terminator(c) for c in expr.children)
+    return False
 
 
 def _extract_filters_by_alias(
@@ -430,6 +447,12 @@ def create_partial_query_tree(
 
         # Process WHERE clause from MatchClause
         if match_clause.where_expression and current_op:
+            if _contains_is_terminator(match_clause.where_expression):
+                raise TranspilerNotSupportedException(
+                    "is_terminator() can only be used in variable-length path "
+                    "queries (e.g., MATCH p = (a)-[:REL*1..5]->(b) "
+                    "WHERE is_terminator(b.prop = value))"
+                )
             select_op = SelectionOperator(
                 filter_expression=match_clause.where_expression
             )
@@ -450,6 +473,12 @@ def create_partial_query_tree(
 
     # Process WHERE clause from PartialQueryNode (for compatibility)
     if part.where_expression and current_op:
+        if _contains_is_terminator(part.where_expression):
+            raise TranspilerNotSupportedException(
+                "is_terminator() can only be used in variable-length path "
+                "queries (e.g., MATCH p = (a)-[:REL*1..5]->(b) "
+                "WHERE is_terminator(b.prop = value))"
+            )
         select_op = SelectionOperator(filter_expression=part.where_expression)
         select_op.set_in_operator(current_op)
         all_ops.append(select_op)

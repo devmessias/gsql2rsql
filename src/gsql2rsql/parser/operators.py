@@ -190,6 +190,7 @@ class Function(Enum):
     NODES = auto()  # nodes(path) -> returns array of node IDs
     RELATIONSHIPS = auto()  # relationships(path) -> returns array of edge structs
     LENGTH = auto()  # length(path) -> number of relationships (edges) in path
+    IS_TERMINATOR = auto()  # is_terminator(predicate) — traversal barrier directive
 
     # Math functions
     ABS = auto()
@@ -277,6 +278,8 @@ FUNCTIONS: dict[str, FunctionInfo] = {
     "nodes": FunctionInfo(Function.NODES, 1),  # nodes(path) -> array of node IDs
     "relationships": FunctionInfo(Function.RELATIONSHIPS, 1),  # rels(path) -> array of edges
     "rels": FunctionInfo(Function.RELATIONSHIPS, 1),  # alias for relationships
+    # Traversal barrier directive
+    "is_terminator": FunctionInfo(Function.IS_TERMINATOR, 1),
     # Math functions
     "abs": FunctionInfo(Function.ABS, 1),
     "ceil": FunctionInfo(Function.CEIL, 1),
