@@ -1,6 +1,6 @@
 # Functions Reference
 
-gsql2rsql supports **67 Cypher functions** transpiled to Databricks SQL, plus custom directives for graph traversal control.
+Supported Cypher functions transpiled to Databricks SQL, plus custom directives for graph traversal control.
 
 ---
 

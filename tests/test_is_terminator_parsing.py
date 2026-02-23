@@ -149,3 +149,51 @@ class TestIsTerminatorValidation:
         ast = parser.parse(query)
         with pytest.raises(TranspilerNotSupportedException, match="is_terminator"):
             LogicalPlan.process_query_tree(ast, schema)
+
+    def test_is_terminator_anonymous_target_raises(self) -> None:
+        """is_terminator(b.x) when target node is anonymous () must raise."""
+        query = """
+        MATCH p = (a:Person)-[:KNOWS*1..2]-()
+        WHERE is_terminator(b.age > 30)
+        RETURN a.node_id
+        """
+        schema = _make_schema()
+        parser = OpenCypherParser()
+        ast = parser.parse(query)
+        with pytest.raises(
+            TranspilerNotSupportedException,
+            match="is_terminator.*target node",
+        ):
+            LogicalPlan.process_query_tree(ast, schema)
+
+    def test_is_terminator_wrong_variable_raises(self) -> None:
+        """is_terminator(a.x) referencing source instead of target must raise."""
+        query = """
+        MATCH p = (a:Person)-[:KNOWS*1..2]->(b:Person)
+        WHERE is_terminator(a.age > 30)
+        RETURN b.node_id
+        """
+        schema = _make_schema()
+        parser = OpenCypherParser()
+        ast = parser.parse(query)
+        with pytest.raises(
+            TranspilerNotSupportedException,
+            match="is_terminator.*target node",
+        ):
+            LogicalPlan.process_query_tree(ast, schema)
+
+    def test_is_terminator_nonexistent_variable_raises(self) -> None:
+        """is_terminator(x.prop) with completely undefined variable must raise."""
+        query = """
+        MATCH p = (a:Person)-[:KNOWS*1..2]->(b:Person)
+        WHERE is_terminator(x.age > 30)
+        RETURN b.node_id
+        """
+        schema = _make_schema()
+        parser = OpenCypherParser()
+        ast = parser.parse(query)
+        with pytest.raises(
+            TranspilerNotSupportedException,
+            match="is_terminator.*target node",
+        ):
+            LogicalPlan.process_query_tree(ast, schema)

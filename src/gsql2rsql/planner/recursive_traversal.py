@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from gsql2rsql.common.exceptions import TranspilerNotSupportedException
 from gsql2rsql.common.logging import LogLevel
 from gsql2rsql.common.schema import EdgeAccessStrategy, IGraphSchemaProvider
 from gsql2rsql.parser.ast import (
@@ -44,6 +45,18 @@ from gsql2rsql.planner.path_analyzer import (
 
 if TYPE_CHECKING:
     from gsql2rsql.common.logging import ILoggable
+
+
+def _contains_is_terminator(expr: QueryExpression) -> bool:
+    """Check if an expression tree contains an is_terminator() call."""
+    if (
+        isinstance(expr, QueryExpressionFunction)
+        and expr.function == Function.IS_TERMINATOR
+    ):
+        return True
+    if hasattr(expr, "children"):
+        return any(_contains_is_terminator(c) for c in expr.children)
+    return False
 
 
 def create_recursive_match_tree(
@@ -104,6 +117,27 @@ def create_recursive_match_tree(
         remaining_where,
         target_node.alias,
     )
+
+    # Validate: if is_terminator() was NOT extracted but is still
+    # present, the predicate references the wrong variable (or the
+    # target node is anonymous).
+    if (
+        barrier_filter is None
+        and remaining_where is not None
+        and _contains_is_terminator(remaining_where)
+    ):
+        target_desc = (
+            f"'{target_node.alias}'"
+            if target_node.alias
+            else "anonymous (no alias)"
+        )
+        raise TranspilerNotSupportedException(
+            "is_terminator() predicate does not reference "
+            "the target node of the variable-length path "
+            f"(target is {target_desc}). The predicate "
+            "inside is_terminator() must reference only "
+            "the target node variable."
+        )
 
     # Extract sink (target) node filter for optimization
     # This filter will be applied in the recursive join WHERE clause
@@ -440,7 +474,11 @@ def extract_source_node_filter(
         return None, None
 
     # Check if the entire expression references only the source node
-    if _references_only_variable(where_expr, source_alias):
+    # (but never extract is_terminator() — it's a barrier directive)
+    if (
+        _references_only_variable(where_expr, source_alias)
+        and not _is_terminator_call(where_expr)
+    ):
         return where_expr, None
 
     # Flatten nested AND tree into a list of conjuncts, then partition
@@ -453,7 +491,10 @@ def extract_source_node_filter(
     remaining_parts: list[QueryExpression] = []
 
     for conjunct in conjuncts:
-        if _references_only_variable(conjunct, source_alias):
+        if (
+            _references_only_variable(conjunct, source_alias)
+            and not _is_terminator_call(conjunct)
+        ):
             source_parts.append(conjunct)
         else:
             remaining_parts.append(conjunct)
@@ -568,6 +609,14 @@ def _rebuild_and_tree(parts: list[QueryExpression]) -> QueryExpression:
             right_expression=parts[i],
         )
     return result
+
+
+def _is_terminator_call(expr: QueryExpression) -> bool:
+    """Check if expression is an is_terminator() function call."""
+    return (
+        isinstance(expr, QueryExpressionFunction)
+        and expr.function == Function.IS_TERMINATOR
+    )
 
 
 def _references_only_variable(
