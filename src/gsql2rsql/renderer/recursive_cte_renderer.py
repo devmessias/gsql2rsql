@@ -46,7 +46,7 @@ def _build_barrier_not_exists(
     parts = [f"barrier.{barrier_node_id_col} = {node_col}"]
     if barrier_node_type_filter:
         parts.append(f"barrier.{barrier_node_type_filter}")
-    parts.append(barrier_filter_sql)
+    parts.append(f"({barrier_filter_sql})")
     inner_where = " AND ".join(parts)
     return (
         f"NOT EXISTS (SELECT 1 FROM {barrier_node_table} barrier "
@@ -227,7 +227,10 @@ class RecursiveCTERenderer:
             edge_tables=edge_tables,
             source_id_col=enriched_rec.source_id_col,
             target_id_col=enriched_rec.target_id_col,
-            edge_props=list(enriched_rec.edge_property_names),
+            edge_props=[
+                p for p in enriched_rec.edge_property_names
+                if p not in (enriched_rec.source_id_col, enriched_rec.target_id_col)
+            ],
             single_table=enriched_rec.single_table,
             single_table_name=enriched_rec.single_table_name,
             single_table_filter=enriched_rec.single_table_filter,

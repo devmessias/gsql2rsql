@@ -33,6 +33,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionValue,
     RelationshipDirection,
     RelationshipEntity,
+    TreeNode,
 )
 from gsql2rsql.parser.operators import (
     BinaryOperator,
@@ -60,7 +61,7 @@ def _extract_int_value(expr: QueryExpression | None) -> int | None:
     return None
 
 
-def _contains_is_terminator(expr: QueryExpression) -> bool:
+def _contains_is_terminator(expr: TreeNode) -> bool:
     """Check if an expression tree contains an is_terminator() call."""
     if (
         isinstance(expr, QueryExpressionFunction)

@@ -56,7 +56,7 @@ def _build_bfs_barrier_where(p: "_BFSParams", node_col: str) -> str:
     parts = [f"barrier.{p.barrier_node_id_col} = {node_col}"]
     if p.barrier_node_type_filter:
         parts.append(f"barrier.{p.barrier_node_type_filter}")
-    parts.append(p.barrier_predicate)  # type: ignore[arg-type]
+    parts.append(f"({p.barrier_predicate})")
     inner_where = " AND ".join(parts)
     return (
         f"NOT EXISTS (SELECT 1 FROM {p.barrier_node_table} barrier "
@@ -226,7 +226,10 @@ class ProceduralBFSRenderer:
         # Columns
         src_col = enriched.source_id_col
         dst_col = enriched.target_id_col
-        edge_prop_cols = list(enriched.edge_property_names)
+        edge_prop_cols = [
+            p for p in enriched.edge_property_names
+            if p not in (enriched.source_id_col, enriched.target_id_col)
+        ]
         min_hops = op.min_hops if op.min_hops is not None else 1
         assert op.max_hops is not None  # guaranteed by _validate
         max_hops: int = op.max_hops

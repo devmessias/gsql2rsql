@@ -541,3 +541,616 @@ class TestIsTerminatorConsistency:
         assert set_proc == {"N2", "N3"}, (
             f"Expected {{'N2', 'N3'}}, got {set_proc}"
         )
+
+
+class TestIsTerminatorWithINBlacklist:
+    """Test is_terminator() with IN list as a node blacklist.
+
+    Uses is_terminator(b.node_id IN [...]) to define a set of
+    barrier nodes by ID, simulating a blacklist pattern.
+
+    Graph:
+        N1(F)->N2(F)->N3(T)->N4(F)->N5(T)
+        N6(F)->N7(F)->N8(F)->N9(T)
+                       N8(F)->N5(T)
+    """
+
+    def test_blacklist_single_node_procedural(self, spark, graph):
+        """Blacklist N3: BFS from N1 stops at N3."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.node_id IN ['N3'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        # N3 is reached but not expanded, so N4/N5 unreachable
+        assert results == {"N2", "N3"}, (
+            f"Expected {{'N2', 'N3'}}, got {results}"
+        )
+
+    def test_blacklist_multiple_nodes_procedural(self, spark, graph):
+        """Blacklist N2 and N3: BFS from N1 stops at N2."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.node_id IN ['N2', 'N3'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        # N2 is reached (barrier) but not expanded -> N3/N4/N5 unreachable
+        assert results == {"N2"}, (
+            f"Expected {{'N2'}}, got {results}"
+        )
+
+    def test_blacklist_from_n6_procedural(self, spark, graph):
+        """Blacklist N8: from N6, BFS stops at N8.
+
+        N6->N7->N8(barrier), so N9 and N5 are NOT reachable.
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.node_id IN ['N8'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N7", "N8"}, (
+            f"Expected {{'N7', 'N8'}}, got {results}"
+        )
+
+    def test_blacklist_cte_matches_procedural(self, spark, graph):
+        """CTE and procedural produce same results with IN blacklist."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.node_id IN ['N3'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql_proc = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        sql_cte = graph.transpile(query, vlp_rendering_mode="cte")
+
+        set_proc = {row["dst"] for row in spark.sql(sql_proc).collect()}
+        set_cte = {row["dst"] for row in spark.sql(sql_cte).collect()}
+
+        assert set_proc == set_cte == {"N2", "N3"}, (
+            f"Proc={set_proc}, CTE={set_cte}"
+        )
+
+
+class TestIsTerminatorCompoundConditions:
+    """Test is_terminator() with AND/OR compound predicates.
+
+    Graph:
+        N1(hub=F)->N2(hub=F)->N3(hub=T)->N4(hub=F)->N5(hub=T)
+    """
+
+    def test_and_condition_procedural(self, spark, graph):
+        """is_terminator(b.is_hub = true AND b.node_id = 'N3').
+
+        Only N3 matches (hub AND specific ID).
+        N5 is hub but node_id != 'N3', so N5 is NOT a barrier.
+        From N1: N2, N3 (barrier), N4, N5 all reachable.
+        N3 doesn't block because AND narrows the barrier to just N3,
+        but N3 IS a barrier so no expansion from N3.
+        N4/N5 would be reachable only through N3, so they're blocked.
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.is_hub = true AND b.node_id = 'N3')
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        # N3 is barrier (hub=T AND id='N3'), not expanded
+        # N4/N5 only reachable via N3, so blocked
+        assert results == {"N2", "N3"}, (
+            f"Expected {{'N2', 'N3'}}, got {results}"
+        )
+
+    def test_or_condition_procedural(self, spark, graph):
+        """is_terminator(b.is_hub = true OR b.node_id = 'N2').
+
+        Barriers: N2 (id match), N3 (hub), N5 (hub), N9 (hub).
+        From N1: N2 is first neighbor and is a barrier -> not expanded.
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.is_hub = true OR b.node_id = 'N2')
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        # N2 is barrier (node_id='N2'), reached but not expanded
+        assert results == {"N2"}, (
+            f"Expected {{'N2'}}, got {results}"
+        )
+
+    def test_and_condition_cte(self, spark, graph):
+        """CTE with AND compound: same result as procedural."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.is_hub = true AND b.node_id = 'N3')
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(query, vlp_rendering_mode="cte")
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N2", "N3"}, (
+            f"Expected {{'N2', 'N3'}}, got {results}"
+        )
+
+    def test_or_condition_cte(self, spark, graph):
+        """CTE with OR compound: same result as procedural."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.is_hub = true OR b.node_id = 'N2')
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(query, vlp_rendering_mode="cte")
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N2"}, (
+            f"Expected {{'N2'}}, got {results}"
+        )
+
+    def test_hub_or_blacklist_procedural(self, spark, graph):
+        """is_terminator(b.is_hub = true OR b.node_id IN ['N7']).
+
+        Barriers: hubs (N3, N5, N9) + blacklisted (N7).
+        From N6: N7 is first neighbor and blacklisted -> barrier.
+        N8/N9/N5 unreachable.
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true OR b.node_id IN ['N7'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N7"}, (
+            f"Expected {{'N7'}}, got {results}"
+        )
+
+    def test_hub_or_blacklist_from_n1_procedural(self, spark, graph):
+        """is_terminator(b.is_hub = true OR b.node_id IN ['N2']).
+
+        From N1: N2 is blacklisted -> barrier, not expanded.
+        N3/N4/N5 unreachable.
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.is_hub = true OR b.node_id IN ['N2'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N2"}, (
+            f"Expected {{'N2'}}, got {results}"
+        )
+
+    def test_hub_or_blacklist_from_n6_reaches_more(self, spark, graph):
+        """is_terminator(b.is_hub = true OR b.node_id IN ['N8']).
+
+        From N6: N7 ok (expand), N8 blacklisted (barrier).
+        N9/N5 unreachable (only via N8).
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true OR b.node_id IN ['N8'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N7", "N8"}, (
+            f"Expected {{'N7', 'N8'}}, got {results}"
+        )
+
+    def test_hub_or_blacklist_cte_matches(self, spark, graph):
+        """CTE produces same result as procedural for hub+blacklist."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true OR b.node_id IN ['N7'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql_proc = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        sql_cte = graph.transpile(query, vlp_rendering_mode="cte")
+
+        set_proc = {row["dst"] for row in spark.sql(sql_proc).collect()}
+        set_cte = {row["dst"] for row in spark.sql(sql_cte).collect()}
+
+        assert set_proc == set_cte == {"N7"}, (
+            f"Proc={set_proc}, CTE={set_cte}"
+        )
+
+
+class TestIsTerminatorWithEdgeBlacklist:
+    """Test is_terminator(b.is_hub) combined with edge-level dst blacklist.
+
+    Two independent barriers:
+      1. is_terminator(b.is_hub = true) — node barrier: hubs reached but not expanded
+      2. ALL(r IN relationships(path) WHERE NOT r.dst_node_id IN [...]) — edge barrier:
+         edges whose dst is blacklisted are never traversed
+
+    Requires ``dst`` exposed as an extra edge attribute so ``r.dst`` resolves.
+
+    Graph:
+        N1(hub=F)->N2(hub=F)->N3(hub=T)->N4(hub=F)->N5(hub=T)
+        N6(hub=F)->N7(hub=F)->N8(hub=F)->N9(hub=T)
+                               N8(hub=F)->N5(hub=T)
+    """
+
+    def test_from_n6_blacklist_n9_procedural(self, spark, graph):
+        """is_terminator blocks hubs, edge blacklist blocks N9.
+
+        From N6 without filters: {N7, N8, N9, N5}
+        is_terminator alone:     {N7, N8, N9, N5} (hubs reached, not expanded)
+        Edge blacklist [N9]:     N8->N9 blocked, N8->N5 allowed
+        Combined:                {N7, N8, N5} — N9 never reached, N5 reached (hub barrier)
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.dst IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N7", "N8", "N5"}, (
+            f"Expected {{'N7', 'N8', 'N5'}}, got {results}"
+        )
+
+    def test_from_n1_blacklist_n3_procedural(self, spark, graph):
+        """Edge blacklist [N3] is MORE restrictive than is_terminator.
+
+        is_terminator alone: {N2, N3} (N3 hub, reached but not expanded)
+        Edge blacklist [N3]: N2->N3 blocked, N3 never reached
+        Combined:            {N2} — edge blacklist prevents reaching N3 at all
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.dst IN ['N3'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N2"}, (
+            f"Expected {{'N2'}}, got {results}"
+        )
+
+    def test_from_n6_blacklist_n5_procedural(self, spark, graph):
+        """Edge blacklist [N5] blocks N8->N5, is_terminator blocks N9 expansion.
+
+        From N6: N7 ok, N8 ok, N8->N9 (hub barrier), N8->N5 (edge blocked)
+        Combined: {N7, N8, N9}
+        """
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.dst IN ['N5'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N7", "N8", "N9"}, (
+            f"Expected {{'N7', 'N8', 'N9'}}, got {results}"
+        )
+
+    def test_from_n6_blacklist_n9_cte(self, spark, graph):
+        """CTE: same as procedural for hub + edge blacklist."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.dst IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = graph.transpile(query, vlp_rendering_mode="cte")
+        result = spark.sql(sql)
+        results = {row["dst"] for row in result.collect()}
+        assert results == {"N7", "N8", "N5"}, (
+            f"Expected {{'N7', 'N8', 'N5'}}, got {results}"
+        )
+
+    def test_consistency_procedural_vs_cte(self, spark, graph):
+        """Both renderers agree on hub + edge blacklist."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.dst IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql_proc = graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        sql_cte = graph.transpile(query, vlp_rendering_mode="cte")
+
+        set_proc = {row["dst"] for row in spark.sql(sql_proc).collect()}
+        set_cte = {row["dst"] for row in spark.sql(sql_cte).collect()}
+
+        assert set_proc == set_cte == {"N7", "N8", "N5"}, (
+            f"Proc={set_proc}, CTE={set_cte}"
+        )
+
+
+class TestCustomEdgeColumnNames:
+    """Test VLP with non-standard edge src/dst column names.
+
+    Uses 'origin' and 'destination' instead of 'src' and 'dst' to verify
+    that r.origin / r.destination are accessible in
+    ALL(r IN relationships(path) WHERE ...) and that NAMED_STRUCT
+    deduplication works correctly with arbitrary column names.
+
+    Same graph topology as the rest of the file:
+        N1->N2->N3(hub)->N4->N5(hub)
+        N6->N7->N8->N9(hub), N8->N5(hub)
+    """
+
+    @pytest.fixture(scope="class")
+    def custom_spark(self, spark):
+        """Create tables with 'origin'/'destination' column names."""
+        spark.sql("""
+            CREATE OR REPLACE TEMPORARY VIEW custom_edges AS
+            SELECT * FROM VALUES
+                ('N1', 'N2', 'LINK', false),
+                ('N2', 'N3', 'LINK', false),
+                ('N3', 'N4', 'LINK', true),
+                ('N4', 'N5', 'LINK', false),
+                ('N6', 'N7', 'LINK', false),
+                ('N7', 'N8', 'LINK', false),
+                ('N8', 'N9', 'LINK', false),
+                ('N8', 'N5', 'LINK', false)
+            AS t(origin, destination, relationship_type, src_is_hub)
+        """)
+        return spark
+
+    @pytest.fixture(scope="class")
+    def custom_graph(self, custom_spark):
+        from gsql2rsql import GraphContext
+
+        return GraphContext(
+            spark=custom_spark,
+            nodes_table="hub_nodes",
+            edges_table="custom_edges",
+            node_id_col="node_id",
+            node_type_col="node_type",
+            edge_type_col="relationship_type",
+            edge_src_col="origin",
+            edge_dst_col="destination",
+            extra_node_attrs={"is_hub": bool},
+            extra_edge_attrs={"src_is_hub": bool},
+        )
+
+    def test_basic_vlp_custom_cols_procedural(self, custom_spark, custom_graph):
+        """Basic VLP should work with custom edge column names."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N2", "N3", "N4", "N5"}
+
+    def test_basic_vlp_custom_cols_cte(self, custom_spark, custom_graph):
+        """Basic VLP should work with custom edge column names (CTE mode)."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(query, vlp_rendering_mode="cte")
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N2", "N3", "N4", "N5"}
+
+    def test_edge_barrier_custom_cols_procedural(self, custom_spark, custom_graph):
+        """Edge barrier with r.src_is_hub works with custom src/dst names."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND ALL(r IN relationships(path) WHERE NOT r.src_is_hub)
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N2", "N3"}, f"Expected N2,N3 got {results}"
+
+    def test_edge_barrier_custom_cols_cte(self, custom_spark, custom_graph):
+        """Edge barrier with r.src_is_hub works with custom src/dst names (CTE)."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND ALL(r IN relationships(path) WHERE NOT r.src_is_hub)
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(query, vlp_rendering_mode="cte")
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N2", "N3"}, f"Expected N2,N3 got {results}"
+
+    def test_r_destination_blacklist_procedural(self, custom_spark, custom_graph):
+        """r.destination (custom dst col) accessible in edge filter."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND ALL(r IN relationships(path) WHERE NOT r.destination IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        # N8->N9 blocked, but N8->N5 still reachable
+        assert results == {"N7", "N8", "N5"}, f"Expected N7,N8,N5 got {results}"
+
+    def test_r_destination_blacklist_cte(self, custom_spark, custom_graph):
+        """r.destination (custom dst col) accessible in edge filter (CTE)."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND ALL(r IN relationships(path) WHERE NOT r.destination IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(query, vlp_rendering_mode="cte")
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N7", "N8", "N5"}, f"Expected N7,N8,N5 got {results}"
+
+    def test_r_origin_blacklist_procedural(self, custom_spark, custom_graph):
+        """r.origin (custom src col) accessible in edge filter."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N1'
+          AND ALL(r IN relationships(path) WHERE NOT r.origin IN ['N3'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        # N3->N4 blocked (origin=N3), so only N2, N3 reachable
+        assert results == {"N2", "N3"}, f"Expected N2,N3 got {results}"
+
+    def test_terminator_plus_r_destination_procedural(self, custom_spark, custom_graph):
+        """is_terminator + r.destination blacklist with custom col names."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.destination IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N7", "N8", "N5"}, f"Expected N7,N8,N5 got {results}"
+
+    def test_terminator_plus_r_destination_cte(self, custom_spark, custom_graph):
+        """is_terminator + r.destination blacklist with custom col names (CTE)."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.destination IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql = custom_graph.transpile(query, vlp_rendering_mode="cte")
+        results = {row["dst"] for row in custom_spark.sql(sql).collect()}
+        assert results == {"N7", "N8", "N5"}, f"Expected N7,N8,N5 got {results}"
+
+    def test_consistency_procedural_vs_cte(self, custom_spark, custom_graph):
+        """Both renderers agree with custom column names."""
+        query = """
+        MATCH path = (a:Station)-[:LINK*1..5]->(b:Station)
+        WHERE a.node_id = 'N6'
+          AND is_terminator(b.is_hub = true)
+          AND ALL(r IN relationships(path) WHERE NOT r.destination IN ['N9'])
+        RETURN DISTINCT b.node_id AS dst
+        """
+        sql_proc = custom_graph.transpile(
+            query,
+            vlp_rendering_mode="procedural",
+            materialization_strategy="numbered_views",
+        )
+        sql_cte = custom_graph.transpile(query, vlp_rendering_mode="cte")
+
+        set_proc = {row["dst"] for row in custom_spark.sql(sql_proc).collect()}
+        set_cte = {row["dst"] for row in custom_spark.sql(sql_cte).collect()}
+
+        assert set_proc == set_cte == {"N7", "N8", "N5"}, (
+            f"Proc={set_proc}, CTE={set_cte}"
+        )

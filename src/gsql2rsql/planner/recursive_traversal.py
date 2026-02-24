@@ -27,6 +27,7 @@ from gsql2rsql.parser.ast import (
     QueryExpressionProperty,
     RelationshipDirection,
     RelationshipEntity,
+    TreeNode,
 )
 from gsql2rsql.parser.operators import Function
 from gsql2rsql.planner.operators import (
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
     from gsql2rsql.common.logging import ILoggable
 
 
-def _contains_is_terminator(expr: QueryExpression) -> bool:
+def _contains_is_terminator(expr: TreeNode) -> bool:
     """Check if an expression tree contains an is_terminator() call."""
     if (
         isinstance(expr, QueryExpressionFunction)
@@ -250,23 +251,14 @@ def create_recursive_match_tree(
                 edge_src_col = edge_schema.source_id_property.property_name
             if edge_schema.sink_id_property:
                 edge_dst_col = edge_schema.sink_id_property.property_name
-            # Collect all edge properties except src/dst
             for prop in edge_schema.properties:
-                if prop.property_name not in (edge_src_col, edge_dst_col):
-                    edge_props.append(prop.property_name)
+                edge_props.append(prop.property_name)
     elif graph_schema:
         # No specific edge types - use wildcard edge
         edge_schema = graph_schema.get_wildcard_edge_definition()
         if edge_schema:
-            edge_src_col = "src"
-            edge_dst_col = "dst"
-            if edge_schema.source_id_property:
-                edge_src_col = edge_schema.source_id_property.property_name
-            if edge_schema.sink_id_property:
-                edge_dst_col = edge_schema.sink_id_property.property_name
             for prop in edge_schema.properties:
-                if prop.property_name not in (edge_src_col, edge_dst_col):
-                    edge_props.append(prop.property_name)
+                edge_props.append(prop.property_name)
 
     # Determine if we need internal UNION ALL for bidirectional traversal.
     # This is a planner decision based on:
