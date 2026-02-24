@@ -2,6 +2,17 @@
 
 
 
+## v0.10.0 (2026-02-24)
+
+### Feature
+
+* feat: expose struct edge cols graph context ([`8917465`](https://github.com/devmessias/gsql2rsql/commit/8917465d31ae69a05ba98609be61da71988bba2a))
+
+### Fix
+
+* fix: improve error msg and capture ([`b69500d`](https://github.com/devmessias/gsql2rsql/commit/b69500d1e0133ea31edce3e3af31b23a88666736))
+
+
 ## v0.9.7 (2026-02-22)
 
 ### Documentation
