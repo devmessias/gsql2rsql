@@ -1624,54 +1624,7 @@ Databricks SQL translation.
 
 ---
 
-## 9. Identify seasonal spending patterns for credit limit adjustments
-
-**Application**: Credit: Seasonal analysis
-
-??? note "Notes"
-
-    Identifies months with above-average spending for each customer.
-    Useful for temporary credit limit increases during peak periods.
-
-???+ note "OpenCypher Query"
-    ```cypher
-    MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
-    WHERE t.timestamp > TIMESTAMP() - DURATION('P365D')
-    WITH c, card,
-         month(t.timestamp) AS month,
-         SUM(t.amount) AS monthly_spend
-    WITH c, card, month, monthly_spend,
-         AVG(monthly_spend) OVER (PARTITION BY c.id) AS avg_monthly_spend
-    WHERE monthly_spend > avg_monthly_spend * 1.5
-    RETURN c.id, month, monthly_spend, avg_monthly_spend
-    ORDER BY monthly_spend DESC
-    ```
-
-??? danger "Error Details"
-    ```
-    PARSER ERROR:
-Syntax error: line 7:24 near 'OVER' extraneous input 'OVER' expecting {OPTIONAL, MATCH, UNWIND, MERGE, CREATE, SET, DETACH, DELETE, REMOVE, CALL, WITH, RETURN}
-
-       AVG(monthly_spend) OVER (PARTITION BY c.id) AS avg_monthly_spend
-                          ^
-
-Traceback (most recent call last):
-  File "/home/devmessias/phd/cyper2dsql/python/examples/generate_artifacts.py", line 187, in transpile_query
-    ast = parser.parse(query)
-          ^^^^^^^^^^^^^^^^^^^
-  File "/home/devmessias/phd/cyper2dsql/python/src/gsql2rsql/parser/opencypher_parser.py", line 70, in parse
-    error_collector.raise_if_errors(query_string)
-  File "/home/devmessias/phd/cyper2dsql/python/src/gsql2rsql/parser/error_listener.py", line 108, in raise_if_errors
-    raise TranspilerSyntaxErrorException("\n".join(parts))
-gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7:24 near 'OVER' extraneous input 'OVER' expecting {OPTIONAL, MATCH, UNWIND, MERGE, CREATE, SET, DETACH, DELETE, REMOVE, CALL, WITH, RETURN}
-
-       AVG(monthly_spend) OVER (PARTITION BY c.id) AS avg_monthly_spend
-                          ^
-    ```
-
----
-
-## 10. Calculate debt-to-income ratio estimates from transaction data
+## 9. Calculate debt-to-income ratio estimates from transaction data
 
 **Application**: Credit: DTI estimation
 
@@ -1876,7 +1829,7 @@ gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7
 
 ---
 
-## 11. Find cross-sell opportunities for additional credit products
+## 10. Find cross-sell opportunities for additional credit products
 
 **Application**: Credit: Cross-sell targeting
 
@@ -2015,7 +1968,7 @@ gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7
 
 ---
 
-## 12. Analyze payment velocity to detect cash flow improvements
+## 11. Analyze payment velocity to detect cash flow improvements
 
 **Application**: Credit: Payment velocity analysis
 
@@ -2245,7 +2198,7 @@ gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7
 
 ---
 
-## 13. Identify customers suitable for credit line decreases
+## 12. Identify customers suitable for credit line decreases
 
 **Application**: Credit: Risk mitigation
 
@@ -2462,7 +2415,7 @@ gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7
 
 ---
 
-## 14. Detect refinancing opportunities via interest rate comparison
+## 13. Detect refinancing opportunities via interest rate comparison
 
 **Application**: Credit: Refinancing targeting
 
@@ -2619,7 +2572,7 @@ gsql2rsql.common.exceptions.TranspilerSyntaxErrorException: Syntax error: line 7
 
 ---
 
-## 15. Analyze co-borrower relationships for joint credit assessment
+## 14. Analyze co-borrower relationships for joint credit assessment
 
 **Application**: Credit: Co-borrower analysis
 

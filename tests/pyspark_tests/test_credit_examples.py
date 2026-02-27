@@ -366,16 +366,8 @@ class TestNetworkScoring:
         assert "Bob" in names or "Dave" in names
 
 
-@pytest.mark.skip(reason="Query uses SQL OVER() window syntax, not valid Cypher (expected_error in YAML)")
-class TestSeasonalAnalysis:
-    """Q09: Seasonal analysis -- skipped (invalid Cypher)."""
-
-    def test_q09_seasonal_analysis(self, gc, spark):
-        pass
-
-
 # ===========================================================================
-# Query 11: Cross-sell targeting (EXISTS pattern, no temporal -- can try)
+# Query 10: Cross-sell targeting (EXISTS pattern, no temporal -- can try)
 # ===========================================================================
 class TestCrossSellTargeting:
 
@@ -406,7 +398,7 @@ class TestCrossSellTargeting:
             ORDER BY avg_balance DESC
             LIMIT 50
         """)
-        rows = _exec(gc, spark, query, "Q11: Cross-sell targeting")
+        rows = _exec(gc, spark, query, "Q10: Cross-sell targeting")
         assert len(rows) == 1
         assert rows[0]["cust_name"] == "Eve"
         assert rows[0]["account_count"] == 2
@@ -414,7 +406,7 @@ class TestCrossSellTargeting:
 
 
 # ===========================================================================
-# Query 12: Payment velocity (TIMESTAMP/DURATION -- xfail)
+# Query 11: Payment velocity (TIMESTAMP/DURATION -- xfail)
 # ===========================================================================
 class TestPaymentVelocity:
 
@@ -434,11 +426,11 @@ class TestPaymentVelocity:
                    ((recent_avg - historical_avg) / historical_avg) AS payment_increase_pct
             ORDER BY payment_increase_pct DESC
         """)
-        _exec(gc, spark, query, "Q12: Payment velocity")
+        _exec(gc, spark, query, "Q11: Payment velocity")
 
 
 # ===========================================================================
-# Query 13: Risk mitigation (TIMESTAMP/DURATION -- xfail)
+# Query 12: Risk mitigation (TIMESTAMP/DURATION -- xfail)
 # ===========================================================================
 class TestRiskMitigation:
 
@@ -458,11 +450,11 @@ class TestRiskMitigation:
                    (credit_limit - max_transaction * 3) AS suggested_new_limit
             ORDER BY suggested_new_limit DESC
         """)
-        _exec(gc, spark, query, "Q13: Risk mitigation")
+        _exec(gc, spark, query, "Q12: Risk mitigation")
 
 
 # ===========================================================================
-# Query 14: Refinancing (TIMESTAMP/DURATION -- xfail)
+# Query 13: Refinancing (TIMESTAMP/DURATION -- xfail)
 # ===========================================================================
 class TestRefinancing:
 
@@ -481,11 +473,11 @@ class TestRefinancing:
                    (l.balance * (current_rate - market_rate) / 100) AS annual_savings
             ORDER BY annual_savings DESC
         """)
-        _exec(gc, spark, query, "Q14: Refinancing")
+        _exec(gc, spark, query, "Q13: Refinancing")
 
 
 # ===========================================================================
-# Query 15: Co-borrower analysis (no temporal -- can execute)
+# Query 14: Co-borrower analysis (no temporal -- can execute)
 # ===========================================================================
 class TestCoBorrowerAnalysis:
 
@@ -519,7 +511,7 @@ class TestCoBorrowerAnalysis:
                    (c1_avg_balance + c2_avg_balance) AS combined_liquidity
             ORDER BY combined_liquidity DESC
         """)
-        rows = _exec(gc, spark, query, "Q15: Co-borrower analysis")
+        rows = _exec(gc, spark, query, "Q14: Co-borrower analysis")
         assert len(rows) == 2
         # Verify the two co-borrower pairs
         pairs = {(r["c1_id"], r["c2_id"]) for r in rows}
@@ -571,7 +563,7 @@ class TestTranspilationSmoke:
             RETURN c.node_id AS cid, c.name AS cname, hist, recent
             ORDER BY (hist - recent) / hist DESC
         """),
-        ("Q10: DTI", """
+        ("Q09: DTI", """
             MATCH (c:Customer)-[:HAS_ACCOUNT]->(a:Account)-[:TRANSACTION]->(t:Transaction)
             WHERE t.timestamp > TIMESTAMP() - DURATION('P90D')
             WITH c,
@@ -582,7 +574,7 @@ class TestTranspilationSmoke:
                    (debt * 1.0 / income) AS dti
             ORDER BY dti DESC
         """),
-        ("Q12: Payment velocity", """
+        ("Q11: Payment velocity", """
             MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)-[:PAYMENT]->(p:Payment)
             WHERE p.timestamp > TIMESTAMP() - DURATION('P180D')
             WITH c, l,
@@ -594,7 +586,7 @@ class TestTranspilationSmoke:
             RETURN c.node_id AS cid, c.name AS cname, l.node_id AS lid, hist, recent
             ORDER BY (recent - hist) / hist DESC
         """),
-        ("Q13: Risk mitigation", """
+        ("Q12: Risk mitigation", """
             MATCH (c:Customer)-[:HAS_CARD]->(card:CreditCard)-[:CARD_TRANSACTION]->(t:Transaction)
             WHERE t.timestamp > TIMESTAMP() - DURATION('P180D')
             WITH c, card,
@@ -604,7 +596,7 @@ class TestTranspilationSmoke:
             RETURN c.node_id AS cid, card.node_id AS crd, lim, mx, av
             ORDER BY lim DESC
         """),
-        ("Q14: Refinancing", """
+        ("Q13: Refinancing", """
             MATCH (c:Customer)-[:HAS_LOAN]->(l:Loan)
             WHERE l.status = 'active'
               AND l.origination_date < TIMESTAMP() - DURATION('P730D')
